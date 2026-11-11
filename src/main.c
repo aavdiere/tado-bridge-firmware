@@ -17,6 +17,11 @@
 #include <libopencm3/stm32/rcc.h>
 
 int main(void) {
+    /* Radio CSn and flash CS# high before the delay (#28): otherwise PA4 and
+     * PB9 float as inputs for 2 s and either device may see itself selected.
+     * Two pins only; see board_cs_early(). */
+    board_cs_early();
+
     /* Debugger attach safety: nothing else runs before this. Polls SysTick,
      * which FreeRTOS takes over at vTaskStartScheduler(); delay_ms() must not
      * be used after that. */

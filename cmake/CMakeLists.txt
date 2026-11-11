@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.13) # target_link_options
 
 ################################################################################
 # Customize
@@ -103,6 +103,11 @@ target_compile_options(${BINARY} PRIVATE
         -Wredundant-decls
     >
 )
+
+# Linker script per target, so a cmake re-run cannot repeat it; relink when it
+# changes.
+target_link_options(${BINARY} PRIVATE -T${LINKER_SCRIPT})
+set_target_properties(${BINARY} PROPERTIES LINK_DEPENDS ${LINKER_SCRIPT})
 
 target_link_libraries(${BINARY} PRIVATE
     -L${OPENCM3_DIR}/lib

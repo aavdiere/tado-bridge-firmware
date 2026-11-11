@@ -12,7 +12,20 @@
  *     reaches FIFOTHR = 16 bytes (cc110l.txt:2906-2907, 2611-2640), the only
  *     warning for a frame longer than the 64-byte FIFO.
  * A timeout pump (2 ms while a frame is being assembled, 100 ms otherwise)
- * covers a missed edge, as freedo's 8 ms tick does (radio-runtime.md). */
+ * covers a missed edge, as freedo's 8 ms tick does (radio-runtime.md).
+ *
+ * TX-state watch. A single bit error on MOSI can turn any header the guard in
+ * cc110l.c approved into a transmit strobe at the chip (SRX 0x34 -> STX 0x35,
+ * MARCSTATE read 0xF5 -> 0xB5 = STX, a CSn bounce mid-burst that makes the
+ * TEST1 data byte 0x35 a header). The chip would then send preamble until
+ * stopped. Every status byte the chip returns is checked for STATE TX,
+ * FSTXON or TXFIFO_UNDERFLOW (cc110l.c), and tx_watch() takes one fresh
+ * status byte and acts on that flag. It runs after every radio step of the
+ * bring-up, on every bring-up failure, every 100 ms of the retry wait, and at
+ * the end of every pass of the task loop, so a TX state is stopped within
+ * microseconds of the next radio access and at most one loop pass (<= 100 ms
+ * when idle, with no other radio access in between) after the access that
+ * caused it. */
 #include "radio.h"
 
 #include "cc110l.h"
@@ -35,6 +48,14 @@
 #include <stdio.h>
 
 #include "board.h"
+
+/* P5 (not reviewed yet, RADIO_TX_ALLOWED must stay 0 and #errors in cc110l.h):
+ * a transmit-capable build must not use the owner's stock channel
+ * (docs/test-bench.md rule 2). In place now so it cannot be forgotten. */
+#if RADIO_TX_ALLOWED
+_Static_assert(RADIO_RX_CHANNEL != RADIO_PROTECTED_CHANNEL,
+               "transmit-capable build on the protected stock channel");
+#endif
 
 /* --- Register table ---------------------------------------------------------
  * The stock IB01 burst write 0x00..0x2E from the logic capture
@@ -108,6 +129,7 @@ _Static_assert(FXOSC_HZ * 8u * 16u / (1u << 17) == 25390u, "deviation 25.39 kHz"
 #define NOTE_GDO0  (1u << 0)
 #define NOTE_GDO2  (1u << 1)
 #define NOTE_FLASH (1u << 2)
+#define NOTE_STORM (1u << 3)
 
 /* FreeRTOS FromISR calls need a numeric priority >= 5 (FreeRTOSConfig.h,
  * configMAX_SYSCALL_INTERRUPT_PRIORITY = 0x50). */
@@ -124,27 +146,65 @@ static void notify_from_isr(uint32_t bits) {
     portYIELD_FROM_ISR(woken);
 }
 
+/* Interrupt storm guard. If the radio browns out or resets, IOCFG0 returns to
+ * its reset value 0x3F, CLK_XOSC/192 = 135 kHz on GDO0 (cc110l.txt:2894-2896,
+ * 3522-3528), and EXTI0 would fire every 7.4 us and starve every lower task. Real
+ * edges are far rarer: GDO0 falls once per packet, and the shortest packet
+ * (4 preamble + 2 sync + length + 1 + 2 CRC bytes at 160 us per byte) takes
+ * 1.6 ms; GDO2 rises at most once per received byte (160 us). So more than
+ * STORM_MAX_EDGES edges of either pin within STORM_WINDOW_US means the pins
+ * are not doing what the table says: both interrupts go off at once and the
+ * radio task re-initialises, which enables them again only after the table
+ * is loaded and verified. Both ISRs run at the same priority, so they never
+ * preempt each other and share the counter safely. */
+#define STORM_WINDOW_US 1000u
+#define STORM_MAX_EDGES 32u
+
+static uint32_t      storm_win_start, storm_edges;
+static volatile bool gdo_irq_on;
+
+static void gdo_edge_from_isr(uint32_t note) {
+    uint32_t now = timebase_us();
+    if ((uint32_t)(now - storm_win_start) >= STORM_WINDOW_US) {
+        storm_win_start = now;
+        storm_edges     = 0;
+    }
+    if (++storm_edges > STORM_MAX_EDGES) {
+        exti_disable_request(EXTI0 | EXTI1);
+        gdo_irq_on = false;
+        note |= NOTE_STORM;
+    }
+    notify_from_isr(note);
+}
+
 void exti0_isr(void) {
     exti_reset_request(EXTI0);
-    notify_from_isr(NOTE_GDO0);
+    gdo_edge_from_isr(NOTE_GDO0);
 }
 
 void exti1_isr(void) {
     exti_reset_request(EXTI1);
-    notify_from_isr(NOTE_GDO2);
+    gdo_edge_from_isr(NOTE_GDO2);
 }
 
 static void gdo_irq_enable(bool on) {
+    /* EXTI_IMR is read-modify-written here and by the storm guard in the ISR:
+     * mask the GDO interrupts (priority 5 = configMAX_SYSCALL) meanwhile. */
+    taskENTER_CRITICAL();
     if (on) {
         exti_reset_request(EXTI0 | EXTI1);
         nvic_clear_pending_irq(NVIC_EXTI0_IRQ);
         nvic_clear_pending_irq(NVIC_EXTI1_IRQ);
+        storm_edges = 0;
+        gdo_irq_on  = true;
         exti_enable_request(EXTI0 | EXTI1);
     } else {
         /* After SRES GDO0 outputs a 135 kHz clock (cc110l.txt:2894-2896,
          * freedo .ino:143-146): keep the interrupt off until configured. */
         exti_disable_request(EXTI0 | EXTI1);
+        gdo_irq_on = false;
     }
+    taskEXIT_CRITICAL();
 }
 
 static void gdo_irq_setup(void) {
@@ -168,7 +228,7 @@ void radio_request_flash_check(void) {
 /* --- Counters ---------------------------------------------------------------- */
 struct counters {
     uint32_t frames, crc_ok, crc_bad, wake, overflow, bad_len, stale, rearm, reinit, spi_err;
-    uint32_t flash_ok, flash_bad, flash_in_frame, status_glitch;
+    uint32_t flash_ok, flash_bad, flash_in_frame, status_glitch, storm;
 };
 static struct counters minute, total;
 
@@ -249,15 +309,75 @@ static struct {
     uint32_t start_us;
 } rx;
 
+/* MARCSTATE values reachable only through a transmit strobe: FSTXON, TX,
+ * TX_END, RXTX_SWITCH, TXFIFO_UNDERFLOW (0x12-0x16), and TXRX_SWITCH (0x10),
+ * the settling step from TX back to RX (cc110l.txt:4462-4495, state diagram
+ * :2316-2324). */
+static bool marc_is_tx(uint8_t m) {
+    m &= 0x1F;
+    return m == CC_MARC_TXRX_SWITCH || (m >= CC_MARC_FSTXON && m <= CC_MARC_TXFIFO_UNF);
+}
+
+/* Returns false at once on a TX state, so the caller's failure path (which
+ * runs tx_watch) stops it without waiting out the timeout. */
 static bool wait_marcstate(uint8_t want, uint32_t timeout_us) {
     uint32_t start = timebase_us();
     uint8_t  m;
     do {
-        if (cc110l_read_status_stable(CC_MARCSTATE, &m) && (m & 0x1F) == want) {
-            return true;
+        if (cc110l_read_status_stable(CC_MARCSTATE, &m)) {
+            if ((m & 0x1F) == want) {
+                return true;
+            }
+            if (marc_is_tx(m)) {
+                return false;
+            }
         }
     } while ((uint32_t)(timebase_us() - start) < timeout_us);
     return false;
+}
+
+/* Take one fresh chip status byte, then act on the TX-state flag: confirm with
+ * MARCSTATE (one status byte can be corrupt, cc110l.txt:1994-1997); a TX
+ * state confirmed: SIDLE, then stop the board (fw_panic, watchdog reset).
+ * Not confirmed: counted as a glitch and checked again, since the MARCSTATE
+ * reads bring status bytes of their own. Still flagged after three rounds,
+ * or MARCSTATE unreadable: SIDLE and return false; the caller re-initialises.
+ *
+ * The probe reads RXBYTES (header 0xFB): at least 3 bit errors away from any
+ * transmit strobe (STX 0x35/0xB5, SFSTXON 0x31/0xB1). The confirmation reads
+ * MARCSTATE (0xF5), 1 bit from 0xB5 (STX); a TX state caused that way shows
+ * in the next status byte and is caught by the next round. */
+static bool tx_watch(void) {
+    for (int round = 0; round < 3; round++) {
+        uint8_t rb;
+        (void)cc110l_read_status(CC_RXBYTES, &rb);
+        if (!cc110l_take_tx_state_flag()) {
+            return true;
+        }
+        uint8_t m = 0;
+        if (!cc110l_read_status_stable(CC_MARCSTATE, &m)) {
+            break;
+        }
+        if (marc_is_tx(m)) {
+            (void)radio_strobe(CC_SIDLE, NULL);
+            fw_panic("radio: chip in a TX state on a receive-only image", __FILE__, __LINE__);
+        }
+        COUNT(status_glitch);
+    }
+    (void)radio_strobe(CC_SIDLE, NULL);
+    LOG("radio: status bytes keep reporting a TX state, MARCSTATE unconfirmed or unreadable; "
+        "forced IDLE");
+    return false;
+}
+
+/* Bring-up failure or re-init: check first (a TX state found here is stopped
+ * and stops the board), then force IDLE whatever the state, then check the
+ * status byte that SIDLE and the probe returned. GDO interrupts off. */
+static void radio_force_idle(void) {
+    gdo_irq_enable(false);
+    (void)tx_watch();
+    (void)radio_strobe(CC_SIDLE, NULL);
+    (void)tx_watch();
 }
 
 /* SIDLE, then SFRX once IDLE is reached (SFRX only in IDLE or overflow,
@@ -385,7 +505,13 @@ static bool reg_is_unused(unsigned a) {
     return a == 0x1E || a == 0x1F || a == 0x27 || a == 0x28;
 }
 
-static bool radio_configure(void) {
+/* Written with the stock (= reset) values; if this die reads them back
+ * differently the radio stays idle, and the log line says which. */
+static bool reg_is_reserved(unsigned a) {
+    return a == CC_RSVD_20 || (a >= 0x29 && a <= 0x2B);
+}
+
+static bool radio_configure_steps(void) {
     gdo_irq_enable(false);
     rx.assembling = false;
 
@@ -405,9 +531,15 @@ static bool radio_configure(void) {
         LOG("radio: VERSION %02x looks like a dead bus; not configuring", ver);
         return false;
     }
+    if (!tx_watch()) {
+        return false;
+    }
 
     if (!cc110l_write_burst(0x00, cc_config, CC_NUM_CONFIG_REGS)) {
         LOG("radio: register burst write failed");
+        return false;
+    }
+    if (!tx_watch()) {
         return false;
     }
     uint8_t back[CC_NUM_CONFIG_REGS];
@@ -418,7 +550,8 @@ static bool radio_configure(void) {
     unsigned bad = 0;
     for (unsigned a = 0; a < CC_NUM_CONFIG_REGS; a++) {
         if (!reg_is_unused(a) && back[a] != cc_config[a]) {
-            LOG("radio: reg %02x wrote %02x read %02x", a, cc_config[a], back[a]);
+            LOG("radio: reg %02x%s wrote %02x read %02x", a, reg_is_reserved(a) ? " (reserved)" : "",
+                cc_config[a], back[a]);
             bad++;
         }
     }
@@ -443,10 +576,16 @@ static bool radio_configure(void) {
     (void)cc110l_read_burst(CC_FSCAL3, fscal, 3);
     LOG("radio: calibrated, FSCAL3 %02x FSCAL2 %02x FSCAL1 %02x%s", fscal[0], fscal[1], fscal[2],
         fscal[2] == 0x3F ? " (PLL NOT locked)" : "");
+    if (!tx_watch()) {
+        return false;
+    }
 
     if (!radio_strobe(CC_SFRX, NULL) || !radio_strobe(CC_SRX, NULL)
         || !wait_marcstate(CC_MARC_RX, 2000)) {
         LOG("radio: did not enter RX");
+        return false;
+    }
+    if (!tx_watch()) {
         return false;
     }
     gdo_irq_enable(true);
@@ -455,22 +594,73 @@ static bool radio_configure(void) {
     return true;
 }
 
+/* Reset, load and verify the table, calibrate, enter RX. On any failure the
+ * chip is checked for a TX state and forced to IDLE before returning, with
+ * the GDO interrupts left off. */
+static bool radio_configure(void) {
+    if (radio_configure_steps()) {
+        return true;
+    }
+    radio_force_idle();
+    return false;
+}
+
+/* Runtime re-init: check and force IDLE first, then the full bring-up. */
+static void radio_reinit(void) {
+    COUNT(reinit);
+    radio_force_idle();
+    (void)radio_configure();
+}
+
 /* Every 10 s: the chip must still hold our configuration and be in RX. A
- * brown-out or reset of the radio leaves reset defaults (IOCFG0 = 0x3F). */
+ * brown-out or reset of the radio leaves reset defaults (IOCFG0 = 0x3F).
+ * Registers 0x00-0x18 (IOCFG2 .. MCSM0) are read back in one 25-byte burst
+ * and compared with the table: they include IOCFG2/IOCFG0 (interrupt pins),
+ * IOCFG1 (SO 3-state for the shared MISO), PKTCTRL0, CHANNR, FREQ and MCSM1
+ * (RXOFF/TXOFF modes), and the chip changes none of them by itself. FSCAL3-0
+ * (0x23-0x26) are not compared: calibration rewrites them. */
+#define HEALTH_REGS (CC_MCSM0 + 1u)
+_Static_assert(CC_MCSM1 < HEALTH_REGS && CC_CHANNR < HEALTH_REGS && CC_PKTCTRL0 < HEALTH_REGS
+                   && CC_IOCFG2 < HEALTH_REGS && CC_IOCFG0 < HEALTH_REGS,
+               "health check covers the safety registers");
+
 static void health_check(void) {
-    uint8_t io0 = 0, m = 0;
-    if (!cc110l_read_reg(CC_IOCFG0, &io0) || io0 != cc_config[CC_IOCFG0]) {
-        LOG("radio: IOCFG0 reads %02x, configuration lost; re-initialising", io0);
-        COUNT(reinit);
-        (void)radio_configure();
+    if (!gdo_irq_on) {
+        /* A storm guard trip or a failed re-init left the interrupts off. */
+        LOG("radio: GDO interrupts off; re-initialising");
+        radio_reinit();
         return;
     }
+    uint8_t back[HEALTH_REGS];
+    if (!cc110l_read_burst(0x00, back, sizeof back)) {
+        /* No CHIP_RDYn: the chip is not answering, as the old IOCFG0 check
+         * also treated it. */
+        COUNT(spi_err);
+        LOG("radio: health: no answer; re-initialising");
+        radio_reinit();
+        return;
+    }
+    unsigned bad = 0;
+    for (unsigned a = 0; a < HEALTH_REGS; a++) {
+        if (back[a] != cc_config[a]) {
+            if (bad < 4) {
+                LOG("radio: health: reg %02x reads %02x, want %02x", a, back[a], cc_config[a]);
+            }
+            bad++;
+        }
+    }
+    if (bad) {
+        LOG("radio: %u registers lost; forcing IDLE and re-initialising", bad);
+        radio_reinit();
+        return;
+    }
+    uint8_t m = 0;
     if (!cc110l_read_status_stable(CC_MARCSTATE, &m)) {
         COUNT(spi_err);
         return;
     }
     m &= 0x1F;
-    if (m >= CC_MARC_FSTXON && m <= CC_MARC_TXFIFO_UNF) {
+    if (marc_is_tx(m)) {
         (void)radio_strobe(CC_SIDLE, NULL);
         fw_panic("radio: MARCSTATE in a TX state on a receive-only image", __FILE__, __LINE__);
     }
@@ -479,23 +669,6 @@ static void health_check(void) {
         COUNT(rearm);
         rx_flush_and_arm();
     }
-}
-
-/* A status byte claimed TX/FSTXON: confirm with MARCSTATE (one status byte
- * can be corrupt, cc110l.txt:1994-1997). */
-static void check_tx_state_flag(void) {
-    if (!cc110l_take_tx_state_flag()) {
-        return;
-    }
-    uint8_t m = 0;
-    if (cc110l_read_status_stable(CC_MARCSTATE, &m)) {
-        m &= 0x1F;
-        if (m >= CC_MARC_FSTXON && m <= CC_MARC_TXFIFO_UNF) {
-            (void)radio_strobe(CC_SIDLE, NULL);
-            fw_panic("radio: chip in a TX state on a receive-only image", __FILE__, __LINE__);
-        }
-    }
-    COUNT(status_glitch);
 }
 
 /* --- Flash on the shared bus (#10) ----------------------------------------- */
@@ -525,11 +698,12 @@ static void flash_check(void) {
 
 static void log_minute(void) {
     LOG("radio: 60 s: frames %lu (crc ok %lu, bad %lu, wake %lu), overflow %lu, bad len %lu, stale %lu, "
-        "rearm %lu, reinit %lu, spi err %lu, status glitch %lu",
+        "rearm %lu, reinit %lu, spi err %lu, status glitch %lu, irq storm %lu",
         (unsigned long)minute.frames, (unsigned long)minute.crc_ok, (unsigned long)minute.crc_bad,
         (unsigned long)minute.wake, (unsigned long)minute.overflow, (unsigned long)minute.bad_len,
         (unsigned long)minute.stale, (unsigned long)minute.rearm, (unsigned long)minute.reinit,
-        (unsigned long)minute.spi_err, (unsigned long)minute.status_glitch);
+        (unsigned long)minute.spi_err, (unsigned long)minute.status_glitch,
+        (unsigned long)minute.storm);
     LOG("flash: 60 s: JEDEC ID ok %lu, mismatch %lu (%lu during a frame); total frames %lu, "
         "flash mismatches %lu",
         (unsigned long)minute.flash_ok, (unsigned long)minute.flash_bad,
@@ -541,6 +715,7 @@ static void log_minute(void) {
 #define HEALTH_PERIOD_MS 10000u
 #define STATS_PERIOD_MS  60000u
 #define RETRY_PERIOD_MS  10000u
+#define STORM_REINIT_MIN_MS 1000u
 
 void radio_task_run(void) {
     self = xTaskGetCurrentTaskHandle();
@@ -554,12 +729,14 @@ void radio_task_run(void) {
         LOG("radio: bring-up failed; retrying in %u s", RETRY_PERIOD_MS / 1000);
         for (unsigned ms = 0; ms < RETRY_PERIOD_MS; ms += 100) {
             watchdog_checkin(WDG_RADIO);
+            (void)tx_watch(); /* radio_configure forced IDLE; keep watching */
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
 
     TickType_t next_health = xTaskGetTickCount() + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
     TickType_t next_stats  = xTaskGetTickCount() + pdMS_TO_TICKS(STATS_PERIOD_MS);
+    TickType_t last_storm  = xTaskGetTickCount() - pdMS_TO_TICKS(STORM_REINIT_MIN_MS);
     for (;;) {
         uint32_t bits = 0;
         /* Block with a timeout, never forever, so the watchdog check-in keeps
@@ -568,8 +745,21 @@ void radio_task_run(void) {
                               pdMS_TO_TICKS(rx.assembling ? 2 : 100));
         watchdog_checkin(WDG_RADIO);
 
+        TickType_t now = xTaskGetTickCount();
+        if (bits & NOTE_STORM) {
+            COUNT(storm);
+            /* Re-init at once, but at most once per STORM_REINIT_MIN_MS; a
+             * storm that comes straight back leaves the interrupts off until
+             * the next health check re-initialises. */
+            if ((uint32_t)(now - last_storm) >= pdMS_TO_TICKS(STORM_REINIT_MIN_MS)) {
+                last_storm = now;
+                LOG("radio: GDO interrupt storm (> %u edges in %u us); interrupts off, re-initialising",
+                    STORM_MAX_EDGES, STORM_WINDOW_US);
+                radio_reinit();
+            }
+        }
+
         rx_pump();
-        check_tx_state_flag();
         if (wake.active && (uint32_t)(timebase_us() - wake.last_us) > WAKE_GAP_US) {
             wake_flush();
         }
@@ -577,7 +767,6 @@ void radio_task_run(void) {
             flash_check();
         }
 
-        TickType_t now = xTaskGetTickCount();
         if ((int32_t)(now - next_health) >= 0) {
             next_health = now + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
             health_check();
@@ -586,6 +775,12 @@ void radio_task_run(void) {
             next_stats = now + pdMS_TO_TICKS(STATS_PERIOD_MS);
             wake_flush();
             log_minute();
+        }
+
+        /* Last radio access of every pass: a TX state caused by any access
+         * above is stopped now, not one pass later. */
+        if (!tx_watch()) {
+            radio_reinit();
         }
     }
 }

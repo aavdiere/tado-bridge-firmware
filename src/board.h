@@ -15,6 +15,13 @@
 /* LEDs: push-pull, high = on (docs/hardware.md). */
 enum led { LED_ROUTER, LED_POWER, LED_CLOUD, LED_PAIRING, LED_COUNT };
 
+/* Called first in main(), before the 2 s debugger-attach delay (#28): drives
+ * PA4 (radio CSn) and PB9 (flash CS#) high as push-pull outputs, so neither
+ * device is selected while the MCU waits. Touches only the GPIOA and GPIOB
+ * clock enables and, for those two pins only, BSRR, OTYPER and MODER. No
+ * other pin moves before the delay; never PA13/PA14 (SWD) or PB6/PB7. */
+void board_cs_early(void);
+
 /* First: drives the radio CSn (PA4) and flash CS# (PB9) high as push-pull
  * outputs (#28), so neither device is selected before SPI1 runs. Then GDO0/GDO2
  * (PA0/PA1) as inputs, the LED outputs (all off), the factory reset button

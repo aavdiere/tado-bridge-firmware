@@ -3,6 +3,8 @@
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/rcc.h>
 
+#include <stdint.h>
+
 static const uint16_t led_pin[LED_COUNT] = {
     [LED_ROUTER] = GPIO0, [LED_POWER] = GPIO1, [LED_CLOUD] = GPIO5, [LED_PAIRING] = GPIO8};
 
@@ -21,11 +23,47 @@ _Static_assert(((BOARD_RADIO_CS_PIN | BOARD_GDO0_PIN | BOARD_GDO2_PIN | BOARD_SP
                    == 0,
                "GPIOA pin outside the allowed set");
 
+/* Pin numbers of the two chip selects, for the 2-bit MODER fields. */
+#define RADIO_CS_PIN_NO 4u /* PA4 */
+#define FLASH_CS_PIN_NO 9u /* PB9 */
+_Static_assert(BOARD_RADIO_CS_PIN == (1u << RADIO_CS_PIN_NO), "PA4 radio CSn");
+_Static_assert(BOARD_FLASH_CS_PIN == (1u << FLASH_CS_PIN_NO), "PB9 flash CS#");
+_Static_assert(RADIO_CS_PIN_NO != 13u && RADIO_CS_PIN_NO != 14u, "never touch PA13/PA14 (SWD)");
+_Static_assert(FLASH_CS_PIN_NO != 6u && FLASH_CS_PIN_NO != 7u, "never touch PB6/PB7 (HomeKit I2C)");
+
+void board_cs_early(void) {
+    /* GPIOAEN = bit 0, GPIOBEN = bit 1 of RCC_AHB1ENR (rm0383.txt:5900-5960).
+     * The read-back makes the enable complete before the first GPIO access
+     * (STM32F4 errata "delay after an RCC peripheral clock enabling"; not in
+     * RM0383) [I]. */
+    RCC_AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN;
+    (void)RCC_AHB1ENR;
+
+    /* Level first: BSy sets ODRy (rm0383.txt:8222-8245), so the pin leaves
+     * input mode already high. */
+    GPIO_BSRR(GPIOA) = BOARD_RADIO_CS_PIN;
+    GPIO_BSRR(GPIOB) = BOARD_FLASH_CS_PIN;
+
+    /* OTy = 0 push-pull, the reset value (rm0383.txt:8092-8110). */
+    GPIO_OTYPER(GPIOA) &= ~(uint32_t)BOARD_RADIO_CS_PIN;
+    GPIO_OTYPER(GPIOB) &= ~(uint32_t)BOARD_FLASH_CS_PIN;
+
+    /* MODERy = 01 general purpose output (rm0383.txt:8064-8090). Read-modify-
+     * write of the one 2-bit field: GPIOA's reset value 0xA8000000 (PA13,
+     * PA14, PA15 in AF for SWD/JTAG) and GPIOB's 0x00000280 (PB3, PB4) are
+     * kept. */
+    GPIO_MODER(GPIOA) = (GPIO_MODER(GPIOA) & ~(3u << (2u * RADIO_CS_PIN_NO)))
+                        | (1u << (2u * RADIO_CS_PIN_NO));
+    GPIO_MODER(GPIOB) = (GPIO_MODER(GPIOB) & ~(3u << (2u * FLASH_CS_PIN_NO)))
+                        | (1u << (2u * FLASH_CS_PIN_NO));
+}
+
 void board_init(void) {
     /* #28: both SPI1 chip selects high (deselected) as push-pull outputs
-     * before anything else and before SPI1 is enabled. Until now PA4 floated,
-     * and the CC110L has no reset line. ODR is set through BSRR first, so the
-     * pins go straight from input to output-high without a low glitch. */
+     * before anything else and before SPI1 is enabled. board_cs_early() has
+     * already done this before the startup delay; repeating it here is
+     * idempotent and also sets the output speed. ODR is set through BSRR
+     * first, so the pins never glitch low. */
     rcc_periph_clock_enable(RCC_GPIOA);
     rcc_periph_clock_enable(RCC_GPIOB);
     rcc_periph_clock_enable(RCC_GPIOC);

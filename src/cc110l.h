@@ -91,6 +91,7 @@
 #define CC_MARC_RX          0x0D
 #define CC_MARC_RX_END      0x0E
 #define CC_MARC_RX_RST      0x0F
+#define CC_MARC_TXRX_SWITCH 0x10
 #define CC_MARC_RXFIFO_OVF  0x11
 #define CC_MARC_FSTXON      0x12
 #define CC_MARC_TX          0x13
@@ -104,8 +105,9 @@
 
 /* Chip status byte STATE field (bits 6:4), cc110l.txt:1381-1405. */
 #define CC_STATE(status) (((status) >> 4) & 0x07)
-#define CC_STATE_TX      2
-#define CC_STATE_FSTXON  3
+#define CC_STATE_TX          2
+#define CC_STATE_FSTXON      3
+#define CC_STATE_TXFIFO_UNF  7
 
 /* Manual reset: CSn strobe low/high (>= 40 us high), then SRES with a wait
  * for CHIP_RDYn before and after (cc110l.txt:2398-2408). Leaves the chip in
@@ -132,8 +134,9 @@ bool cc110l_read_status_stable(uint8_t addr, uint8_t *val);
 /* Burst read of n bytes from the RX FIFO (header 0xFF, cc110l.txt:1491-1494). */
 bool cc110l_read_rxfifo(uint8_t *dst, size_t n);
 
-/* Set when a chip status byte reported TX or FSTXON. The radio task confirms
- * with MARCSTATE and stops the board if it is real. Cleared by the call. */
+/* Set when a chip status byte reported TX, FSTXON or TXFIFO_UNDERFLOW. The
+ * radio task confirms with MARCSTATE and stops the board if it is real.
+ * Cleared by the call. */
 bool cc110l_take_tx_state_flag(void);
 
 #endif

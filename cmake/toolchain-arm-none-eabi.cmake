@@ -103,7 +103,11 @@ set(CMAKE_ASM_FLAGS
 # --specs=nosys.specs \
 # -nostdlib \
 # -mabi=aapcs \
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} \
+# Set, not appended: the cache entry survives a re-run of cmake on the same
+# build directory, and appending to it would repeat every flag (and -T, which
+# ld refuses twice). The linker script is a target link option instead
+# (cmake/CMakeLists.txt).
+set(CMAKE_EXE_LINKER_FLAGS " \
     -Wl,--gc-sections \
     -nostartfiles \
     --static \

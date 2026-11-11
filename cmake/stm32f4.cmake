@@ -21,7 +21,7 @@ set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} \
     ${ARCH_FPU_FLAGS} \
 " CACHE INTERNAL "ASM Compiler options")
 
-# Linker flags
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} \
-    -T${LINKER_SCRIPT} \
-" CACHE INTERNAL "Linker options")
+# The linker script (LINKER_SCRIPT) is added with target_link_options in
+# cmake/CMakeLists.txt, not appended to CMAKE_EXE_LINKER_FLAGS: that cache
+# entry persists across cmake runs, so appending duplicated -T on every
+# re-run.

@@ -92,9 +92,13 @@ static void guard_write(uint8_t addr, uint8_t val) {
     }
 }
 
+/* STATE TX (010), FSTXON (011) and TXFIFO_UNDERFLOW (111) can only follow a
+ * transmit strobe (cc110l.txt:1381-1405). A status byte of 0xFF (MISO stuck
+ * high mid-byte) also reads as 111; the radio task confirms with MARCSTATE
+ * before acting, so such a glitch is only counted. */
 static void note_status(uint8_t status) {
     uint8_t st = CC_STATE(status);
-    if (st == CC_STATE_TX || st == CC_STATE_FSTXON) {
+    if (st == CC_STATE_TX || st == CC_STATE_FSTXON || st == CC_STATE_TXFIFO_UNF) {
         tx_state_seen = true;
     }
 }

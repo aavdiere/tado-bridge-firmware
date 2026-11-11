@@ -5,7 +5,7 @@
 - Device `STM32F411CE`, linker script `cmake/stm32f411ce.ld` (512 KB flash, 128 KB RAM).
 - `make flash` or `tools/flash.sh [elf]`: `openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c "program <elf> verify reset exit"`. No `st-flash`, no connect-under-reset (no NRST on the test points).
 - RTT: `tools/rtt.sh` starts OpenOCD with an RTT server on TCP 19021; connect with `nc localhost 19021`, or without netcat: `bash -c 'exec 3<>/dev/tcp/127.0.0.1/19021; cat <&3'`. `tools/rtt.sh` can be started at any time, also during the firmware's 2 s startup delay: OpenOCD 0.12 searches for the control block only once per `rtt start`, so the script retries every 200 ms for up to 10 s (verified on the bench 2026-11-11 **[V]**: two misses during the delay, then the full boot log). Port 9090 is taken by another service on the bench PC; override with `RTT_PORT`. The firmware has its own minimal RTT block (`src/rtt.c`, up channel 0, 1 KB, non-blocking, ID `SEGGER RTT`), found by scanning RAM.
-- Startup: `main()` busy-waits 2 s first so a debugger can attach. Then `clock_init()` (`src/clock.c`, #7) sets 96 MHz from the 26 MHz crystal, with an HSI fallback, and the boot log reports the source and the RCC/flash registers (`hardware.md`, Clock tree).
+- Startup: `main()` first drives the two SPI1 chip selects high (`board_cs_early()`, PA4 and PB9 only, #28), then busy-waits 2 s so a debugger can attach. Then `clock_init()` (`src/clock.c`, #7) sets 96 MHz from the 26 MHz crystal, with an HSI fallback, and the boot log reports the source and the RCC/flash registers (`hardware.md`, Clock tree).
 - VS Code: `.vscode/launch.json` has Cortex-Debug launch and attach configs for OpenOCD with RTT.
 
 ## P1: FreeRTOS, LEDs, buttons, watchdog (#8)
@@ -61,3 +61,14 @@ The radio task now owns SPI1 and blinks no placeholder LED; the cloud LED (PB5) 
 Record PARTNUM/VERSION, the frame and CRC counts, the RSSI range and the `FREQEST` spread in `radio-runtime.md` and `hardware.md` (offset measurement for #7). After the test, power-cycle the board again so the radio leaves our configuration.
 
 Size (`make size`, Release): text 19664, data 116, bss 34492 bytes.
+
+**Pre-flash review follow-ups (#9, #28).** Bench result of the first P2 image: flash ID `c22815`, PARTNUM `00` / VERSION `17`, 210 of 211 frames CRC OK in 60 s, no errors **[V]** (2026-11-11). The follow-ups from the `fw-reviewer` review, built but **not yet run on hardware**:
+
+- TX-state watch on every path, not only the steady-state loop: after each bring-up step, on every bring-up failure (check, `SIDLE`, check), every 100 ms of the 10 s retry wait, and as the last radio access of every task loop pass. Status byte STATE `111` (TXFIFO_UNDERFLOW) now counts as a TX state too, next to TX and FSTXON (`datasheets/cc110l.txt:1381-1405`); MARCSTATE `0x10` (TXRX_SWITCH) joins `0x12-0x16` (`cc110l.txt:4462-4495`). Details in `src/radio.c` (`tx_watch`).
+- Chip selects high before the 2 s startup delay (`hardware.md`, SPI1).
+- GDO interrupt storm guard and the wider 10 s health check (`hardware.md`, SPI1).
+- A read-back mismatch of the reserved registers `0x20`, `0x29-0x2B` is tagged `(reserved)` in the log line.
+- `RADIO_TX_ALLOWED` builds will need `RADIO_RX_CHANNEL != RADIO_PROTECTED_CHANNEL` (`_Static_assert`, inactive while `RADIO_TX_ALLOWED` is 0, which still `#error`s).
+- CMake: re-running `cmake` on an existing build directory used to append the linker flags to their own cache entry again, and `ld` then refused the linker script given twice ("appears multiple times"). The toolchain file now sets `CMAKE_EXE_LINKER_FLAGS` instead of appending, and the linker script is a `target_link_options(-T...)` in `cmake/CMakeLists.txt` (CMake 3.13 or newer); the cached flags stay identical across re-runs **[V]** (build PC, CMake 4.4.5).
+
+Size after the follow-ups (`make size`, Release): text 20680, data 116, bss 34512 bytes.
