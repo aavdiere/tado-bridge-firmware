@@ -59,8 +59,18 @@ Tools present: `rtl_test`, `rtl_sdr`, `rtl_power`, `rtl_fm`; Python with numpy a
 
 ## Bench network
 
-- **Direct link:** `enp196s0f0` gets a static address on a private subnet that does not overlap the home LAN (`10.13.0.0/16`).
-- **DHCP and DNS:** `dnsmasq` on that interface only. It resolves the server name to the laptop.
-- **Server:** tanoclo from `../tanoclo` in Docker, listening on the bench interface. Its TLS certificate chain is our own (`server-api.md`).
-- Interface, `dnsmasq` and Docker setup need root. The owner runs those commands or allows them.
-- Keeping the bridge off the home LAN also keeps it away from the stock bridge and the tado cloud.
+Tested 2026-11-11 without changing anything.
+
+| Piece | Root? | Notes |
+| :--- | :--- | :--- |
+| Network | No | The owner set the wired connection (`Wired connection 1`, `enp196s0f0`) to NetworkManager **shared** mode **[V]**. With a cable in, it gets `10.42.0.1/24` and NetworkManager's own DHCP and DNS, and NATs to Wi-Fi **[D]** (NetworkManager default; the address appears once a cable is in) |
+| Server address | No | Firmware connects to `10.42.0.1` directly, with that IP in tanoclo's TLS certificate. A DNS name would need root: `/etc/NetworkManager/dnsmasq-shared.d` is root-only **[V]** |
+| Docker | **Once** | User is in the `docker` group, but the daemon is not running **[V]**. Owner runs `sudo systemctl enable --now docker` |
+| tanoclo port 988 | No | Ports below 1024 are privileged **[V]**, but Docker publishes them |
+| Firewall | No | firewalld, ufw, nftables and iptables services all inactive **[V]** |
+| ST-Link | No | udev rules with `uaccess` for 0483:3748 and 0483:374b are installed **[V]** |
+| RTL-SDR | No | RTL2832U with R820T tuner found and opened by `rtl_test` as a normal user **[V]**; DVB driver blacklisted in `/usr/lib/modprobe.d/rtlsdr.conf` **[V]** |
+
+**Keep the test server off the home LAN:** tanoclo's `docker-compose.yml` publishes 988, 3111, 80 and 443 on all interfaces (`tanoclo/docker-compose.yml:34-51`). Use a local override that binds them to `10.42.0.1` only. The override lives outside the tanoclo repo.
+
+**NAT gives the bridge internet access.** Our firmware never contacts tado, but the stock firmware still on the board would try to reach the tado cloud if it ran with Ethernet plugged in. P0 runs with Ethernet unplugged anyway (`tanoclo/patch_ib_firmware/README.md:247`).
