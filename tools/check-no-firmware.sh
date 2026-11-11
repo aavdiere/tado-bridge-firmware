@@ -48,12 +48,13 @@ check_blob() { # $1 = path, $2 = blob id
 case "${1:-}" in
   --staged)
     while IFS=$'\t' read -r meta path; do
+      [[ $meta == *" 160000 "* ]] && continue # submodule gitlink, no blob
       blob=$(awk '{print $4}' <<<"$meta")
       check_blob "$path" "$blob"
     done < <(git diff --cached --raw --no-renames --diff-filter=ACM --no-abbrev)
     ;;
   --tracked)
-    while read -r _ _ blob path; do check_blob "$path" "$blob"; done < <(git ls-tree -r HEAD)
+    while read -r _ type blob path; do [[ $type == commit ]] && continue; check_blob "$path" "$blob"; done < <(git ls-tree -r HEAD)
     ;;
   --history)
     while read -r blob path; do

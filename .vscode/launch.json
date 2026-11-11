@@ -1,0 +1,47 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // No NRST on the IB01 test points: attach without reset, or
+            // launch (OpenOCD halts and loads over SWD). Never touch PA13/PA14.
+            "name": "OpenOCD: Launch",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/tado-bridge.elf",
+            "servertype": "openocd",
+            "request": "launch",
+            "type": "cortex-debug",
+            "device": "STM32F411CE",
+            "configFiles": ["interface/stlink.cfg", "target/stm32f4x.cfg"],
+            "preLaunchTask": "make",
+            "runToEntryPoint": "main",
+            "interface": "swd",
+            "showDevDebugOutput": "none",
+            "rttConfig": {
+                "enabled": true,
+                "address": "auto",
+                "searchSize": 131072,
+                "searchId": "SEGGER RTT",
+                "decoders": [{ "label": "RTT", "port": 0, "type": "console" }]
+            }
+        },
+        {
+            "name": "OpenOCD: Attach",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/tado-bridge.elf",
+            "servertype": "openocd",
+            "request": "attach",
+            "type": "cortex-debug",
+            "device": "STM32F411CE",
+            "configFiles": ["interface/stlink.cfg", "target/stm32f4x.cfg"],
+            "interface": "swd",
+            "showDevDebugOutput": "none",
+            "rttConfig": {
+                "enabled": true,
+                "address": "auto",
+                "searchSize": 131072,
+                "searchId": "SEGGER RTT",
+                "decoders": [{ "label": "RTT", "port": 0, "type": "console" }]
+            }
+        }
+    ]
+}

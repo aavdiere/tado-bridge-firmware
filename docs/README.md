@@ -34,6 +34,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 | [`tools/read_ib01_system_areas.tcl`](tools/read_ib01_system_areas.tcl) | Read-only OpenOCD script for option bytes, OTP and unique ID. Run alongside `read.sh`. |
 | [`test-bench.md`](test-bench.md) | Bench setup (ST-Link, Ethernet, RTL-SDR), what Claude may do on hardware, protecting the stock network. |
 | [`prototype-plan.md`](prototype-plan.md) | Staged prototype plan P0-P7 based on `stm-template`, with GitHub progress tracking. |
+| [`build.md`](build.md) | Build, flash (OpenOCD) and RTT log commands. |
 | [`design.md`](design.md) | Firmware design proposals. Persistent storage, entropy, software stack, self-update and first flash. |
 | [`radio.md`](radio.md) | 868 MHz PHY, CC110L registers, frames, coordinator behaviour, repo conflicts, reuse. |
 

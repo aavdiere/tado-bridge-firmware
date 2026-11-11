@@ -1,0 +1,42 @@
+{
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/CVS": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true,
+
+        "vendor/": true,
+        "build/": true,
+        "build-release/": true,
+        ".vscode/": true,
+        "cmake/": true,
+        ".clang-format": true,
+        ".git*": true,
+        "LICENSE": true,
+    },
+
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/bower_components": true,
+        "**/*.code-search": true,
+
+        ".vscode/": false,
+        "cmake/": false,
+        ".clang-format": false,
+        ".git*": false,
+        "LICENSE": true,
+    },
+
+    "[cmake]": {
+        "editor.rulers": [
+            80
+        ],
+    },
+    "cmake.configureOnOpen": true,
+    "cmake.sourceDirectory": "${workspaceFolder}/cmake",
+    "cmake.generator": "Unix Makefiles",
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.configureSettings": { "DEVICE": "STM32F411CE" },
+}
