@@ -45,4 +45,5 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 - Support 16 devices for now.
 - Firmware update images are not signed.
 - Listen before transmit, as the stock bridge does it.
+- Work is delegated to subagents with a fixed model and effort per task type (`CLAUDE.md`, `.claude/agents/`), 2026-11-11.
 - Progress is tracked in this repo: milestones P0-P7 and issues, see [`prototype-plan.md`](prototype-plan.md).

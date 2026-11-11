@@ -44,6 +44,22 @@ libopencm3 is LGPL-3. That is fine for own use. Distributing binaries would requ
 - Last resort if SWD is lost: pull BOOT0 high so the chip starts in ST's ROM bootloader, which leaves SWD usable (`hardware.md`) **[I]**.
 - Keep the backup and restore images ready from P0.
 
+## Subagents per stage
+
+Each task is delegated to a subagent with its own model and effort, defined in `.claude/agents/` and summarised in `CLAUDE.md`. Owner decision, 2026-11-11. Prices per million tokens (input/output) as listed 2026-11-03: Fable 5.2 $8/$40, Opus 5.5 $4/$20, Sonnet 5.5 $2/$10, Haiku 5.5 $0.10/$0.50.
+
+| Stage | Main subagent | Also |
+| :--- | :--- | :--- |
+| P0 Backup and restore | `fw-routine` (scripts, checks) | `log-reader` for OpenOCD output; the owner runs the hardware steps |
+| P1 Skeleton | `fw-routine` | `fw-driver` for the clock tree |
+| P2 Radio and flash | `fw-driver` | `log-reader` for RTT logs |
+| P3 Ethernet | `fw-driver` | `log-reader` |
+| P4 TLS and WebSocket | `fw-driver` | `log-reader` for RAM and handshake measurements |
+| P5 Radio link to devices | `fw-critical` | `fw-reviewer` before flashing |
+| P6 Storage | `fw-driver` | `fw-reviewer` for power-cut safety |
+| P7 Size check, bootloader, self-update | `fw-critical` | `fw-reviewer` before flashing; `log-reader` for size reports |
+| Any stage | `docs-keeper` for docs, issues and commits | `fw-reviewer` before anything goes onto a board |
+
 ## Stages
 
 ### P0: Backup and restore (before anything is flashed)

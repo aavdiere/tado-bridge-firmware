@@ -41,6 +41,10 @@ Each stage is a GitHub milestone, and its tasks are issues. Details: [`docs/prot
 | Ethernet | Microchip ENC28J60 |
 | Storage | Macronix MX25R1635F, 2 MB |
 
+## Working with Claude Code
+
+`CLAUDE.md` gives the project rules, and `.claude/agents/` defines subagents with a fixed model and effort for each kind of task: routine code, drivers, the hardest radio and bootloader work, review before flashing, log reading, and docs upkeep. Mapping per stage: [`docs/prototype-plan.md`](docs/prototype-plan.md#subagents-per-stage).
+
 ## Never commit firmware
 
 A dump of a real bridge holds its network key and identity. Firmware images, flash dumps, captures and keys must never enter this repository:
