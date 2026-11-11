@@ -51,7 +51,7 @@ Because tanoclo is the compatibility target and accepts zeros for #10, the firmw
 | # | Risk | Note |
 | :-- | :-- | :-- |
 | 16 | Enhanced ACK turnaround over SPI; gap may be under 1 ms | Eased: the ACK is unencrypted and mostly static, so it can be prebuilt (`wiki/Tado-868-MHz-Link-Protocol.md:346-348`), and the radio's RX-to-TX switch is only about 30 µs (`datasheets/cc110l-vs-cc1101.md`) |
-| 17 | RAM budget for TLS, WebSocket, IP and radio in 128 KB | Estimated 71 KB in `design.md`; to be measured |
+| 17 | RAM budget for TLS, WebSocket, IP and radio in 128 KB | Estimated 71 KB in `design.md`; to be measured. First runtime numbers from P1 (2026-11-11, **[V]**, early data point only): FreeRTOS heap 25632 of 32768 bytes free, unused task stack 489/489/352 of 512 words (radio/net/hk); no TLS, lwIP or radio buffers yet |
 | 18 | Stack choice | **Approved (user, 2026-11-11):** FreeRTOS, lwIP, mbedTLS, own 6LoWPAN and MAC ported from freedo. See `design.md` |
 | 19 | Radio deadlines versus Ethernet and flash work | Task design in `design.md`; to be proven on a prototype. Ethernet is on SPI2, so only flash shares the radio's bus |
 | 20 | Bridge self-update and rollback; first flash path | **Approved (user, 2026-11-11) if the firmware fits:** check bootloader and image sizes against the layout before building. Images are unsigned. Open: how the uploader reaches tanoclo |

@@ -28,9 +28,11 @@
 
 **Watchdog.** IWDG on the LSI (17-47 kHz, typical 32 kHz), prescaler /64, reload 1500: **timeout 2.0 s to 5.6 s, 3.0 s typical** (`datasheets/stm32f411ce.txt:5028`). Started in `main()` after the startup delay, `clock_init()` and task creation, right before the scheduler. Only `housekeep` kicks it, every 500 ms, and only if the radio, net and housekeeping tasks each checked in (`watchdog_checkin()`, an atomic flag per task) during that window. Otherwise it logs `watchdog: not kicked, missing check-in mask N` and the board resets 2-6 s later. The reset cause (`IWDG`, `PIN`, `POR/PDR`, `SOFTWARE`, `BOR`...) is logged from `RCC_CSR` at every boot and the flags are cleared (`RMVF`). `main()` sets `DBGMCU_APB1_FZ.DBG_IWDG_STOP` (bit 12, `rm0383.txt:46197`) so the watchdog stops counting while OpenOCD halts the core; the register survives system resets but not a power cycle, and the firmware sets it on every boot. This freeze only applies to a halted core: a running core that has hung is still reset.
 
+**Start `tools/rtt.sh` before testing [V]:** the 1 KB RTT up buffer fills after about 2 minutes with no host attached and then drops new lines (seen on the bench 2026-11-11: early button presses were lost and one heartbeat line was truncated).
+
 **Bench test, expected result after `make flash` and `make rtt`:**
 
-1. The log shows `reset: RCC_CSR ...` (after a flash: `PIN`, or `POR/PDR` after a power cycle), the clock lines, `watchdog: IWDG started`.
+1. The log shows `reset: RCC_CSR ...` (after a flash: `SOFTWARE PIN`, because OpenOCD resets with SYSRESETREQ **[V]**, 2026-11-11; `POR/PDR` after a power cycle), the clock lines, `watchdog: IWDG started`.
 2. Power LED (PB1) blinks at 1 Hz and cloud LED (PB5) at 1 Hz. Both continue indefinitely.
 3. Press the factory reset button: router LED (PB0) lights while held, RTT prints `button: factory reset (PB10) pressed`/`released`. Press the pair button: pairing LED (PB8) lights, same in RTT.
 4. **Deliberate hang** (compiled in by default for P1; `make clean; make HANG_TEST=0` removes it; the setting is cached in the build directory until the next `make clean`):

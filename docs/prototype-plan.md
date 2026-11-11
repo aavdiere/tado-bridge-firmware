@@ -82,6 +82,15 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 - FreeRTOS with empty radio, net and housekeeping tasks; independent watchdog.
 - **Done when:** LEDs follow the button, RTT shows logs, and the watchdog resets a deliberate hang.
 
+**P1 result: done, 2026-11-11 [V]** (RTT logs, kept out of git; image sha256 `6f9a6a4acc3aeb12d1b95283d73b044ac672459334d6e40c5c99234d24378bba`, flashed with `make flash` after the `fw-reviewer` verdict "safe to flash"):
+
+- Clock: HSE crystal, 96 MHz, registers as predicted (`hardware.md`). The #7 VOSRDY concern is settled: HSE+PLL completed without the "regulator scale 1 not ready" fault, PWR_CR `0000c000`, so VOSRDY sets within the 5 ms timeout on this unit.
+- LEDs and buttons: power (PB1) and cloud (PB5) blink from the net and radio tasks (P1 test wiring); router (PB0) follows factory reset (PB10), pairing (PB8) follows pair (PC15), observed by the owner. RTT logged clean press and release events for both buttons.
+- Watchdog: factory reset held >5 s gave `HANG TEST: net task stops checking in`, about 5 `watchdog: not kicked, missing check-in mask 2` lines at 500 ms intervals, then a reset with `reset: RCC_CSR 24000000: IWDG PIN`. Both buttons >5 s gave `HANG TEST: radio task spins`, a reset and `IWDG PIN`. RTT via OpenOCD reattached by itself after each reset.
+- RAM at runtime: FreeRTOS heap free 25632 of 32768 bytes (minimum the same); unused stack words radio/net/hk 489/489/352 of 512 (early data point for #17, not a conclusion).
+- The owner power-cycled the board afterwards so the CC110L is back at power-on defaults rather than the stock channel-26 configuration.
+- Non-blocking review notes are tracked in the "Follow-ups from the P1 pre-flash review" issue (P2 milestone).
+
 ### P2: Radio and flash on SPI1
 
 - SPI1 (PA5-7), radio CS PA4, flash CS PB9, GDO0 PA0, GDO2 PA1 (`hardware.md`).

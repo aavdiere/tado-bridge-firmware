@@ -48,9 +48,9 @@ Rules:
 
 The backup shows the bench IB01 is configured for **channel 26**, the same channel as the active stock network (`tanoclo/patch_ib_firmware/extract_channel.js` on the external flash backup, 2026-11-11). Whenever its stock firmware runs, the bench unit therefore acts as a tado bridge on the protected channel, and if it ever belonged to the same home it may share that network's key **[I]**.
 
-- **Do not let the stock firmware run on the bench.** It ran briefly when the ST-Link first powered the board. Since P0 the core is halted (`DHCSR` S_HALT set).
-- Re-plugging the ST-Link or a reset starts the stock firmware again. Halt it at once (`openocd ... -c init -c halt -c shutdown`) until P1 replaces it.
-- The first P1 flash replaces the stock firmware for good; the backup and the proven restore bring it back if needed.
+- **The bench unit no longer runs the stock firmware [V]:** the P1 image replaced it on 2026-11-11 (`make flash`, OpenOCD verify OK). The stock firmware only returns if the backup is restored.
+- Re-plugging the ST-Link or a reset now starts our firmware, not the stock one. The CC110L keeps its register state across an MCU reset, so after a test that touched the radio, power-cycle the board so it returns to power-on defaults instead of the stock channel-26 configuration (reviewer request, done after P1).
+- The backup and the proven restore bring the stock firmware back if needed; never restore it while Ethernet is plugged in.
 
 ## Bench tools
 
@@ -107,7 +107,7 @@ Tested 2026-11-11 without changing anything.
 
 **Supply with Ethernet connected [V]:** 3.20 V at the ST-Link with the PHY linked and the MCU halted. The current draw that matters comes when the bridge transmits (P3).
 
-**With Ethernet plugged in, a reset lets the stock firmware reach the tado cloud** through the laptop's NAT, and transmit on channel 26. Keep the core halted until P1 replaces the stock firmware.
+**With Ethernet plugged in, a reset lets the stock firmware reach the tado cloud** through the laptop's NAT, and transmit on channel 26. The stock firmware has been replaced by the P1 image (2026-11-11 **[V]**); keep it that way.
 
 **Keep the test server off the home LAN:** tanoclo's `docker-compose.yml` publishes 988, 3111, 80 and 443 on all interfaces (`tanoclo/docker-compose.yml:34-51`). Use a local override that binds them to `10.42.0.1` only. The override lives outside the tanoclo repo.
 
