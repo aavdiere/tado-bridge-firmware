@@ -39,6 +39,7 @@ Rules:
 3. **Receive-only on the stock channel.** Listening there to measure stock timing as a reference is fine. Never ACK, answer, wake or replay anything there.
 4. **Answer only frames addressed to our own EUI-64.** Freedo's ACK rule already does this (`radio-runtime.md`).
 5. **Pairing windows only on the test channel,** and keep them short. Stock devices only join while in pairing mode, but our Router Advertisements under the pairing key must not reach the stock channel.
+   **Pair only a device named by its EUI-64.** A tado device nearby scans channels with Beacon Requests (scan below) and could otherwise join the test network. Freedo's pairing flow already supports naming the target (`freedo/docs/PROTOCOL.md:699-705`).
 6. **Fresh network key** for the test network, generated as in `design.md`. Never try to obtain the stock network's key.
 7. **No test device yet** (owner, 2026-11-11). Up to P4 no device is needed. Decide before P5, without taking devices from the stock network unless the owner chooses to.
 8. **Listen-before-transmit stays on,** which also helps coexistence (`radio-runtime.md`).
@@ -56,6 +57,23 @@ Rules:
 Tools present: `rtl_test`, `rtl_sdr`, `rtl_power`, `rtl_fm`; Python with numpy and scipy for a small GFSK demodulator (50 kbps, deviation about 25 kHz, sync `D391D391`, `radio.md`). The `dvb_usb_rtl28xxu` kernel module must not claim the dongle; blacklist it if it loads.
 
 **SDR captures stay out of git.** They contain the stock network's traffic. `.gitignore` and `tools/check-no-firmware.sh` refuse common IQ formats.
+
+## Channel scan result (2026-11-11) [V]
+
+Receive-only, RTL-SDR (R820T, gain 30 dB, 2.4 MS/s), tools `tools/sdr/chanscan.py` (burst-aware power per channel) and `tools/sdr/frames.py` (GFSK demodulation, sync `D391D391`, radio CRC check). Nothing was written to disk.
+
+**Stock network: channel 26 (868.3237 MHz). This is the protected channel.**
+
+| Channel | Finding |
+| :--- | :--- |
+| 26 | Strongest signal, 57 dB above the noise floor. 84 CRC-valid tado frames in 30 s: wake-up 55, broadcast 20, data 4, Enhanced ACK 4, Beacon Request 1. Mean carrier offset +3.5 kHz (dongle error included) |
+| 11, 16, 21, 29 | One Beacon Request each, all near +14 kHz offset: probably **one tado device scanning channels** for its bridge, not part of an active network |
+| 20, 24, 25, 27, 28 | Many bursts in the power scan but **no** tado frames: other users of the band. These frequencies match common LoRaWAN channels (867.1-867.9, 868.1-868.5 MHz) **[I]** |
+| 0-10, 39-49 | Almost no activity in a 60 s power scan per span |
+
+**Test channel: proposed 10 (865.1245 MHz).** It is quiet, 16 channels from the protected channel, and inside tado's own channel plan, which stock bridges also pick from. Regulatory limits per sub-band (duty cycle, listen-before-transmit) were not checked here **[I]**; re-check activity before first transmit. Needs the owner's confirmation.
+
+Frequency offsets include the dongle's own crystal error, which is not yet calibrated, so they do not give the bridge's offset (#7) yet.
 
 ## Bench network
 
