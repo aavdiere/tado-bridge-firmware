@@ -69,7 +69,7 @@ Because tanoclo is the compatibility target and accepts zeros for #10, the firmw
 
 | # | Was | Answer |
 | :-- | :-- | :-- |
-| 1 (part) | Stock CC110L register table and clock setup | Full table in `radio.md`, from `wiki/CC110-Register-Configuration.md`. MCU clock tree is still unknown but is ours to choose |
+| 1 (part) | Stock CC110L register table and clock setup | Full table in `radio.md`, from `wiki/CC110-Register-Configuration.md`. MCU clock tree chosen: 96 MHz from the 26 MHz crystal, `hardware.md` Clock tree (#7) |
 | 3 | FIFO strategy for frames over 64 bytes | GDO0 threshold interrupt at 16 bytes; see `radio.md` |
 | 4 | CC110L pin clues | Pin table in `hardware.md` |
 | 15 (part) | Docs versus code conflicts | Code wins; see `server-api.md` |

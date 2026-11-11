@@ -24,7 +24,7 @@ Proposal:
 | Device | `STM32F413ZH` (`Makefile`) | `STM32F411CE`. libopencm3 knows it: 512 KB, 128 KB (`vendor/libopencm3/ld/devices.data:159`) |
 | Linker script | `cmake/stm32f413zh.ld` with `ram2` | New `cmake/stm32f411ce.ld`: 512 KB at `0x08000000`, 128 KB RAM, no `ram2`. App moves to `0x08010000` in P7 |
 | Family file | `cmake/stm32f4.cmake` (Cortex-M4F, hard float) | No change |
-| Clock | 16 MHz internal, no setup (`src/firmware.c`) | 26 MHz crystal to about 96-100 MHz via PLL. libopencm3 has no 26 MHz preset, so define an `rcc_clock_scale` **[I]**, checked against RM0383 |
+| Clock | 16 MHz internal, no setup (`src/firmware.c`) | 26 MHz crystal to about 96-100 MHz via PLL. libopencm3 has no 26 MHz preset and its `rcc_clock_setup_pll()` waits forever on HSE, so `src/clock.c` sets the registers itself with timeouts: 96 MHz, checked against RM0383 (`hardware.md`, Clock tree) **[I]** |
 | Flashing | `st-flash --connect-under-reset` | IB01 test points carry no NRST (`tanoclo/patch_ib_firmware/README.md:151-158`), so use OpenOCD `program ... verify reset exit` with `stlink.cfg` and `stm32f4x.cfg` |
 | Debugger | Cortex-Debug for J-Link or `stutil` | Cortex-Debug with OpenOCD |
 | Logging | J-Link SWO viewer | SEGGER RTT over SWD; installed OpenOCD 0.12 supports `rtt server`. SWO needs PB3, which may not reach a test point |

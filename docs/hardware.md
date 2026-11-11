@@ -67,6 +67,32 @@ The earlier guess of PA8 for the cloud LED was wrong; PA8 is not accounted for.
 
 **HomeKit coprocessor (MFI337S3959): leave untouched.** Owner question, 2026-11-11: does it need a backup? The stock firmware's HomeKit data (pairings, setup code, accessory identity) can only live in the bridge's flash, which the P0 backup covers **[I]**. The coprocessor holds a factory certificate and a private key that cannot be read out by design; the board cannot write either **[I]** (from general knowledge of Apple MFi authentication chips, not checked against a datasheet). So it needs no backup, and the firmware must simply never drive its I2C bus (probably PB6/PB7, from the external pull-ups seen there; not verified). A restore of the backup then brings back the stock firmware with HomeKit intact. Reading the coprocessor's certificate is possible later if HomeKit is ever wanted, as a separate task.
 
+## Clock tree (#7) [I]
+
+Chosen in `src/clock.c`; not yet measured on the bench. All limits below are also checked by `_Static_assert`s in that file.
+
+| Item | Value | Limit and source |
+| :--- | :--- | :--- |
+| HSE | 26 MHz crystal, HSEBYP = 0 (crystal per Components table above) | 4-26 MHz (`datasheets/stm32f411ce.txt:4848`) |
+| PLL input | HSE / PLLM 13 = 2 MHz | PLLM 2-63, VCO input 1-2 MHz, 2 MHz recommended (`datasheets/rm0383.txt:5313-5316`) |
+| VCO | 2 MHz x PLLN 96 = 192 MHz | PLLN 50-432 (`rm0383.txt:5293`), VCO 100-432 MHz (`rm0383.txt:5290-5291`, `stm32f411ce.txt:5096`) |
+| SYSCLK = HCLK | VCO / PLLP 2 = 96 MHz | PLLP 2/4/6/8, at most 100 MHz (`rm0383.txt:5280-5285`) |
+| PLL48CK | VCO / PLLQ 4 = 48 MHz (unused; USB is power only) | PLLQ 2-15 (`rm0383.txt:5253`) |
+| APB1 | HCLK / 2 = 48 MHz; APB1 timers 96 MHz | at most 50 MHz (`rm0383.txt:5431`); timers x2 when the prescaler is not 1 (`rm0383.txt:4760-4763`) |
+| APB2 | HCLK / 1 = 96 MHz | at most 100 MHz (`rm0383.txt:5421`) |
+| Regulator | Scale 1 (VOS = 11), wait for VOSRDY | needed above 84 MHz (`rm0383.txt:4254-4263`) |
+| Flash | 3 wait states, prefetch, I- and D-cache on | 3 WS for 90-100 MHz at 2.7-3.6 V and for 72-96 MHz at 2.4-2.7 V (`rm0383.txt:2067`) |
+
+**Why 96 and not 100 MHz:** 96 MHz gives an exact 48 MHz PLL48CK, keeps APB1 below its 50 MHz limit instead of on it, needs 3 wait states down to 2.4 V where 100 MHz needs 4 (`rm0383.txt:2067-2068`), and the same PLLN/P/Q work from the 16 MHz HSI with PLLM = 8, so the fallback runs at the same frequencies.
+
+**Bus clocks for drivers:** SPI1 (radio, flash) runs from APB2 at 96 MHz, so its prescaler gives 48, 24, 12, 6, 3 MHz...; SPI2 (ENC28J60) runs from APB1 at 48 MHz, giving 24, 12, 6 MHz..., so 12 MHz is the fastest setting under the ENC28J60's 20 MHz limit (`datasheets/enc28j60.txt:17`). `clock_apb1_hz` and `clock_apb2_hz` hold the values, and libopencm3's `rcc_apb1_frequency`/`rcc_apb2_frequency` are set to match.
+
+**Fallback:** HSE gets 100 ms to report ready (typical start-up is 2 ms, no maximum given, `stm32f411ce.txt:4859-4862`); PLL lock, VOSRDY and the clock switch get 5 ms each (lock is at most 300 µs, `stm32f411ce.txt:5097-5099`). If any step fails, HSE is switched off and the PLL is tried from HSI at the same 96 MHz; if that fails too, the MCU stays on the 16 MHz HSI. `clock_init()` never hangs. The source and the failed step are logged over RTT at boot. On HSI the core clock is accurate to ±1% at 25 °C and ±4% from -10 to 85 °C (`stm32f411ce.txt:4972-4977`), which matters for radio timing done by MCU timers; the radio and Ethernet chips have their own crystals.
+
+**Clock security system stays off:** with CSS on, an HSE failure raises an NMI that repeats until the handler clears CSSC (`rm0383.txt:4951-4955`). Without it, what the PLL does after a mid-run HSE loss is not documented; the plan is that the LSI-clocked independent watchdog (#8) resets a stalled core and the next boot takes the HSI fallback. A PLL that slows down without stalling would not be caught. MCO_1 on PA8 (`stm32f411ce.txt:2802`) is not configured; the pin stays as it is.
+
+**Expected registers after boot (HSE path), for the bench check:** `RCC_PLLCFGR` 0x2440180D, `RCC_CFGR` 0x0000100A, `FLASH_ACR` 0x00000703, `PWR_CR` VOS bits 15:14 = 11 (0xC000 if nothing else is set). The boot log prints these.
+
 ## RF path
 
 Differential CC110L output, balun, insert-to-break test connector, three-element match, TI helical antenna (`wiki/RF-Hardware.md:1-12`). The test connector is fitted backwards on the stock board: a probe disconnects the CC110L and attaches to the antenna (`wiki/RF-Hardware.md:15`). Refitting it the correct way with an external dipole improved range by about 50% **[V]** (`wiki/RF-Hardware.md:30-34`).
