@@ -44,6 +44,14 @@ Rules:
 7. **No test device yet** (owner, 2026-11-11). Up to P4 no device is needed. Decide before P5, without taking devices from the stock network unless the owner chooses to.
 8. **Listen-before-transmit stays on,** which also helps coexistence (`radio-runtime.md`).
 
+## The bench unit's own stock configuration [V]
+
+The backup shows the bench IB01 is configured for **channel 26**, the same channel as the active stock network (`tanoclo/patch_ib_firmware/extract_channel.js` on the external flash backup, 2026-11-11). Whenever its stock firmware runs, the bench unit therefore acts as a tado bridge on the protected channel, and if it ever belonged to the same home it may share that network's key **[I]**.
+
+- **Do not let the stock firmware run on the bench.** It ran briefly when the ST-Link first powered the board. Since P0 the core is halted (`DHCSR` S_HALT set).
+- Re-plugging the ST-Link or a reset starts the stock firmware again. Halt it at once (`openocd ... -c init -c halt -c shutdown`) until P1 replaces it.
+- The first P1 flash replaces the stock firmware for good; the backup and the proven restore bring it back if needed.
+
 ## RTL-SDR uses
 
 | Use | How | Settles |
