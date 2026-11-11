@@ -50,7 +50,7 @@ The backup shows the bench IB01 is configured for **channel 26**, the same chann
 
 - **The bench unit no longer runs the stock firmware [V]:** the P1 image replaced it on 2026-11-11 (`make flash`, OpenOCD verify OK). The stock firmware only returns if the backup is restored.
 - Re-plugging the ST-Link or a reset now starts our firmware, not the stock one. The CC110L keeps its register state across an MCU reset, so after a test that touched the radio, power-cycle the board so it returns to power-on defaults instead of the stock channel-26 configuration (reviewer request, done after P1).
-- The backup and the proven restore bring the stock firmware back if needed; never restore it while Ethernet is plugged in.
+- The backup and the proven restore bring the stock firmware back if needed; never restore it while Ethernet is plugged in, since it would reach the tado cloud through the laptop's NAT (see Ethernet section) **[I]**.
 
 ## Bench tools
 
@@ -111,4 +111,4 @@ Tested 2026-11-11 without changing anything.
 
 **Keep the test server off the home LAN:** tanoclo's `docker-compose.yml` publishes 988, 3111, 80 and 443 on all interfaces (`tanoclo/docker-compose.yml:34-51`). Use a local override that binds them to `10.42.0.1` only. The override lives outside the tanoclo repo.
 
-**NAT gives the bridge internet access.** Our firmware never contacts tado, but the stock firmware still on the board would try to reach the tado cloud if it ran with Ethernet plugged in. P0 runs with Ethernet unplugged anyway (`tanoclo/patch_ib_firmware/README.md:247`).
+**NAT gives the bridge internet access.** Our firmware never contacts tado, but the stock firmware would try to reach the tado cloud if it ran with Ethernet plugged in. It is no longer on the board since P1 (2026-11-11), so this only matters after a restore. P0 runs with Ethernet unplugged anyway (`tanoclo/patch_ib_firmware/README.md:247`).
