@@ -82,6 +82,20 @@ Tooling: `tanoclo/patch_ib_firmware/read.sh`, with ST-Link V2 and OpenOCD. Guide
 
 **SWD test points** (10-pin 1.27 mm cluster; single hole left, double holes right, `README.md:131-158`): pin 1 3V3, pin 5 GND, pin 7 SWDIO, pin 8 SWCLK.
 
+**It is a Tag-Connect TC2050 legged footprint [D]:** 2 x 5 pads at 1.27 mm, one alignment hole at one end and two at the other, four leg latch holes (Tag-Connect TC2050-IDC-FP drawing, sheet 1; board photo `tanoclo/patch_ib_firmware/images/ib_pcb_overview.jpg`). Seen from the pad side with the single hole on the left, pad 1 is bottom-left, pads 1-5 run left to right on the bottom row, and pads 6-10 run right to left on the top row. The plug is keyed by the alignment pins. The TC2050-IDC cable marks pin 1 with the red wire at both ends, and its IDC end view numbers pins 1-10 (Tag-Connect TC2050-IDC drawing, sheet 2). That pad n goes to IDC pin n is **[I]**: check it with a continuity test before first use.
+
+| Tag-Connect pad / IDC pin | Signal | tanoclo position | STM32 pin | ST-Link V2 dongle pin (tanoclo table) |
+| :--- | :--- | :--- | :--- | :--- |
+| 10 | 3V3 | 1 | VDD | 7 (3.3V) |
+| 6 | GND | 5 | VSS | 5 (GND) |
+| 2 | SWDIO | 7 | 34 (PA13) | 4 (SWDIO) |
+| 3 | SWCLK | 8 | 37 (PA14) | 2 (SWCLK) |
+| 1, 4, 5, 7, 8, 9 | not connected | 2, 3, 4, 6, 9, 10 | | leave open |
+
+**Not the ARM Cortex 10-pin layout [I]:** SWDIO is on pad 2 as in that layout, but SWCLK is on a pad the ARM layout uses for GND, and 3V3 is on the pad it uses for nRESET. A standard TC2050 to ARM-10 adapter would therefore short SWCLK to ground and put 3V3 on the debugger's reset line. Wire the four signals individually.
+
+**Before powering, with the board unpowered, check by continuity through the cable:** IDC pin 2 to STM32 pin 34, IDC pin 3 to STM32 pin 37, IDC pin 6 to ground (e.g. the Ethernet jack shield), and IDC pin 10 to the 3V3 rail (STM32 pin 24, 36 or 48). Only connect the ST-Link after all four agree.
+
 **Power from the ST-Link 3V3 only**; no USB, no Ethernet (`README.md:211,247`).
 
 **Outputs:** `unmodded.bin` (512 KiB internal flash) and `unmodded_spi.bin` (2 MiB external flash). External reads are done twice per chunk (`README.md:232`).
