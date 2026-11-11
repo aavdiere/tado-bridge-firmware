@@ -14,7 +14,7 @@ Design done, nothing built or tested yet. Do not flash this onto a bridge withou
 
 | Stage | Goal | Status |
 | :--- | :--- | :--- |
-| P0 | Backup and restore rehearsal | Not started |
+| P0 | Backup and restore rehearsal | Backup done; restore rehearsal next |
 | P1 | Skeleton: clock, LEDs, button, RTT, FreeRTOS | Not started |
 | P2 | Radio and flash on SPI1 | Not started |
 | P3 | Ethernet (ENC28J60, lwIP) | Not started |

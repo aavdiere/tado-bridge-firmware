@@ -110,6 +110,21 @@ Restore path: the `-Revert` option of the patch scripts flashes `original/unmodd
 
 Dumps contain device secrets, including the network key. Keep them **outside any git repository**, for example in `~/ib01-backups/`, and never commit them (see "Never commit firmware" in the root `README.md`).
 
+## P0 results on the bench unit (2026-11-11) [V]
+
+Device-specific values (serial, EUI-64, hashes) are kept in the private backup folder, not in this public repo.
+
+| Item | Result |
+| :--- | :--- |
+| SWD via TC2050 wiring | Works; ST-Link V2 (J29S7), target voltage 3.20 V |
+| Chip | `DBGMCU_IDCODE` 0x10006431: STM32F411, 512 KB flash |
+| Option bytes | `0x5510AAEF`, `0x80007FFF`: read protection level 0, no sector write protection, software watchdog, brown-out reset off |
+| OTP | Blank: 0 of 528 bytes programmed, no blocks locked |
+| Backup | `read.sh` run twice: internal 512 KB and external 2 MB identical between runs, zero stub errors or read mismatches |
+| Identity | Config marker `42 49 00 00 54 46` at internal offset 0x4006. EUI-64 starts with tado OUI `00:1B:C5:07`; reversed on air it ends in the network suffix `31 07 c5 1b 00` (`radio.md`) |
+
+Restore rehearsal: not yet done.
+
 ## Not reviewed
 
 The flash memory map and the patch procedures were not reviewed. Pointer: `tanoclo/patch_ib_firmware/README.md`.
