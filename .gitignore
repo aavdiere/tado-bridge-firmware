@@ -1,0 +1,22 @@
+# Third-party datasheets and their text extracts: local only
+docs/datasheets/*.pdf
+docs/datasheets/*.txt
+
+# Firmware dumps and device reads contain device secrets: never commit
+*.bin
+*.hex
+*.elf
+*.log
+unmodded*
+original/
+ib01_*
+
+# Build output
+build/
+build-debug/
+build-release/
+*.map
+
+# Editor and OS files
+.DS_Store
+*~
