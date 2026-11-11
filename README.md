@@ -59,3 +59,18 @@ Keep backups of your bridge **outside any git repository**, for example in `~/ib
 ## Licence
 
 MIT, see [`LICENSE`](LICENSE). Code ported from other projects keeps its original licence and notices.
+
+## FAQ
+
+**Q: Why make it identical to the existing internet bridge instead of simplifying for local use?**
+
+**A:** Having the hardware mapped out, a custom API could be made.
+I do feel that having a _stable_ common ground to work around will help development in the long run.
+By ensuring the firmware can function as a 1-on-1 copy of the original, maybe even talking to the actual Tado servers, others (such as tadoclo) can implement the server part and have it work together by design.
+After that, additional functionality or simpler designs can still be made, knowing that there an original implementation to reference back to.
+
+**Q: Why make this only using LLMs?**
+
+**A:** Because I can. That's really it. I estimate myself capable of doing all this myself given enough time, but this project was an ideal test case to see how good LLMs have become and for me to learn how to prepare and constrain them. The idea is that, aside from this FAQ section, everything is done using LLMs, up to fixing any mistakes the LLM makes, using another LLM.
+
+
