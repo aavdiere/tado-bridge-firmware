@@ -1,23 +1,28 @@
-/* Placeholder: startup delay, blink PB0 (router LED, active high), RTT hello.
- * Clock tree (#7) is in clock.c; FreeRTOS/LEDs/button/watchdog are #8. */
+/* P1 skeleton: startup delay, clock, RTT, LEDs and buttons, FreeRTOS tasks,
+ * independent watchdog (#6, #7, #8). */
+#include "app.h"
+#include "board.h"
 #include "clock.h"
 #include "log.h"
+#include "watchdog.h"
+
+#include "FreeRTOS.h"
+#include "task.h"
 
 #include <libopencm3/stm32/flash.h>
-#include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/pwr.h>
 #include <libopencm3/stm32/rcc.h>
 
-#define LED_PORT GPIOB
-#define LED_PIN GPIO0 /* router LED, drive high = on (docs/hardware.md) */
-
 int main(void) {
-    /* Debugger attach safety: nothing else runs before this. */
+    /* Debugger attach safety: nothing else runs before this. Polls SysTick,
+     * which FreeRTOS takes over at vTaskStartScheduler(); delay_ms() must not
+     * be used after that. */
     delay_ms(2000);
 
     clock_init();
     log_init();
-    LOG("tado-bridge skeleton");
+    LOG("tado-bridge P1 skeleton");
+    watchdog_log_reset_cause();
     LOG("clock: SYSCLK %lu Hz, APB1 %lu Hz, APB2 %lu Hz, from %s",
         (unsigned long)clock_hz,
         (unsigned long)clock_apb1_hz,
@@ -38,12 +43,16 @@ int main(void) {
         (unsigned long)FLASH_ACR,
         (unsigned long)PWR_CR);
 
-    rcc_periph_clock_enable(RCC_GPIOB);
-    gpio_mode_setup(LED_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, LED_PIN);
+    board_init();
+    log_lock_init();
+    app_create_tasks();
 
-    for (unsigned n = 0;; n++) {
-        gpio_toggle(LED_PORT, LED_PIN);
-        LOG("tick %u", n);
-        delay_ms(500);
-    }
+    /* Watchdog last, right before the scheduler: ~2-6 s timeout, kicked only by
+     * the housekeeping task. */
+    watchdog_start();
+    LOG("watchdog: IWDG started, /%d reload %d (2.0-5.6 s), frozen while halted", WDG_PRESCALER_DIV,
+        WDG_RELOAD);
+    vTaskStartScheduler();
+
+    fw_panic("vTaskStartScheduler returned", __FILE__, __LINE__);
 }

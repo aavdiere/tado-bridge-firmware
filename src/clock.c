@@ -3,6 +3,7 @@
  * (docs/datasheets/stm32f411ce.txt). libopencm3's rcc_clock_setup_pll() is
  * not used because it waits forever for HSERDY and PLLRDY. */
 #include "clock.h"
+#include "log.h"
 
 #include <stdbool.h>
 
@@ -289,6 +290,11 @@ const char *clock_fault_name(enum clock_fault fault) {
 }
 
 void delay_ms(uint32_t ms) {
+    /* Once FreeRTOS owns SysTick (interrupt enabled), polling it would stop the
+     * tick. Tasks must use vTaskDelay; treat any use here as a bug. */
+    if ((STK_CSR & STK_CSR_TICKINT)) {
+        fw_panic("delay_ms after the scheduler started", __FILE__, __LINE__);
+    }
     systick_set_clocksource(STK_CSR_CLKSOURCE_AHB);
     systick_set_reload(clock_hz / 1000 - 1); /* 95999 at 96 MHz, fits 24 bits */
     systick_clear();

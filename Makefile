@@ -34,7 +34,7 @@ cmake: $(BUILD_DIR)/Makefile
 
 $(BUILD_DIR)/Makefile: cmake/CMakeLists.txt $(FAMILY_CMAKE) $(LINKER_SCRIPT) cmake/toolchain-arm-none-eabi.cmake $(DEVICE_STAMP)
 	cmake -G "Unix Makefiles" -B$(BUILD_DIR) -DBINARY=$(BINARY) \
-		-DDEVICE=$(DEVICE) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) cmake/
+		-DDEVICE=$(DEVICE) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) $(if $(HANG_TEST),-DHANG_TEST=$(HANG_TEST)) cmake/
 
 # Start from a clean build directory whenever DEVICE or BUILD_TYPE changes
 $(DEVICE_STAMP):

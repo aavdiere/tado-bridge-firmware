@@ -63,6 +63,8 @@ The earlier guess of PA8 for the cloud LED was wrong; PA8 is not accounted for.
 
 **Bench I/O check (2026-11-11) [V]:** all four LEDs lit in the expected order when their pins were driven high; factory reset PB10 gave two clean 1-0-1 presses with the internal pull-up. At rest PB2 (ENC28J60 INT) reads 1, idle for an active-low interrupt, and PB6 and PB7 read 1 despite internal pull-downs, which suggests external I2C pull-ups for the HomeKit chip **[I]**.
 
+**Firmware use (#8)** [I]: router LED mirrors the reset button, pairing LED mirrors the pair button, power LED is the heartbeat and the cloud LED a placeholder blink; these roles are P1 test wiring, not the final LED behaviour. The firmware sets the debug freeze bit for the IWDG (`build.md`, P1) and touches no other pin.
+
 **Pin map complete.** Every pin the firmware needs is known.
 
 **HomeKit coprocessor (MFI337S3959): leave untouched.** Owner question, 2026-11-11: does it need a backup? The stock firmware's HomeKit data (pairings, setup code, accessory identity) can only live in the bridge's flash, which the P0 backup covers **[I]**. The coprocessor holds a factory certificate and a private key that cannot be read out by design; the board cannot write either **[I]** (from general knowledge of Apple MFi authentication chips, not checked against a datasheet). So it needs no backup, and the firmware must simply never drive its I2C bus (probably PB6/PB7, from the external pull-ups seen there; not verified). A restore of the backup then brings back the stock firmware with HomeKit intact. Reading the coprocessor's certificate is possible later if HomeKit is ever wanted, as a separate task.

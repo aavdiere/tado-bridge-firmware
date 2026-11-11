@@ -7,6 +7,7 @@ if(NOT DEFINED BINARY)
 endif()
 message("Project name: ${BINARY}")
 
+set(FREERTOS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/FreeRTOS-Kernel")
 set(OPENCM3_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/libopencm3")
 
 # Build type: Debug, Release
@@ -49,6 +50,11 @@ include(${FAMILY_CMAKE})
 # Linker setup
 string(TOLOWER ${MCU_FAMILY} MCU_LIBNAME)
 
+# Deliberate-hang test (docs/build.md); the Makefile passes HANG_TEST=0|1
+if(DEFINED HANG_TEST)
+    set(HANG_TEST_SET ON)
+endif()
+
 ################################################################################
 # Files
 add_executable(${BINARY}
@@ -57,16 +63,28 @@ add_executable(${BINARY}
     ../src/rtt.c
     ../src/log.c
     ../src/syscalls.c
+    ../src/board.c
+    ../src/watchdog.c
+    ../src/app.c
+    ../src/hooks.c
+    ${FREERTOS_DIR}/tasks.c
+    ${FREERTOS_DIR}/queue.c
+    ${FREERTOS_DIR}/list.c
+    ${FREERTOS_DIR}/portable/GCC/ARM_CM4F/port.c
+    ${FREERTOS_DIR}/portable/MemMang/heap_4.c
 )
 
 target_include_directories(${BINARY} PRIVATE
     ${OPENCM3_DIR}/include
     ../src
+    ${FREERTOS_DIR}/include
+    ${FREERTOS_DIR}/portable/GCC/ARM_CM4F
 )
 
 target_compile_definitions(${BINARY} PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
     ${MCU_FAMILY}
+    $<$<BOOL:${HANG_TEST_SET}>:HANG_TEST=${HANG_TEST}>
 )
 
 target_compile_options(${BINARY} PRIVATE
