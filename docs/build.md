@@ -35,10 +35,8 @@
 1. The log shows `reset: RCC_CSR ...` (after a flash: `SOFTWARE PIN`, because OpenOCD resets with SYSRESETREQ **[V]**, 2026-11-11; `POR/PDR` after a power cycle), the clock lines, `watchdog: IWDG started`.
 2. Power LED (PB1) blinks at 1 Hz and cloud LED (PB5) at 1 Hz. Both continue indefinitely.
 3. Press the factory reset button: router LED (PB0) lights while held, RTT prints `button: factory reset (PB10) pressed`/`released`. Press the pair button: pairing LED (PB8) lights, same in RTT.
-4. **Deliberate hang** (compiled in by default for P1; `make clean; make HANG_TEST=0` removes it; the setting is cached in the build directory until the next `make clean`):
-   - Hold the **factory reset button for more than 5 s**: RTT prints `HANG TEST: net task stops checking in`, the power LED freezes, the next watchdog check logs `not kicked, missing check-in mask 2`, and the board resets 2-6 s later (RTT then shows `reset: ... IWDG`). Tests the check-in logic with all tasks still scheduling.
-   - Hold **factory reset and pair together for more than 5 s**: the radio task spins at a higher priority than housekeeping, which starves; all LEDs stop and the IWDG resets the board. Tests a real hang.
-   - The test fires once per boot. Release the buttons before the reset to avoid retriggering on the next boot (the hold timer restarts from 0 at boot, so a button still held gives another 5 s).
-5. Halting in OpenOCD (`halt`, then `resume`) must not reset the board.
+4. Halting in OpenOCD (`halt`, then `resume`) must not reset the board.
 
-Size with `HANG_TEST=1` (`make size`): text 12108, data 116, bss 34192 bytes (46416 total; 26% of the 128 KB RAM). bss is mostly the 32 KB FreeRTOS heap, so about 93 KB of RAM is left, before stacks beyond the three tasks (the main stack, which interrupts use, comes out of that).
+The P1 watchdog test used a temporary hang path that was removed after it passed (results in `prototype-plan.md` "P1 result").
+
+Size (`make size`): text 12108, data 116, bss 34192 bytes (46416 total; 26% of the 128 KB RAM). bss is mostly the 32 KB FreeRTOS heap, so about 93 KB of RAM is left, before stacks beyond the three tasks (the main stack, which interrupts use, comes out of that).

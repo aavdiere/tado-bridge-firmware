@@ -50,11 +50,6 @@ include(${FAMILY_CMAKE})
 # Linker setup
 string(TOLOWER ${MCU_FAMILY} MCU_LIBNAME)
 
-# Deliberate-hang test (docs/build.md); the Makefile passes HANG_TEST=0|1
-if(DEFINED HANG_TEST)
-    set(HANG_TEST_SET ON)
-endif()
-
 ################################################################################
 # Files
 add_executable(${BINARY}
@@ -84,7 +79,6 @@ target_include_directories(${BINARY} PRIVATE
 target_compile_definitions(${BINARY} PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
     ${MCU_FAMILY}
-    $<$<BOOL:${HANG_TEST_SET}>:HANG_TEST=${HANG_TEST}>
 )
 
 target_compile_options(${BINARY} PRIVATE

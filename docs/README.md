@@ -45,6 +45,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 - Existing devices do not stay paired. They are re-paired to the new firmware.
 - Stay strictly compatible with tanoclo's frame format and auth flow, so tanoclo is the server and test harness.
 - Support 16 devices for now.
+- 2026-11-11: test-only code paths (such as the P1 watchdog hang test) are removed once their test passes, not left in behind flags.
 - Firmware update images are not signed.
 - Listen before transmit, as the stock bridge does it.
 - Claude may flash and test the bench bridge within `test-bench.md`; power from the ST-Link 3V3 only; tanoclo runs in Docker on the laptop; the stock network's channel is found by SDR scan; no test device yet (2026-11-11).
