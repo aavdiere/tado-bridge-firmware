@@ -65,6 +65,8 @@ The earlier guess of PA8 for the cloud LED was wrong; PA8 is not accounted for.
 
 **Pin map complete.** Every pin the firmware needs is known.
 
+**HomeKit coprocessor (MFI337S3959): leave untouched.** Owner question, 2026-11-11: does it need a backup? The stock firmware's HomeKit data (pairings, setup code, accessory identity) can only live in the bridge's flash, which the P0 backup covers **[I]**. The coprocessor holds a factory certificate and a private key that cannot be read out by design; the board cannot write either **[I]** (from general knowledge of Apple MFi authentication chips, not checked against a datasheet). So it needs no backup, and the firmware must simply never drive its I2C bus (probably PB6/PB7, from the external pull-ups seen there; not verified). A restore of the backup then brings back the stock firmware with HomeKit intact. Reading the coprocessor's certificate is possible later if HomeKit is ever wanted, as a separate task.
+
 ## RF path
 
 Differential CC110L output, balun, insert-to-break test connector, three-element match, TI helical antenna (`wiki/RF-Hardware.md:1-12`). The test connector is fitted backwards on the stock board: a probe disconnects the CC110L and attaches to the antenna (`wiki/RF-Hardware.md:15`). Refitting it the correct way with an external dipole improved range by about 50% **[V]** (`wiki/RF-Hardware.md:30-34`).
