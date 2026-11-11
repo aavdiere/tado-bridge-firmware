@@ -6,6 +6,7 @@ Replacement firmware for the tado Internet Bridge (IB01): STM32F411 + CC110L rad
 
 - `docs/README.md`: index of the design notes and every project decision.
 - `docs/open-questions.md`: what is still open, with a status summary at the top.
+- `docs/test-bench.md`: bench setup, what Claude may do on hardware, and how the stock network is protected.
 - `docs/prototype-plan.md`: stages P0-P7. Each stage is a GitHub milestone, and its tasks are issues (`gh issue list`).
 - Source citations such as `freedo/...`, `tanoclo/...`, `Tado_Hardware_Teardown.wiki/...` refer to sibling folders of this repo (`../freedo`, `../tanoclo`, ...).
 
@@ -13,8 +14,9 @@ Replacement firmware for the tado Internet Bridge (IB01): STM32F411 + CC110L rad
 
 - **Never commit firmware, flash dumps, captures or keys.** A dump of a real bridge holds its network key. `.gitignore`, `tools/check-no-firmware.sh` and the `no-firmware` CI job enforce this. The pre-commit hook needs `git config core.hooksPath .githooks` once per clone. Never use `git add -f` or `--no-verify` to get around them.
 - **This repo is public.** Check content before every push. Backups of the bridge belong outside any git repository, for example `~/ib01-backups/`.
-- **Never flash or erase a bridge without the owner's explicit go-ahead,** and never before stage P0 (backup and restore rehearsal) is done.
-- **IB01 safety:** power from the ST-Link only while it is attached; never reconfigure PA13 or PA14 (SWD); no NRST on the test points, so flash with OpenOCD, not `st-flash --connect-under-reset`. Details: `docs/hardware.md`, `docs/prototype-plan.md`.
+- **Bench permission (owner, 2026-11-11):** Claude may flash and test the bench bridge (ST-Link + Ethernet + RTL-SDR), within the gates in `docs/test-bench.md`: P0 done first, never change option bytes without asking, verify every write, and get a `fw-reviewer` "safe to flash" verdict before radio-transmit (P5) or bootloader (P7) code.
+- **The owner's stock tado network runs nearby.** Never transmit on its channel (find it with the SDR first; the firmware has a protected channel), never ACK or answer frames not addressed to our EUI-64, pair only on the test channel, and keep SDR captures out of git. Details: `docs/test-bench.md`.
+- **IB01 safety:** power from the ST-Link 3V3 only (owner decision; USB stays unplugged while the ST-Link is attached); never reconfigure PA13 or PA14 (SWD); no NRST on the test points, so flash with OpenOCD, not `st-flash --connect-under-reset`. Details: `docs/hardware.md`, `docs/prototype-plan.md`.
 
 ## Docs conventions
 
@@ -34,9 +36,10 @@ Pick the subagent by the task, not by the stage. Each one has its own model and 
 | Clock tree, CC110L driver, ENC28J60 driver, lwIP port, mbedTLS config, entropy, storage records | `fw-driver` | Opus, high |
 | freedo MAC and 6LoWPAN port, ACK timing, pairing, wake trains; bootloader, self-update, rollback | `fw-critical` | Fable, high |
 | Review before anything is flashed, and of any change to bootloader, storage format or radio timing | `fw-reviewer` | Fable, high, read-only |
+| RTL-SDR: channel scans, GFSK demodulation, frequency offset, ACK and beacon timing over the air | `rf-bench` | Opus, high |
 | Reading long RTT logs, OpenOCD output, logic captures, size reports | `log-reader` | Haiku, low, read-only |
 | Docs upkeep, issue and milestone updates, commit messages | `docs-keeper` | Sonnet, low |
 
-The main session coordinates: it talks to the owner, splits the work, delegates, and checks the results. Anything the owner must do by hand (probing, flashing, pressing buttons) is asked of the owner, not done by a subagent.
+The main session coordinates: it talks to the owner, splits the work, delegates, and checks the results. Anything the owner must do by hand (cabling, probing, pressing buttons) is asked of the owner. Flashing and testing on the bench are allowed within `docs/test-bench.md`.
 
 Refusals from safety filters have come up on firmware-dumping and key-extraction wording. Frame tasks as what they are: interoperability work on the owner's own device and own network key.

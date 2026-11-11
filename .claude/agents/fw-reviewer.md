@@ -13,6 +13,7 @@ Check in this order and report findings ranked by severity, each with file:line 
 
 1. Can this brick the board or lose SWD access? (PA13/PA14 touched, low-power modes, option bytes, watchdog, writes to sectors 0-3, wrong flash addresses.)
 2. Could it leak secrets? (Network key or dumps in logs, in git, in the public repo.)
+2a. Could it disturb the owner's stock tado network? (Transmit on the protected channel, ACKing or answering frames not addressed to our EUI-64, pairing outside the test channel, missing listen-before-transmit.)
 3. Power-cut safety of any flash write or update step.
 4. Radio deadlines: ACK within 0-1 ms, beacon within 2.4-7.4 ms; nothing blocking SPI1 at the wrong time.
 5. Register values against the datasheets in `docs/datasheets/` and the design in `docs/design.md`.

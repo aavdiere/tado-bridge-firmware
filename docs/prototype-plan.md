@@ -30,13 +30,15 @@ Proposal:
 | Logging | J-Link SWO viewer | SEGGER RTT over SWD; installed OpenOCD 0.12 supports `rtt server`. SWO needs PB3, which may not reach a test point |
 | C library | Full newlib; `nano.specs` commented out (`cmake/toolchain-arm-none-eabi.cmake`) | Enable `nano.specs` to save flash for the #20 size check |
 | Libraries | libopencm3 only | Add FreeRTOS-Kernel, lwIP, mbedTLS as pinned submodules |
-| Build tool | Needs `cmake` | **`cmake` is not installed here**; install it first |
+| Build tool | Needs `cmake` | Installed |
 
 Example code blinks PB0, which on the IB01 is the router LED, active high. So the template's own example is a valid first test.
 
 libopencm3 is LGPL-3. That is fine for own use. Distributing binaries would require letting others relink.
 
 ## Safety rules for working on the IB01
+
+Bench setup, Claude's permission to flash and test, and protection of the owner's stock network: `test-bench.md`.
 
 - Power from the ST-Link only while it is attached; no USB, no Ethernet (`tanoclo/patch_ib_firmware/README.md:211`).
 - Never reconfigure PA13 or PA14, the SWD pins. With no NRST on the test points, losing SWD makes recovery hard.
@@ -52,10 +54,10 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 | :--- | :--- | :--- |
 | P0 Backup and restore | `fw-routine` (scripts, checks) | `log-reader` for OpenOCD output; the owner runs the hardware steps |
 | P1 Skeleton | `fw-routine` | `fw-driver` for the clock tree |
-| P2 Radio and flash | `fw-driver` | `log-reader` for RTT logs |
+| P2 Radio and flash | `fw-driver` | `rf-bench` for the channel scan and demodulator; `log-reader` for RTT logs |
 | P3 Ethernet | `fw-driver` | `log-reader` |
 | P4 TLS and WebSocket | `fw-driver` | `log-reader` for RAM and handshake measurements |
-| P5 Radio link to devices | `fw-critical` | `fw-reviewer` before flashing |
+| P5 Radio link to devices | `fw-critical` | `rf-bench` for over-the-air timing; `fw-reviewer` before flashing |
 | P6 Storage | `fw-driver` | `fw-reviewer` for power-cut safety |
 | P7 Size check, bootloader, self-update | `fw-critical` | `fw-reviewer` before flashing; `log-reader` for size reports |
 | Any stage | `docs-keeper` for docs, issues and commits | `fw-reviewer` before anything goes onto a board |
@@ -87,12 +89,15 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 - Log received frames: length, `CRC_OK`, RSSI, `FREQEST` (`radio-runtime.md`).
 - Read the flash JEDEC ID on the same bus.
 - Measure the crystal offset from `FREQEST` on frames from real devices.
+- Find the stock network's channel with the RTL-SDR and set it as the protected channel (`test-bench.md`).
+- Build the SDR demodulator used later for timing measurements.
 - **Done when:** frames from nearby Tado devices arrive with CRC OK, and flash and radio both work on the shared bus. Settles #7.
 
 ### P3: Ethernet
 
 - SPI2 (PB12 CS, PB13-15), INT PB2, RESET PC14.
 - ENC28J60 driver: revision ID, link status.
+- Bench network: static address on `enp196s0f0`, `dnsmasq`, tanoclo in Docker (`test-bench.md`).
 - lwIP with DHCP, DNS and ping.
 - **Done when:** the bridge gets an address, answers ping and resolves the server name. The router LED shows link and DHCP.
 
@@ -109,7 +114,7 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 - Port from freedo (`radio-runtime.md`): ACKs, CCM, 6LoWPAN, wake trains, anchors, listen-before-transmit.
 - Pairing: beacon answer, double Router Advertisements, `d/pair` with tag `0x12` (`radio.md`).
 - Relay CoAP in both directions through the WebSocket frame.
-- **Device to test with:** tanoclo's ESP32 room-unit emulator (`tanoclo/docs/emulated_devices.md`), so no real valve has to leave the stock network early. Then one real device.
+- **Device to test with:** none chosen yet (owner, 2026-11-11); decide before P5. Candidates: tanoclo's ESP32 room-unit emulator (`tanoclo/docs/emulated_devices.md`), so no real valve has to leave the stock network early. Then one real device.
 - **Measure:**
   - ACK start time after the Data frame ends, idle and during a TLS handshake. Use the pairing LED (PB8) as a marker on a logic analyser or scope (#16).
   - Beacon answer time (#28).

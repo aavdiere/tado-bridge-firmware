@@ -31,6 +31,7 @@ Each stage is a GitHub milestone, and its tasks are issues. Details: [`docs/prot
 - [`docs/open-questions.md`](docs/open-questions.md): what is still to be measured or decided
 - [`docs/design.md`](docs/design.md): approved design (stack, storage, self-update)
 - [`docs/hardware.md`](docs/hardware.md): IB01 hardware and pin map
+- [`docs/test-bench.md`](docs/test-bench.md): bench setup and how the owner's stock tado network is protected
 
 ## Hardware
 

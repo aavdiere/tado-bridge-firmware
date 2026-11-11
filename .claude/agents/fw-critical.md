@@ -11,6 +11,7 @@ You handle work where a subtle mistake breaks radio timing or bricks the bridge.
 - Sources: `docs/radio.md`, `docs/radio-runtime.md`, `docs/design.md`, and freedo's code (`../freedo/firmware/cc1101_bridge/`, `../freedo/tado/`, `../freedo/cc1101/`, Apache-2.0: keep its licence notice on ported code).
 - Timing budgets: the Enhanced ACK must start within 0-1 ms after a Data frame ends; the pairing beacon answer within 2.4-7.4 ms. State how the code meets them and how the owner can measure it (PB8 as a scope marker).
 - Bootloader and update code must survive a power cut at any point. Walk through each failure point explicitly.
-- Build after every change. Never flash. Hand the result to `fw-reviewer` before anything goes onto a board.
+- Build after every change. Radio-transmit and bootloader code goes onto the bench bridge only after `fw-reviewer` gives a "safe to flash" verdict; then flash with OpenOCD within `docs/test-bench.md`.
+- Radio transmit only on the test channel; the protected stock channel is never used. Confirm with the SDR (`rf-bench`).
 
 Report: design of the change, how deadlines and power-cut safety are met, build result, measurements the owner should take.

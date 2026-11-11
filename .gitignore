@@ -15,6 +15,16 @@ docs/datasheets/*.txt
 *.dump
 *.raw
 *.sal
+
+# SDR captures contain the owner's stock network traffic
+*.cu8
+*.cs8
+*.cs16
+*.cf32
+*.iq
+*.wav
+*.sigmf-data
+*.sigmf-meta
 *.log
 unmodded*
 original/

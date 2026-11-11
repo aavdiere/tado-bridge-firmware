@@ -32,6 +32,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 | [`datasheets/cc110l-vs-cc1101.md`](datasheets/cc110l-vs-cc1101.md) | CC110L against CC1101, and what carries over from freedo. Datasheet PDFs and text extracts are kept locally in `datasheets/`, not in git. |
 | [`radio-runtime.md`](radio-runtime.md) | How to drive the CC110L after init: RX, TX, ACKs, wake trains, anchors. |
 | [`tools/read_ib01_system_areas.tcl`](tools/read_ib01_system_areas.tcl) | Read-only OpenOCD script for option bytes, OTP and unique ID. Run alongside `read.sh`. |
+| [`test-bench.md`](test-bench.md) | Bench setup (ST-Link, Ethernet, RTL-SDR), what Claude may do on hardware, protecting the stock network. |
 | [`prototype-plan.md`](prototype-plan.md) | Staged prototype plan P0-P7 based on `stm-template`, with GitHub progress tracking. |
 | [`design.md`](design.md) | Firmware design proposals. Persistent storage, entropy, software stack, self-update and first flash. |
 | [`radio.md`](radio.md) | 868 MHz PHY, CC110L registers, frames, coordinator behaviour, repo conflicts, reuse. |
@@ -45,5 +46,6 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 - Support 16 devices for now.
 - Firmware update images are not signed.
 - Listen before transmit, as the stock bridge does it.
+- Claude may flash and test the bench bridge within `test-bench.md`; power from the ST-Link 3V3 only; tanoclo runs in Docker on the laptop; the stock network's channel is found by SDR scan; no test device yet (2026-11-11).
 - Work is delegated to subagents with a fixed model and effort per task type (`CLAUDE.md`, `.claude/agents/`), 2026-11-11.
 - Progress is tracked in this repo: milestones P0-P7 and issues, see [`prototype-plan.md`](prototype-plan.md).

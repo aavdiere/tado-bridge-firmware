@@ -12,7 +12,7 @@ set -euo pipefail
 MAX_BYTES=262144
 # Paths where binary files are allowed (documentation images only).
 ALLOWED_BINARY='^docs/images/[^/]+\.(png|jpg|jpeg|svg)$'
-BAD_EXT='\.(bin|hex|elf|srec|s19|dfu|uf2|img|dump|raw|sal|pem|key|der|cer|crt|csr|srl|p12)$'
+BAD_EXT='\.(bin|hex|elf|srec|s19|dfu|uf2|img|dump|raw|sal|cu8|cs8|cs16|cf32|iq|wav|sigmf-data|sigmf-meta|pem|key|der|cer|crt|csr|srl|p12)$'
 BAD_NAME='(^|/)(unmodded[^/]*|ib01_[^/]*)$|(^|/)(original|out|out_old|dumps|backup[^/]*)/'
 # Text signs of a dump: hexdump or xxd style lines (offset then hex bytes), and
 # blocks of raw hex such as `xxd -p` output. A single hash or key line does not trigger.
