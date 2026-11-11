@@ -2,11 +2,15 @@
 
 Replacement firmware for the tado Internet Bridge (IB01) hardware. It speaks the stock bridge API to a self-hosted server instead of the tado cloud, with [tanoclo](https://github.com/tanoclo/tanoclo) as the server and test harness.
 
+This is heavily AI-assisted work. The code and the documentation were written largely with AI assistance, under the direction of the project owner. Behavior was checked with automated tests, and on a real plant only where the [Status](#status) section says so.
+
 This project is not affiliated with tado. "tado" is used only to describe the hardware it targets.
 
-**Status: design done, nothing built yet.** Do not flash this onto a bridge without a verified backup (see stage P0).
+## Status
 
-## Progress
+Design done, nothing built or tested yet. Do not flash this onto a bridge without a verified backup (see stage P0).
+
+| Stage | Goal | Status |
 
 | Stage | Goal | Status |
 | :--- | :--- | :--- |
@@ -36,3 +40,17 @@ Each stage is a GitHub milestone, and its tasks are issues. Details: [`docs/prot
 | Radio | TI CC110L, 868 MHz |
 | Ethernet | Microchip ENC28J60 |
 | Storage | Macronix MX25R1635F, 2 MB |
+
+## Never commit firmware
+
+A dump of a real bridge holds its network key and identity. Firmware images, flash dumps, captures and keys must never enter this repository:
+
+- `.gitignore` excludes them.
+- `tools/check-no-firmware.sh` refuses binaries, firmware file types and hex dumps. Enable it as a pre-commit hook once per clone: `git config core.hooksPath .githooks`.
+- The `no-firmware` GitHub Action scans the whole history on every push.
+
+Keep backups of your bridge **outside any git repository**, for example in `~/ib01-backups/`.
+
+## Licence
+
+MIT, see [`LICENSE`](LICENSE). Code ported from other projects keeps its original licence and notices.

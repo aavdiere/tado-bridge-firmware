@@ -13,7 +13,7 @@ Proposal:
 - **Milestones** = the stages below, P0 to P7.
 - **Issues** = the tasks in each stage, plus the open measurements: #7, #16, #17, #19, #26, #28, the pair button, and the #20 size check.
 - **README** shows a status table per stage. Each finished task is a commit or pull request that closes its issue.
-- **Never pushed:** firmware dumps (they hold the bridge's secrets), datasheet PDFs and their text extracts (third-party copyright).
+- **Never pushed:** firmware dumps (they hold the bridge's secrets), keys, datasheet PDFs and their text extracts (third-party copyright). Enforced by `.gitignore`, `tools/check-no-firmware.sh` as a pre-commit hook, and the `no-firmware` CI scan of the whole history.
 
 ## Base: `stm-template`
 
@@ -53,6 +53,7 @@ libopencm3 is LGPL-3. That is fine for own use. Distributing binaries would requ
 - Extract the serial and EUI-64 from the dump (#8).
 - Optional while connected: find the pair button through the GPIO input registers (`open-questions.md`, Todo).
 - **Rehearse the restore:** write the backup back and re-read it.
+- Store all dumps **outside any git repository** (for example `~/ib01-backups/`). This repo refuses them through `.gitignore`, a pre-commit hook and a CI scan of the whole history.
 - **Done when:** two identical dumps are stored privately and the restore is proven. Closes #8, #9.
 
 ### P1: Skeleton

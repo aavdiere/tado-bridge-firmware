@@ -1,0 +1,15 @@
+name: no-firmware
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Refuse firmware, dumps and keys anywhere in history
+        run: tools/check-no-firmware.sh --history

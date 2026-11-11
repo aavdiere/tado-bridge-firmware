@@ -2,14 +2,37 @@
 docs/datasheets/*.pdf
 docs/datasheets/*.txt
 
-# Firmware dumps and device reads contain device secrets: never commit
+# Firmware images, flash dumps and captures. A dump of a real bridge holds
+# its network key and identity: none of these may ever be committed.
 *.bin
 *.hex
 *.elf
+*.srec
+*.s19
+*.dfu
+*.uf2
+*.img
+*.dump
+*.raw
+*.sal
 *.log
 unmodded*
 original/
+out/
+out_old/
+dumps/
+backup*/
 ib01_*
+
+# Keys and certificates (TLS)
+*.pem
+*.key
+*.der
+*.cer
+*.crt
+*.csr
+*.srl
+*.p12
 
 # Build output
 build/

@@ -94,7 +94,7 @@ Tooling: `tanoclo/patch_ib_firmware/read.sh`, with ST-Link V2 and OpenOCD. Guide
 
 Restore path: the `-Revert` option of the patch scripts flashes `original/unmodded.bin` and `original/unmodded_spi.bin` (`README.md:259`). Check the bash options at `README.md:266+` before relying on it.
 
-Dumps contain device secrets. Keep them private.
+Dumps contain device secrets, including the network key. Keep them **outside any git repository**, for example in `~/ib01-backups/`, and never commit them (see "Never commit firmware" in the root `README.md`).
 
 ## Not reviewed
 
