@@ -95,13 +95,19 @@ Tested 2026-11-11 without changing anything.
 
 | Piece | Root? | Notes |
 | :--- | :--- | :--- |
-| Network | No | The owner set the wired connection (`Wired connection 1`, `enp196s0f0`) to NetworkManager **shared** mode **[V]**. With a cable in, it gets `10.42.0.1/24` and NetworkManager's own DHCP and DNS, and NATs to Wi-Fi **[D]** (NetworkManager default; the address appears once a cable is in) |
+| Network | No | Wired connection `enp196s0f0` in NetworkManager **shared** mode. Verified with the bridge connected (2026-11-11) **[V]**: link up at **10 Mb/s half duplex**, laptop at `10.42.0.1/24`, NAT to Wi-Fi |
 | Server address | No | Firmware connects to `10.42.0.1` directly, with that IP in tanoclo's TLS certificate. A DNS name would need root: `/etc/NetworkManager/dnsmasq-shared.d` is root-only **[V]** |
 | Docker | **Once, done** | Owner ran `sudo systemctl enable --now docker` (2026-11-11). Daemon active and enabled, server 29.9.3, usable without sudo **[V]** |
 | tanoclo port 988 | No | Ports below 1024 are privileged **[V]**, but Docker publishes them |
 | Firewall | No | firewalld, ufw, nftables and iptables services all inactive **[V]** |
 | ST-Link | No | udev rules with `uaccess` for 0483:3748 and 0483:374b are installed **[V]** |
 | RTL-SDR | No | RTL2832U with R820T tuner found and opened by `rtl_test` as a normal user **[V]**; DVB driver blacklisted in `/usr/lib/modprobe.d/rtlsdr.conf` **[V]** |
+
+**Duplex [V]/[I]:** the ENC28J60 is 10BASE-T only and does not auto-negotiate, so the laptop falls back to half duplex. The link comes up even with the MCU halted, because the PHY starts on its own. The P3 driver must run the ENC28J60 in half duplex to match, or both sides must be forced to full duplex; a mismatch works but drops packets.
+
+**Supply with Ethernet connected [V]:** 3.20 V at the ST-Link with the PHY linked and the MCU halted. The current draw that matters comes when the bridge transmits (P3).
+
+**With Ethernet plugged in, a reset lets the stock firmware reach the tado cloud** through the laptop's NAT, and transmit on channel 26. Keep the core halted until P1 replaces the stock firmware.
 
 **Keep the test server off the home LAN:** tanoclo's `docker-compose.yml` publishes 988, 3111, 80 and 443 on all interfaces (`tanoclo/docker-compose.yml:34-51`). Use a local override that binds them to `10.42.0.1` only. The override lives outside the tanoclo repo.
 
