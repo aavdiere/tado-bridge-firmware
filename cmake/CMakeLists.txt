@@ -65,6 +65,11 @@ add_executable(${BINARY}
     ../src/app.c
     ../src/hooks.c
     ../src/faults.c
+    ../src/timebase.c
+    ../src/spi1.c
+    ../src/cc110l.c
+    ../src/mx25r.c
+    ../src/radio.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c

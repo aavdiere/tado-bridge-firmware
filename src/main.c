@@ -1,10 +1,12 @@
-/* P1 skeleton: startup delay, clock, RTT, LEDs and buttons, FreeRTOS tasks,
- * independent watchdog (#6, #7, #8). */
+/* Startup delay, clock, RTT, LEDs and buttons, SPI1 for radio and flash,
+ * FreeRTOS tasks, independent watchdog (#6, #7, #8, #9, #10). */
 #include "app.h"
 #include "board.h"
 #include "clock.h"
 #include "faults.h"
 #include "log.h"
+#include "spi1.h"
+#include "timebase.h"
 #include "watchdog.h"
 
 #include "FreeRTOS.h"
@@ -21,9 +23,10 @@ int main(void) {
     delay_ms(2000);
 
     clock_init();
+    timebase_init();
     faults_init();
     log_init();
-    LOG("tado-bridge P1 skeleton");
+    LOG("tado-bridge P2: radio receive-only, flash read-only");
     watchdog_log_reset_cause();
     LOG("clock: SYSCLK %lu Hz, APB1 %lu Hz, APB2 %lu Hz, from %s",
         (unsigned long)clock_hz,
@@ -45,8 +48,9 @@ int main(void) {
         (unsigned long)FLASH_ACR,
         (unsigned long)PWR_CR);
 
-    board_init();
+    board_init(); /* starts with the radio and flash chip selects high (#28) */
     log_lock_init();
+    spi1_init();
     app_create_tasks();
 
     /* Watchdog last, right before the scheduler: ~2-6 s timeout, kicked only by

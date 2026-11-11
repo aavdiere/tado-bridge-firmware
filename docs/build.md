@@ -42,3 +42,22 @@
 The P1 watchdog test used a temporary hang path that was removed after it passed (results in `prototype-plan.md` "P1 result").
 
 Size (`make size`): text 12108, data 116, bss 34192 bytes (46416 total; 26% of the 128 KB RAM). bss is mostly the 32 KB FreeRTOS heap, so about 93 KB of RAM is left, before stacks beyond the three tasks (the main stack, which interrupts use, comes out of that).
+
+## P2: radio receive-only and flash read-only on SPI1 (#9, #10)
+
+Code: `src/spi1.c`, `src/cc110l.c`, `src/radio.c`, `src/mx25r.c`, `src/timebase.c`; settings and datasheet facts in `hardware.md` ("SPI1: radio and flash") and `radio-runtime.md` ("P2 receive-only implementation"). **This image cannot transmit** (transmit guard in `src/cc110l.c`) and never writes or erases the external flash. It listens on the stock channel 26, which `test-bench.md` rule 3 allows. Needs a `fw-reviewer` verdict before flashing.
+
+The radio task now owns SPI1 and blinks no placeholder LED; the cloud LED (PB5) toggles on each CRC-OK frame instead. Housekeeping asks the radio task for a flash JEDEC ID check every 10 s.
+
+**Bench test, expected result after `make flash` and `make rtt`** (power-cycle first, so the CC110L starts from power-on defaults, `test-bench.md`):
+
+1. Boot log as in P1, then `spi1: SCK 6000000 Hz, mode 0`, `flash: JEDEC ID c22815 (MX25R1635F), status register ..`. Note the status register value; bit 0 (WIP) should be 0.
+2. `radio: PARTNUM .. VERSION ..` (datasheet: `00 17`), `radio: calibrated, FSCAL3 .. FSCAL2 .. FSCAL1 ..` without "PLL NOT locked", `radio: RX on channel 26 (868323668 Hz), receive only`.
+3. Frames from the stock network: `rx: t .. len .. crc ok rssi .. dBm ...` lines and `rx: wake train ...` summaries; the cloud LED flickers with them. The SDR scan saw about 84 CRC-valid frames in 30 s on this channel (`test-bench.md`).
+4. Every 60 s a `radio: 60 s: ...` and a `flash: 60 s: JEDEC ID ok 6, mismatch 0 ...` line. Flash mismatches must stay 0 with radio traffic running.
+5. Every 10 s the `alive:` line from P1; the watchdog must not fire (`reset:` shows no `IWDG` after a long run).
+6. Optional with the SDR: confirm the bridge transmits nothing on 863-873 MHz while it runs.
+
+Record PARTNUM/VERSION, the frame and CRC counts, the RSSI range and the `FREQEST` spread in `radio-runtime.md` and `hardware.md` (offset measurement for #7). After the test, power-cycle the board again so the radio leaves our configuration.
+
+Size (`make size`, Release): text 19664, data 116, bss 34492 bytes.

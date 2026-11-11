@@ -1,9 +1,10 @@
-/* P1 tasks (#8). Priorities follow docs/design.md "Tasks": radio high, net
- * medium, housekeeping low. The radio and net bodies are placeholders. */
+/* Tasks (#8, #9, #10). Priorities follow docs/design.md "Tasks": radio high,
+ * net medium, housekeeping low. The net body is still a placeholder. */
 #include "app.h"
 
 #include "board.h"
 #include "log.h"
+#include "radio.h"
 #include "watchdog.h"
 
 #include "FreeRTOS.h"
@@ -22,15 +23,7 @@ static TaskHandle_t h_radio, h_net, h_hk;
 
 static void radio_task(void *arg) {
     (void)arg;
-    bool cloud = false;
-    for (unsigned n = 0;; n++) {
-        watchdog_checkin(WDG_RADIO);
-        if (n % 10 == 0) { /* every 500 ms: cloud LED blinks from this task (placeholder) */
-            cloud = !cloud;
-            board_led(LED_CLOUD, cloud);
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
+    radio_task_run(); /* src/radio.c; owns SPI1, checks in with the watchdog */
 }
 
 static void net_task(void *arg) {
@@ -87,6 +80,9 @@ static void housekeeping_task(void *arg) {
             }
         }
         if (loops % 1000 == 999) { /* every 10 s */
+            /* #10: flash JEDEC ID on the shared SPI1 bus while the radio
+             * receives. The radio task owns the bus and runs it. */
+            radio_request_flash_check();
             LOG("alive: heap free %u min %u, stack words never used radio/net/hk %u/%u/%u",
                 (unsigned)xPortGetFreeHeapSize(), (unsigned)xPortGetMinimumEverFreeHeapSize(),
                 (unsigned)uxTaskGetStackHighWaterMark(h_radio),

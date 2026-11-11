@@ -95,6 +95,24 @@ Chosen in `src/clock.c`. **Verified on the bench 2026-11-11 [V]:** the owner con
 
 **Expected registers after boot (HSE path), for the bench check:** `RCC_PLLCFGR` 0x2440180D, `RCC_CFGR` 0x0000100A, `FLASH_ACR` 0x00000703, `PWR_CR` VOS bits 15:14 = 11 (0xC000 if nothing else is set). The boot log prints these.
 
+## SPI1: radio and flash (P2, #9, #10)
+
+Implemented in `src/spi1.c`, `src/cc110l.c`, `src/mx25r.c`, `src/radio.c`. Built, **not yet run on hardware**; bench results go here after the run.
+
+| Item | Setting | Source |
+| :--- | :--- | :--- |
+| Chip selects | PA4 (radio CSn) and PB9 (flash CS#) driven high as push-pull outputs at the start of `board_init()`, before SPI1 is enabled (#28). ODR is set before the mode, so there is no low glitch | `src/board.c` |
+| SCK, MISO, MOSI | PA5, PA6, PA7 on AF5. MISO has the internal pull-up, so an undriven line reads high ("chip not ready") | `datasheets/stm32f411ce.txt:2786-2799` |
+| Mode | Master, mode 0 (CPOL 0, CPHA 0), 8-bit, MSB first, software NSS | CC110L `datasheets/cc110l.txt:1291,1300-1318`; MX25R modes 0 and 3 `datasheets/mx25r1635f.txt:124`; `datasheets/rm0383.txt:33022-33130` |
+| SCK | APB2 96 MHz / 16 = **6 MHz** (4 MHz on the HSI-only fallback). The divider is the smallest that stays at or below 6.5 MHz | CC110L burst access 6.5 MHz max, single 9 MHz (`cc110l.txt:1322-1332`); MX25R RDID/RDSR/READ 33 MHz (`mx25r1635f.txt:3268-3271`) |
+| GPIOA | Only PA0, PA1, PA4-PA7 are configured, through per-pin read-modify-write; a `_Static_assert` rejects PA13/PA14 in the mask | `src/board.c` |
+| GDO0, GDO2 | PA0, PA1 inputs with pull-down; EXTI0 falling edge, EXTI1 rising edge, NVIC priority 5 (0x50), the highest that may call FreeRTOS `FromISR` | `datasheets/rm0383.txt:11032-11050`; `src/FreeRTOSConfig.h` |
+| Timebase | TIM2 free-running at 1 MHz (32-bit), for bounded driver waits; no pin | `datasheets/rm0383.txt:4758-4763,17128` |
+
+**Bus sharing [I].** By design the radio task owns SPI1 and runs flash accesses itself (`design.md`, "Tasks"): the housekeeping task only asks for a flash check every 10 s, and the radio task reads the JEDEC ID between FIFO pumps, also while a frame is arriving (the 64-byte RX FIFO absorbs a 10 µs flash access). A mutex around every transaction and a check that refuses to select one device while the other's CS is low are a second line of defence. MISO is shared, so the CC110L must keep GDO1 (its SO pin) 3-state while CSn is high: `IOCFG1 = 0x2E`, the reset value and the stock value (`cc110l.txt:2891-2893,2901`).
+
+**Flash is read-only in P2.** The driver can send only RDID (0x9F) and RDSR (0x05). Every command that changes the array or the status register needs WREN (0x06) first (program and erase `mx25r1635f.txt:1352-1357`, WRSR `:1471-1473`), and there is no code path that sends it. The firmware never reads array contents, which hold the stock configuration and network key. At boot a CS# pulse releases deep power-down in case the stock firmware left the chip there (tCRDP 20 ns, then tRDP 35-45 µs, `mx25r1635f.txt:2426-2433,3307-3314,3402-3409`), then the boot log prints the JEDEC ID (expected `C2 28 15`, `mx25r1635f.txt:1123-1125`) and the status register (`mx25r1635f.txt:1380-1394`).
+
 ## RF path
 
 Differential CC110L output, balun, insert-to-break test connector, three-element match, TI helical antenna (`wiki/RF-Hardware.md:1-12`). The test connector is fitted backwards on the stock board: a probe disconnects the CC110L and attaches to the antenna (`wiki/RF-Hardware.md:15`). Refitting it the correct way with an external dipole improved range by about 50% **[V]** (`wiki/RF-Hardware.md:30-34`).
