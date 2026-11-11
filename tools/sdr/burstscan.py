@@ -43,6 +43,7 @@ import csv
 import os
 import subprocess
 import sys
+import tempfile
 
 import numpy as np
 from scipy import signal
@@ -117,7 +118,8 @@ def redecode(path, fc, fs, ch, t_start, dur):
     with open(path, "rb") as f:
         f.seek(2 * s)
         b = f.read(2 * int(dur * fs))
-    tmp = os.path.expanduser("~/ib01-captures/.burstscan_excerpt.csv")
+    fd, tmp = tempfile.mkstemp(suffix=".csv", prefix=".burstscan_", dir=os.path.dirname(os.path.abspath(path)))
+    os.close(fd)
     subprocess.run([sys.executable, "-I", DEMOD, "--fc", str(fc), "--fs", str(fs), "--channels", str(ch),
                     "--show-bad", "--quiet", "--csv", tmp], input=b, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

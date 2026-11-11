@@ -16,7 +16,7 @@ Design done, nothing built or tested yet. Do not flash this onto a bridge withou
 | :--- | :--- | :--- |
 | P0 | Backup and restore rehearsal | Done |
 | P1 | Skeleton: clock, LEDs, button, RTT, FreeRTOS | Done (2026-11-11): skeleton and RTT (#6), clock tree (#7), FreeRTOS, LEDs, buttons and watchdog (#8) flashed and verified on the bench |
-| P2 | Radio and flash on SPI1 | Not started |
+| P2 | Radio and flash on SPI1 | In progress: receive-only image runs, no emission on air |
 | P3 | Ethernet (ENC28J60, lwIP) | Not started |
 | P4 | TLS and WebSocket to tanoclo | Not started |
 | P5 | Radio link to devices, pairing | Not started |

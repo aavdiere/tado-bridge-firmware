@@ -58,6 +58,8 @@ The backup shows the bench IB01 is configured for **channel 26**, the same chann
 - `tools/bench/io_check.tcl`: drives the LEDs in a fixed order and logs button presses as pin changes; peripheral registers only, undone by the final reset. Keeps the stock firmware halted.
 - `tools/sdr/chanscan.py`, `tools/sdr/frames.py`: channel activity and tado frame decoding.
 - `tools/sdr/demod.py`: per-frame GFSK demodulator with sub-microsecond timestamps, carrier offset and MAC header fields (#26). Usage and accuracy below.
+- `tools/sdr/burstscan.py`: power-versus-time scan of a whole capture; every energy burst per channel must be a decoded frame, spill-over from a stronger channel, or is listed with duration, centroid, width and symbol rate. Used to confirm that a receive-only image emits nothing.
+- `tools/sdr/burstzoom.py`: per-pulse close look at one stretch of a capture (edges, carrier, tone/sweep/FSK, -10 dB width, optional PNG), for bursts `burstscan.py` cannot explain.
 
 ## RTL-SDR uses
 
@@ -128,6 +130,20 @@ Channel 26, receive-only, 300 s capture plus 10 s and 30 s runs, `demod.py` as a
 **What this means [I]:**
 - **#16:** the stock coordinator starts its Enhanced ACK 1.5-2.0 ms after the Data frame ends, and devices accept that. The "well under 1 ms" target in `radio.md` is stricter than stock; matching stock is enough. Devices answer in about 0.37 ms.
 - **#7:** the coordinator's bit clock runs about 37 ppm slower than its carrier offset implies, while every device's two figures agree. The likeliest reading: the coordinator's crystal is far off (about -42 ppm against the devices' average bit clock), and its RF is pulled back to within about 6 ppm of the devices by a frequency trim that stock applies after the logged init, which writes `FSCTRL0=0` (`radio.md`, register table; freedo's trim: `freedo/docs/PROTOCOL.md:1670-1718`). Alternatively the coordinator does not use the logged FREQ or data-rate values. Either way a per-unit trim is probably needed on the IB01. The bench unit's own crystal is still to be measured, from our first transmissions on channel 10 (P5) with this tool.
+
+## P2 receive-only image on air (2026-11-11/12) [V]
+
+Check that the P2 image (CC110L in RX on channel 26, `RADIO_TX_ALLOWED` 0, `docs/radio-runtime.md:115`) emits nothing. RTL-SDR at fc 867.9237 MHz, 2.4 MS/s, gain 20 dB, span 866.72-869.11 MHz (channels 19-29), `burstscan.py` against `demod.py` frames. Captures: before our firmware (16:09, P1 running, radio untouched), across the P2 flash (18:57), and an A/B pair with P2 running (A) and the MCU halted by OpenOCD `halt` for 108 s (B). The bridge was not unpowered; that needs the owner and was not needed.
+
+| Item | Result |
+| :--- | :--- |
+| Narrowband tones (LO leak, spurs) | None more than 6 dB over the floor in any capture |
+| Channel 26 | Every burst is a decoded tado frame or a collision of two, recovered by re-decoding |
+| Channel 24 | Bursts every 504 ms, 9.4 ms long, 74 kHz below the channel centre, 23 kHz symbol rate. Also before our firmware: a neighbour |
+| Channels 22, 29 | Single 20 ms events, also before our firmware |
+| About 868.48 MHz (channel 27) | Every 6.103 s: a train of 19 pulses (1.97 ms each, every 6.43 ms), then 1.27 s later a short exchange between two transmitters; a weaker train from a second source runs 0.15-0.2 s earlier. 2-FSK with a comb of lines about 35 kHz apart, about 70 kHz transition rate: neither our register table nor tado's PHY. **Not ours:** same period (6.1034 s) and phase with the MCU halted, phase-continuous through the P2 flash and reset, and present (looser cadence, same pulse shape) before our firmware. 6.103 s = 200000/32768 s points to a 32.768 kHz timebase, which the bridge does not use |
+
+**Result:** no emission from the bench unit seen with the P2 image running or halted. Every remaining burst belongs to other users of the band.
 
 ## Bench network
 
