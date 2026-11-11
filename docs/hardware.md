@@ -71,11 +71,11 @@ The earlier guess of PA8 for the cloud LED was wrong; PA8 is not accounted for.
 
 ## Clock tree (#7) [I]
 
-Chosen in `src/clock.c`; not yet measured on the bench. All limits below are also checked by `_Static_assert`s in that file.
+Chosen in `src/clock.c`. **Verified on the bench 2026-11-11 [V]:** the owner confirmed a crystal on the board, and the first boot of the P1 image logged `from HSE 26 MHz crystal + PLL`, SYSCLK 96 MHz, HSE ready in under 1 ms, `RCC_PLLCFGR 2440180d`, `RCC_CFGR 0000100a`, `FLASH_ACR 00000703`, `PWR_CR 0000c000` (RTT log; not committed). All limits below are also checked by `_Static_assert`s in that file.
 
 | Item | Value | Limit and source |
 | :--- | :--- | :--- |
-| HSE | 26 MHz crystal, HSEBYP = 0 (crystal per Components table above) | 4-26 MHz (`datasheets/stm32f411ce.txt:4848`) |
+| HSE | 26 MHz crystal, HSEBYP = 0 (crystal confirmed by the owner and by HSE start-up on the bench [V]) | 4-26 MHz (`datasheets/stm32f411ce.txt:4848`) |
 | PLL input | HSE / PLLM 13 = 2 MHz | PLLM 2-63, VCO input 1-2 MHz, 2 MHz recommended (`datasheets/rm0383.txt:5313-5316`) |
 | VCO | 2 MHz x PLLN 96 = 192 MHz | PLLN 50-432 (`rm0383.txt:5293`), VCO 100-432 MHz (`rm0383.txt:5290-5291`, `stm32f411ce.txt:5096`) |
 | SYSCLK = HCLK | VCO / PLLP 2 = 96 MHz | PLLP 2/4/6/8, at most 100 MHz (`rm0383.txt:5280-5285`) |
