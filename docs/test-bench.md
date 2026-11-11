@@ -65,7 +65,7 @@ Tested 2026-11-11 without changing anything.
 | :--- | :--- | :--- |
 | Network | No | The owner set the wired connection (`Wired connection 1`, `enp196s0f0`) to NetworkManager **shared** mode **[V]**. With a cable in, it gets `10.42.0.1/24` and NetworkManager's own DHCP and DNS, and NATs to Wi-Fi **[D]** (NetworkManager default; the address appears once a cable is in) |
 | Server address | No | Firmware connects to `10.42.0.1` directly, with that IP in tanoclo's TLS certificate. A DNS name would need root: `/etc/NetworkManager/dnsmasq-shared.d` is root-only **[V]** |
-| Docker | **Once** | User is in the `docker` group, but the daemon is not running **[V]**. Owner runs `sudo systemctl enable --now docker` |
+| Docker | **Once, done** | Owner ran `sudo systemctl enable --now docker` (2026-11-11). Daemon active and enabled, server 29.9.3, usable without sudo **[V]** |
 | tanoclo port 988 | No | Ports below 1024 are privileged **[V]**, but Docker publishes them |
 | Firewall | No | firewalld, ufw, nftables and iptables services all inactive **[V]** |
 | ST-Link | No | udev rules with `uaccess` for 0483:3748 and 0483:374b are installed **[V]** |
