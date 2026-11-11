@@ -40,6 +40,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 
 ## Project decisions
 
+- ACK timing (2026-11-11): the Enhanced ACK must start within 1 ms of the end of the Data frame, stricter than the stock bridge's measured 1.5-2 ms, because devices on the stock network show sync issues. Approach: prebuild the ACK during reception (`radio.md`, "ACK prebuild").
 - Goal: new firmware for the IB01 that speaks the stock bridge API to a self-hosted server, with no Tado cloud.
 - HomeKit is out of scope for now. Device pairing does not need the HomeKit chip (project owner's decision); follow freedo and tanoclo for pairing.
 - Existing devices do not stay paired. They are re-paired to the new firmware.

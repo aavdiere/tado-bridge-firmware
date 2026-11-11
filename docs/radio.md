@@ -134,7 +134,7 @@ Follow freedo and tanoclo (project decision).
 | Train shape | 10 frames, 25 ticks (`tanoclo/docs/rf_protocol.md:446`); 21 or 254 frames, 12.5 units, 4 ms step (`freedo/docs/PROTOCOL.md:1435-1436`) | **Resolved:** follow freedo (measured). The user also observed the 1 s wake train in their own RF measurements of the stock bridge (2026-11-11). A wake-up frame takes about 3.7 ms on air, so 4 ms is back-to-back; tanoclo's 8 ms probably reflects a sniffer catching every other frame **[I]** |
 | Checksums | One CRC-16/CMS FCS, big-endian (wiki `:140-152`); software FCS CRC-16/CCITT reflected inside the frame plus radio CRC (`freedo/docs/PROTOCOL.md:1305-1308`) | **Resolved: two layers.** Outer: CRC-16/CMS, which is the radio's own CRC (`PKTCTRL0.CRC_EN`), appended in hardware (`freedo/tado/build_mac.go:13-14`, `freedo/tado/mac.go:18`, dissector `packet-tado.c:278-279`). Inner: software CRC-16/CCITT reflected, poly `0x8408`, init 0, little-endian (`freedo/tado/build_mac.go:104-111`, `tanoclo/docs/rf_protocol.md:194-198`). The inner one is encrypted in Data frames and in clear on Enhanced ACKs. The wiki describes only the outer one |
 | Source address tail | Fixed suffix elided (wiki `:241-247`); 3 bytes carried encrypted (`tanoclo/docs/rf_protocol.md:105`) | **Resolved: both true.** The tail is sent encrypted at the start of the plaintext and always equals the fixed suffix `c5 1b 00` (`freedo/tado/coap.go:16`). See "Data frame plaintext" |
-| ACK timing | Ends 6-7 ms after, 0-1 ms gap (`freedo/docs/PROTOCOL.md:659-660`); 5-8 ms after (`:1438`) | **Resolved [I]:** both measure end of Data to end of ACK. The ACK takes about 6.4 ms on air (40 bytes at 160 µs), so the real gap is 0-1 ms and 5-8 ms is capture jitter. **Measured on the stock network (2026-11-11) [V]:** the coordinator's ACK starts 1.50-1.99 ms after the Data frame ends, a device's 0.35-0.39 ms (`test-bench.md`, "Stock network reference"). Freedo's 0-1 ms gap fits the device ACKs. Target: start within 2 ms like stock; sooner is fine |
+| ACK timing | Ends 6-7 ms after, 0-1 ms gap (`freedo/docs/PROTOCOL.md:659-660`); 5-8 ms after (`:1438`) | **Resolved [I]:** both measure end of Data to end of ACK. The ACK takes about 6.4 ms on air (40 bytes at 160 µs), so the real gap is 0-1 ms and 5-8 ms is capture jitter. **Measured on the stock network (2026-11-11) [V]:** the coordinator's ACK starts 1.50-1.99 ms after the Data frame ends, a device's 0.35-0.39 ms (`test-bench.md`, "Stock network reference"). Freedo's 0-1 ms gap fits the device ACKs. **Target (owner decision, 2026-11-11): the ACK starts within 1 ms of the end of the Data frame.** The owner reports that devices on the stock network show sync issues today, so stock's 1.5-2 ms is not the reference. Approach: prebuild the ACK while the Data frame is still arriving (see "ACK prebuild" below) |
 | Retry gap | 2-6 s (`freedo/docs/PROTOCOL.md:1321`); exactly 2 or 3 s (`:1440`) | **Provisional:** different captures, both from a commercial coordinator. Retry after 2-3 s, up to three attempts, keeping the MAC seq and advancing the counter |
 | Beacon PAN | `0xFFFF` (`tanoclo/docs/rf_protocol.md:438`); `0xABCD` (wiki `:231`) | **Resolved:** wake-up frames use `0xABCD` (`freedo/tado/mac.go:23`, dissector `packet-tado.c:71`). `0xFFFF` appears on a joiner's Beacon Request (`freedo/tado/beacon.go:17`). Data frames carry no PAN field; tanoclo's "PAN" there is the first two destination address bytes |
 | Payload encoding | JSON/TLV8 (wiki `:454`); u16 FID TLV (`tanoclo/docs/coap_tlv.md:183`) | Prefer tanoclo; it is what the server parses |
@@ -151,3 +151,27 @@ Follow freedo and tanoclo (project decision).
 | `Tado_Hardware_Teardown` and wiki | No licence file | Use the facts; copy no code |
 
 The CC110L is a simpler CC1101. Freedo's register use carries over: see `datasheets/cc110l-vs-cc1101.md`.
+
+## ACK prebuild (P5 plan) [I]
+
+The Enhanced ACK is 29 bytes and unencrypted (`wiki/Tado-868-MHz-Link-Protocol.md:335-356`). Almost all of it is known before the Data frame ends:
+
+| Field | Bytes | Source | Known when |
+| :--- | :-- | :--- | :--- |
+| Length, FCF `42 EE` | 1 + 2 | constant | always |
+| Seq | 1 | seq of the Data frame | after its 3rd byte |
+| Dst EUI-64 | 8 | the Data frame's source address | after its header, about 20 bytes in |
+| Src EUI-64 | 8 | our own EUI-64 | always |
+| CSL IE descriptor, CSL period `0x0C35` | 2 + 2 | constant | always |
+| CSL phase | 2 | our schedule, computed for the predicted ACK start time | after the header |
+| Header termination IE | 2 | constant | always |
+| Inner CRC-16/CCITT | 2 | software, over the above | once seq, dst and phase are in |
+| Outer CRC-16 | 2 | radio hardware (`PKTCTRL0.CRC_EN`) | sent by the chip |
+
+Plan:
+1. Keep the constant parts in RAM per paired device, so only seq, phase and the inner CRC are computed per frame.
+2. As soon as the RX FIFO threshold delivers the Data header, check that it is a unicast Data frame addressed to us, then write the whole ACK into the TX FIFO. The CC110L has separate 64-byte RX and TX FIFOs (`datasheets/cc110l.txt:1173,1485`), so this happens during reception.
+3. At the end of the frame (GDO0 falling edge), check CRC_OK and send a single `STX`. RX to TX takes about 30 µs (`datasheets/cc110l-vs-cc1101.md`). On a bad CRC or a full inbound queue (`radio-runtime.md`), send `SFTX` instead and no ACK.
+4. The chip sends its preamble and sync word (about 1.28 ms at 50 kbps) before the first FIFO byte. That gives extra slack, but it does not count towards the 1 ms target, which is measured to the start of the preamble with `tools/sdr/demod.py`.
+
+Expected start of the ACK: about 0.1-0.3 ms after the Data frame ends, depending on how fast the end-of-frame interrupt reaches the `STX`. It must also not wait behind flash access on SPI1 (`radio-runtime.md`: no flash access during an ACK window).
