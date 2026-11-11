@@ -28,7 +28,7 @@ Enough is known to start building. What remains is gathered during the build:
 
 | # | Missing | Why it matters | How to get it |
 | :-- | :-- | :-- | :-- |
-| 7 | Crystal offset; is per-unit trim needed | Stock uses `FSCTRL0=0`, freedo's module needed trim | Measure on air (`freedo/docs/PROTOCOL.md:1668+`) |
+| 7 | Crystal offset; is per-unit trim needed | Stock uses `FSCTRL0=0`, freedo's module needed trim. **Stock coordinator on air (2026-11-11, [V]):** its bit clock runs 37 ppm slower than its carrier offset implies, while every device's two figures agree, so stock probably trims its RF after init **[I]**; see `test-bench.md`, "Stock network reference" | Measure the bench unit's own offset with `tools/sdr/demod.py` on our first channel-10 frames (`freedo/docs/PROTOCOL.md:1668+`) |
 | 8 | Which values the new firmware needs from the backup. Nothing must survive on the chip once a full backup exists, but the firmware still needs the serial and EUI-64 **[I]** | tanoclo identifies the bridge by serial | Read them from the backup (`tanoclo/patch_ib_firmware/extract_rf_key.js` documents the offsets) and provision them with the new firmware |
 | 9 | Option bytes and read protection on this unit; confirm the restore path works | The guide reads shipped units over SWD, but the docs do not state the protection level | Read the option bytes during backup; see "Full backup" in `hardware.md` |
 
@@ -50,14 +50,14 @@ Because tanoclo is the compatibility target and accepts zeros for #10, the firmw
 
 | # | Risk | Note |
 | :-- | :-- | :-- |
-| 16 | Enhanced ACK turnaround over SPI; gap may be under 1 ms | Eased: the ACK is unencrypted and mostly static, so it can be prebuilt (`wiki/Tado-868-MHz-Link-Protocol.md:346-348`), and the radio's RX-to-TX switch is only about 30 µs (`datasheets/cc110l-vs-cc1101.md`) |
+| 16 | Enhanced ACK turnaround over SPI; gap may be under 1 ms | **Stock reference [V] (2026-11-11):** the stock coordinator starts its ACK 1.50-1.99 ms after the Data frame ends (n=56), devices 0.35-0.39 ms (n=32), timestamps good to under 1 µs (`test-bench.md`). Eased further: the ACK is unencrypted and mostly static, so it can be prebuilt (`wiki/Tado-868-MHz-Link-Protocol.md:346-348`), and the radio's RX-to-TX switch is only about 30 µs (`datasheets/cc110l-vs-cc1101.md`) |
 | 17 | RAM budget for TLS, WebSocket, IP and radio in 128 KB | Estimated 71 KB in `design.md`; to be measured. First runtime numbers from P1 (2026-11-11, **[V]**, early data point only): FreeRTOS heap 25632 of 32768 bytes free, unused task stack 489/489/352 of 512 words (radio/net/hk); no TLS, lwIP or radio buffers yet |
 | 18 | Stack choice | **Approved (user, 2026-11-11):** FreeRTOS, lwIP, mbedTLS, own 6LoWPAN and MAC ported from freedo. See `design.md` |
 | 19 | Radio deadlines versus Ethernet and flash work | Task design in `design.md`; to be proven on a prototype. Ethernet is on SPI2, so only flash shares the radio's bus |
 | 20 | Bridge self-update and rollback; first flash path | **Approved (user, 2026-11-11) if the firmware fits:** check bootloader and image sizes against the layout before building. Images are unsigned. Open: how the uploader reaches tanoclo |
 | 26 | Entropy source for the network key and TLS | Decision: ADC on unconnected pin PA3, conditioned as in `design.md`. Still needs a measurement of its readings on the board |
 | 27 | Where the network key and frame counter are stored, with wear limits | **Approved (user, 2026-11-11)**, layout in `design.md` |
-| 28 | Pairing beacon answer on real hardware | Must leave the bridge within 2.4-7.4 ms; freedo's on-chip path is "not validated on air" (`freedo/docs/PROTOCOL.md:732`) |
+| 28 | Pairing beacon answer on real hardware | Must leave the bridge within 2.4-7.4 ms; freedo's on-chip path is "not validated on air" (`freedo/docs/PROTOCOL.md:732`). `tools/sdr/demod.py --summary` reports the request-to-beacon gap; no stock answer was seen yet (coordinator not in pairing mode, 2026-11-11) |
 
 ## E. Not reviewed or undocumented
 

@@ -57,6 +57,7 @@ The backup shows the bench IB01 is configured for **channel 26**, the same chann
 - `docs/tools/read_ib01_system_areas.tcl`: option bytes, OTP, unique ID (read-only).
 - `tools/bench/io_check.tcl`: drives the LEDs in a fixed order and logs button presses as pin changes; peripheral registers only, undone by the final reset. Keeps the stock firmware halted.
 - `tools/sdr/chanscan.py`, `tools/sdr/frames.py`: channel activity and tado frame decoding.
+- `tools/sdr/demod.py`: per-frame GFSK demodulator with sub-microsecond timestamps, carrier offset and MAC header fields (#26). Usage and accuracy below.
 
 ## RTL-SDR uses
 
@@ -88,6 +89,45 @@ Receive-only, RTL-SDR (R820T, gain 30 dB, 2.4 MS/s), tools `tools/sdr/chanscan.p
 **Test channel: 10 (865.1245 MHz), confirmed by the owner (2026-11-11).** It is quiet, 16 channels from the protected channel, and inside tado's own channel plan, which stock bridges also pick from. Regulatory limits per sub-band (duty cycle, listen-before-transmit) were not checked here **[I]**; re-check activity before first transmit.
 
 Frequency offsets include the dongle's own crystal error, which is not yet calibrated, so they do not give the bridge's offset (#7) yet.
+
+## Demodulator `tools/sdr/demod.py` (#26)
+
+Receive-only. Reads rtl_sdr's unsigned 8-bit IQ from a file or stdin and prints one line per frame: sync start, preamble start and end of the last CRC bit (seconds from stream start), envelope edges, length, radio CRC result, RSSI (dBFS, uncalibrated), SNR, carrier offset, deviation, bit-rate error of the sender, frame type, sequence number, addresses and payload hex. `--redact` hides addresses and payload, `--summary` adds counts, offsets per sender and the ACK, wake-up and beacon timing statistics, `--csv` writes one row per frame for later analysis.
+
+```
+# Capture first, then decode: a pipe that falls behind loses samples silently
+rtl_sdr -f 867923700 -s 2400000 -g 20 -n 720000000 ~/ib01-captures/ch26.cu8
+python3 -I tools/sdr/demod.py --fc 867923700 --channels 26 \
+    --file ~/ib01-captures/ch26.cu8 --redact --summary
+
+# Live (runs about 4x faster than real time at 2.4 MS/s)
+rtl_sdr -f 867923700 -s 2400000 -g 20 - | python3 -I tools/sdr/demod.py --fc 867923700 --redact
+```
+
+Tune 400 kHz below the channel (`--fc` must equal `rtl_sdr -f`) to keep the dongle's DC spike out of the band. For the test channel 10 use `-f 864724451` and `--channels 10`. Captures, CSV files and printed payloads stay in `~/ib01-captures/`, never in git: they carry the stock network's addresses.
+
+**How it measures [V]/[I]:** 2.4 MS/s, channel filter and decimation to 600 kS/s (1.667 µs per sample, 12 samples per bit), FM discriminator, one-bit matched filter, sync search with at most 2 bit errors. The sync start comes from a least-squares fit of every bit-boundary zero crossing in the frame (linearly interpolated between samples), with the pattern-dependent GFSK crossing shift modelled from the neighbouring bits; filter delays are removed, so times refer to the raw IQ sample index. Offset and deviation come from a fit of the bit-centre frequency with neighbour terms, against the channel centre the stock registers program (channel 0 = 863.124939 MHz, spacing 199.951172 kHz, `radio.md` register table). Radio CRC: CRC-16 poly `0x8005`, init `0xFFFF` over length and frame (`frames.py`).
+
+**Accuracy [V]:** synthetic GFSK frames with known timing (BT 0.5, 25.39 kHz deviation, random offsets ±15 kHz, gaps down to 0.3 ms): all 111 frames decoded at 16-42 dB SNR, sync-start error std 0.02 µs at 42 dB, 0.06 µs at 22 dB, 0.11 µs at 16 dB, worst case 0.6 µs; offset error std 3-7 Hz; bit-rate error std about 7 ppm on 35-60 byte frames, 20 ppm on 12-20 byte frames. On air, one device's ACK turnaround repeated within 0.2 µs (std, n=3), so the timestamps are good to well under 1 µs; the 10 µs target holds with a wide margin. Time intervals scale with the dongle's crystal error (tens of ppm), which is negligible for millisecond gaps. Absolute offsets still include the uncalibrated dongle error; offsets between senders do not.
+
+## Stock network reference (2026-11-11) [V]
+
+Channel 26, receive-only, 300 s capture plus 10 s and 30 s runs, `demod.py` as above, gain 20 dB. No address of any device is recorded here.
+
+| Item | Result |
+| :--- | :--- |
+| Frames | 1447 sync hits, **1413 CRC OK (97.7%)** in 300 s: wake-up 934, broadcast 301, Enhanced ACK 88, Data 90. A live 30 s run: 51 of 57 (89%), including 3 Beacon Requests from one device, unanswered |
+| Senders | Coordinator plus 6 devices. All frames: 32-bit preamble, deviation 25.4 kHz, no sync errors among CRC-OK frames |
+| Carrier offset, relative to the dongle | Coordinator **+5.2 kHz**; devices +8.2, +8.3, +9.4, +10.7, +12.8, +13.3 kHz. Spread across devices 5.1 kHz (5.9 ppm). Each sender drifts within about 0.5 kHz (5-95 %) over 5 min, the same for all, so that drift is the dongle's |
+| Bit-rate error, relative to the dongle | Every device's bit clock agrees with its carrier offset within 1.4 ppm (e.g. +15.3 ppm RF, +14.0 ppm bit rate). **The coordinator does not:** +6.0 ppm RF but **-30.6 ppm** bit rate (n=33 frames of 40+ bytes, standard error 0.6 ppm) |
+| Uplink ACK (coordinator answers a device) | Data end to ACK preamble start **1.50-1.99 ms**, median 1.91 ms (n=56), spread fairly evenly over that range |
+| Downlink ACK (device answers the coordinator) | **350-393 µs**, median 373 µs (n=32); spread per device 2-14 µs (std) |
+| Wake-up trains | Step sync to sync 3.94-3.99 ms or 4.40-4.45 ms, in clusters about 7-10 µs apart with 1.4-3.3 µs spread each (the coordinator's own timing). Data frame starts 0.4-3.8 ms after the last wake-up ends, median 1.4 ms (n=34) |
+| Beacon answer (#28) | Not seen: the coordinator was not in pairing mode and did not answer Beacon Requests |
+
+**What this means [I]:**
+- **#16:** the stock coordinator starts its Enhanced ACK 1.5-2.0 ms after the Data frame ends, and devices accept that. The "well under 1 ms" target in `radio.md` is stricter than stock; matching stock is enough. Devices answer in about 0.37 ms.
+- **#7:** the coordinator's bit clock runs about 37 ppm slower than its carrier offset implies, while every device's two figures agree. The likeliest reading: the coordinator's crystal is far off (about -42 ppm against the devices' average bit clock), and its RF is pulled back to within about 6 ppm of the devices by a frequency trim that stock applies after the logged init, which writes `FSCTRL0=0` (`radio.md`, register table; freedo's trim: `freedo/docs/PROTOCOL.md:1670-1718`). Alternatively the coordinator does not use the logged FREQ or data-rate values. Either way a per-unit trim is probably needed on the IB01. The bench unit's own crystal is still to be measured, from our first transmissions on channel 10 (P5) with this tool.
 
 ## Bench network
 
