@@ -2,6 +2,8 @@
 
 #include "log.h"
 
+#include <stdbool.h>
+
 #include <libopencm3/stm32/iwdg.h>
 #include <libopencm3/stm32/rcc.h>
 
@@ -20,17 +22,35 @@ void watchdog_log_reset_cause(void) {
     RCC_CSR |= RCC_CSR_RMVF;
 }
 
+/* Bounded wait for IWDG_SR bits to clear (the LSI domain needs a few LSI
+ * cycles per update). ~50 ms worst case at 100 MHz; scheduler not running yet. */
+#define IWDG_SR_WAIT_LOOPS 1500000u
+
+static bool iwdg_sr_wait(uint32_t mask) {
+    for (uint32_t n = IWDG_SR_WAIT_LOOPS; n; n--) {
+        if (!(IWDG_SR & mask)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void watchdog_start(void) {
     DBGMCU_APB1_FZ |= DBG_IWDG_STOP;
     IWDG_KR = IWDG_KR_START;
     IWDG_KR = IWDG_KR_UNLOCK;
-    while (IWDG_SR & IWDG_SR_PVU) {
-    }
+    bool ok = iwdg_sr_wait(IWDG_SR_PVU);
     IWDG_PR = IWDG_PR_DIV64;
-    while (IWDG_SR & IWDG_SR_RVU) {
-    }
+    ok &= iwdg_sr_wait(IWDG_SR_PVU);
     IWDG_RLR = WDG_RELOAD;
+    /* RVU must clear before the reload key, or the first window runs with the
+     * reset value 0xFFF instead of WDG_RELOAD. */
+    ok &= iwdg_sr_wait(IWDG_SR_RVU);
     IWDG_KR = IWDG_KR_RESET;
+    if (!ok) {
+        LOG("watchdog: WARNING IWDG_SR PVU/RVU did not clear in time, SR %08lx",
+            (unsigned long)IWDG_SR);
+    }
 }
 
 void watchdog_checkin(enum wdg_task who) {

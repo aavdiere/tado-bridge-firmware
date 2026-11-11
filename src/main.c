@@ -3,6 +3,7 @@
 #include "app.h"
 #include "board.h"
 #include "clock.h"
+#include "faults.h"
 #include "log.h"
 #include "watchdog.h"
 
@@ -20,6 +21,7 @@ int main(void) {
     delay_ms(2000);
 
     clock_init();
+    faults_init();
     log_init();
     LOG("tado-bridge P1 skeleton");
     watchdog_log_reset_cause();

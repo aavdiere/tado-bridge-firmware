@@ -51,7 +51,7 @@ case "${1:-}" in
       [[ $meta == *" 160000 "* ]] && continue # submodule gitlink, no blob
       blob=$(awk '{print $4}' <<<"$meta")
       check_blob "$path" "$blob"
-    done < <(git diff --cached --raw --no-renames --diff-filter=ACM --no-abbrev)
+    done < <(git diff --cached --raw --no-renames --diff-filter=ACMT --no-abbrev)
     ;;
   --tracked)
     while read -r _ type blob path; do [[ $type == commit ]] && continue; check_blob "$path" "$blob"; done < <(git ls-tree -r HEAD)

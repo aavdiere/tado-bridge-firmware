@@ -8,4 +8,9 @@ MEMORY
 	ram (rwx) : ORIGIN = 0x20000000, LENGTH = 128K
 }
 
+/* The heap (newlib _sbrk) may grow up to here; the rest of RAM is the main
+ * (MSP) stack, which also serves ISRs and the scheduler start. */
+_main_stack_size = 4K;
+_heap_limit = ORIGIN(ram) + LENGTH(ram) - _main_stack_size;
+
 INCLUDE cortex-m-generic.ld

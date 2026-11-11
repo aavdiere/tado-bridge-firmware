@@ -10,5 +10,5 @@ void vApplicationMallocFailedHook(void) {
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char *name) {
     (void)task;
-    fw_panic(name ? name : "?", "stack overflow in task", __LINE__);
+    fw_panic("stack overflow in task", name ? name : "?", __LINE__);
 }

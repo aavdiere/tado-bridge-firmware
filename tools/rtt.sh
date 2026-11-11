@@ -3,12 +3,15 @@
 # then in another terminal:   nc localhost 19021     (or: telnet localhost 19021)
 # RTT block is searched in RAM (0x20000000, 128 KB) by its "SEGGER RTT" ID.
 # The target keeps running; this does not halt or reset it. Start it after the
-# firmware has booted (it waits ~2 s first, then initialises RTT).
-# Usage: tools/rtt.sh [elf]   (elf only used to read the cb address, optional)
+# firmware has booted (it waits ~2 s first, then initialises RTT), but it is
+# safe to start during that delay too: OpenOCD keeps polling (every 100 ms)
+# until the control block appears, then the server forwards channel 0.
+# Usage: tools/rtt.sh        (port: $RTT_PORT, default 19021)
 set -eu
 PORT="${RTT_PORT:-19021}"
 exec openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
     -c "init" \
+    -c "rtt polling_interval 100" \
     -c "rtt setup 0x20000000 0x20000 \"SEGGER RTT\"" \
     -c "rtt start" \
     -c "rtt server start $PORT 0"

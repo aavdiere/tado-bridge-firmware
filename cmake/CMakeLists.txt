@@ -7,6 +7,8 @@ if(NOT DEFINED BINARY)
 endif()
 message("Project name: ${BINARY}")
 
+# Repo root, so __FILE__ is repo-relative (no home path in the binary)
+get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(FREERTOS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/FreeRTOS-Kernel")
 set(OPENCM3_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/libopencm3")
 
@@ -62,6 +64,7 @@ add_executable(${BINARY}
     ../src/watchdog.c
     ../src/app.c
     ../src/hooks.c
+    ../src/faults.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c
@@ -83,6 +86,7 @@ target_compile_definitions(${BINARY} PRIVATE
 
 target_compile_options(${BINARY} PRIVATE
     -MD
+    -fmacro-prefix-map=${REPO_ROOT}/=
     -Wundef
     $<$<COMPILE_LANGUAGE:CXX>:
         -Wconversion
