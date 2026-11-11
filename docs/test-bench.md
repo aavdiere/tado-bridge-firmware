@@ -52,6 +52,12 @@ The backup shows the bench IB01 is configured for **channel 26**, the same chann
 - Re-plugging the ST-Link or a reset starts the stock firmware again. Halt it at once (`openocd ... -c init -c halt -c shutdown`) until P1 replaces it.
 - The first P1 flash replaces the stock firmware for good; the backup and the proven restore bring it back if needed.
 
+## Bench tools
+
+- `docs/tools/read_ib01_system_areas.tcl`: option bytes, OTP, unique ID (read-only).
+- `tools/bench/io_check.tcl`: drives the LEDs in a fixed order and logs button presses as pin changes; peripheral registers only, undone by the final reset. Keeps the stock firmware halted.
+- `tools/sdr/chanscan.py`, `tools/sdr/frames.py`: channel activity and tado frame decoding.
+
 ## RTL-SDR uses
 
 | Use | How | Settles |

@@ -13,7 +13,8 @@ Enough is known to start building. What remains is gathered during the build:
 
 ## Todo
 
-- [ ] **Firmware stage: find the pair button pin.** Build a small diagnostic firmware that watches all free input pins and reports which one changes; the user presses the pair button and we read the result. Quicker alternative needing no new firmware: with the stock firmware running and powered from the ST-Link, read the input registers over SWD before and while the button is held: `mdw 0x40020010` (GPIOA_IDR), `mdw 0x40020410` (GPIOB_IDR), `mdw 0x40020810` (GPIOC_IDR) (`datasheets/rm0383.txt:1730-1732,8179-8180`). Read-only. Candidate pins: 7 (NRST), 2, 4, 12, 29, 30-33, 38, 39, 40, 42, 43. The button switches 3V3 through a diode, so expect a bit to go to 1.
+- [x] Found the pair button pin over SWD (2026-11-11): PC15, active high.
+- [ ] ~~Firmware stage: find the pair button pin.~~ Build a small diagnostic firmware that watches all free input pins and reports which one changes; the user presses the pair button and we read the result. Quicker alternative needing no new firmware: with the stock firmware running and powered from the ST-Link, read the input registers over SWD before and while the button is held: `mdw 0x40020010` (GPIOA_IDR), `mdw 0x40020410` (GPIOB_IDR), `mdw 0x40020810` (GPIOC_IDR) (`datasheets/rm0383.txt:1730-1732,8179-8180`). Read-only. Candidate pins: 7 (NRST), 2, 4, 12, 29, 30-33, 38, 39, 40, 42, 43. The button switches 3V3 through a diode, so expect a bit to go to 1.
 - [ ] Make a full backup before any flash (user): `read.sh` twice, compare, and store the dumps privately. See "Full backup" in `hardware.md`. Needs an ST-Link V2 and access to the test points.
 - [x] Probed the PCB (2026-11-11): ENC28J60 INT on PB2, Ethernet SPI wiring, RESET on PC14 and all four LEDs confirmed. See `hardware.md`.
 
@@ -27,7 +28,6 @@ Enough is known to start building. What remains is gathered during the build:
 
 | # | Missing | Why it matters | How to get it |
 | :-- | :-- | :-- | :-- |
-| 6 | Pair button MCU pin: it switches 3V3 through a diode near a 3-pin IC marked `AHt`, not yet traced. Factory reset button is PB10, active low. Ethernet and LEDs are settled (`hardware.md`) | Firmware cannot read them otherwise | Continuity trace with the switch held, against the free GPIOs |
 | 7 | Crystal offset; is per-unit trim needed | Stock uses `FSCTRL0=0`, freedo's module needed trim | Measure on air (`freedo/docs/PROTOCOL.md:1668+`) |
 | 8 | Which values the new firmware needs from the backup. Nothing must survive on the chip once a full backup exists, but the firmware still needs the serial and EUI-64 **[I]** | tanoclo identifies the bridge by serial | Read them from the backup (`tanoclo/patch_ib_firmware/extract_rf_key.js` documents the offsets) and provision them with the new firmware |
 | 9 | Option bytes and read protection on this unit; confirm the restore path works | The guide reads shipped units over SWD, but the docs do not state the protection level | Read the option bytes during backup; see "Full backup" in `hardware.md` |
@@ -74,6 +74,7 @@ Because tanoclo is the compatibility target and accepts zeros for #10, the firmw
 | 4 | CC110L pin clues | Pin table in `hardware.md` |
 | 15 (part) | Docs versus code conflicts | Code wins; see `server-api.md` |
 | n/a | Is mesh routing required? | No: single-hop star |
+| 6 | MCU pin map | Complete: Ethernet, LEDs, factory reset PB10 (active low), pair button PC15 (active high). See `hardware.md` |
 | 2 | Does freedo's CC1101 use apply to the CC110L? | Yes; see `datasheets/cc110l-vs-cc1101.md` |
 | 29 | `FSCTRL1` value | Decision: use `0x06` (152 kHz IF), as freedo does. The wiki's capture shows `0x18` |
 | 5 | Radio conflicts between sources | Resolved in the conflict table in `radio.md`. Retry gap is provisional. All still to be proven on the real IB01 |

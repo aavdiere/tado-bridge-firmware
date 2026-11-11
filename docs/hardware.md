@@ -59,9 +59,11 @@ The earlier guess of PA8 for the cloud LED was wrong; PA8 is not accounted for.
 
 **Factory reset button is on PB10** (package pin 21), confirmed by continuity (2026-11-11). The button connects PB10 to ground, so it is **active low: pressed reads 0** (2026-11-11). Enable the internal pull-up; it is harmless if the board also has an external one **[I]**.
 
-**Pair button** (2026-11-11, partial): one side goes to 3V3, the other to a diode next to a 3-pin IC marked `AHt`. Where the diode and that IC lead is not yet traced, so the MCU pin is unknown. With the button switching 3V3, the MCU most likely sees it as **active high** **[I]**.
+**Pair button is on PC15** (package pin 4), **active high: pressed reads 1** [V], found 2026-11-11 with `tools/bench/io_check.tcl`: three presses gave three clean 0-1-0 transitions on PC15 and nothing else, with the internal pull-down on. On the board the button switches 3V3 through a diode next to a 3-pin IC marked `AHt`; that IC's role is unknown and not needed for firmware. PC15 is a current-limited pin (`stm32f411ce.txt:2734`), which is fine for an input.
 
-**Not yet known:** pair button MCU pin; what the `AHt` IC is. See `open-questions.md` #6.
+**Bench I/O check (2026-11-11) [V]:** all four LEDs lit in the expected order when their pins were driven high; factory reset PB10 gave two clean 1-0-1 presses with the internal pull-up. At rest PB2 (ENC28J60 INT) reads 1, idle for an active-low interrupt, and PB6 and PB7 read 1 despite internal pull-downs, which suggests external I2C pull-ups for the HomeKit chip **[I]**.
+
+**Pin map complete.** Every pin the firmware needs is known.
 
 ## RF path
 
