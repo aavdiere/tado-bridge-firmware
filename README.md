@@ -66,8 +66,8 @@ MIT, see [`LICENSE`](LICENSE). Code ported from other projects keeps its origina
 
 **A:** Having the hardware mapped out, a custom API could be made.
 I do feel that having a _stable_ common ground to work around will help development in the long run.
-By ensuring the firmware can function as a 1-on-1 copy of the original, maybe even talking to the actual Tado servers, others (such as tadoclo) can implement the server part and have it work together by design.
-After that, additional functionality or simpler designs can still be made, knowing that there an original implementation to reference back to.
+By ensuring the firmware can function as a 1-on-1 copy of the original, maybe even talking to the actual Tado servers, others (such as tanoclo) can implement the server part and have it work together by design.
+After that, additional functionality or simpler designs can still be made, knowing that there is an original implementation to reference back to.
 
 **Q: Why make this only using LLMs?**
 
