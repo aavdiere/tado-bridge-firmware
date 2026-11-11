@@ -6,7 +6,7 @@ Master list of what is still required. Details and citations are in `hardware.md
 
 Enough is known to start building. What remains is gathered during the build:
 
-1. **Backup session** (#8, #9): serial, EUI-64, read protection, restore rehearsal.
+1. ~~Backup session~~ (#8, #9): done 2026-11-11, see `hardware.md` (P0 results).
 2. **Prototype** (#16, #17, #19, #28) and on-board measurements (#7, #26 noise).
 3. **Before building self-update** (#20): check the bootloader and image sizes fit the layout.
 4. **Optional:** stock capture (section C); pair button pin at firmware stage.

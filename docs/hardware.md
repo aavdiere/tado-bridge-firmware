@@ -123,7 +123,7 @@ Device-specific values (serial, EUI-64, hashes) are kept in the private backup f
 | Backup | `read.sh` run twice: internal 512 KB and external 2 MB identical between runs, zero stub errors or read mismatches |
 | Identity | Config marker `42 49 00 00 54 46` at internal offset 0x4006. EUI-64 starts with tado OUI `00:1B:C5:07`; reversed on air it ends in the network suffix `31 07 c5 1b 00` (`radio.md`) |
 
-Restore rehearsal: not yet done.
+Restore rehearsal: done. Internal flash written from the backup with `flash write_image erase` and `verify_image` (512 KB in 15 s, verified), external flash written through tanoclo's RAM stub (2 MB, about 90 s, completed), then read back with `read.sh`: both chips byte-identical to the backup. The way back to stock firmware is proven.
 
 ## Not reviewed
 
