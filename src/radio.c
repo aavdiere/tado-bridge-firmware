@@ -977,6 +977,7 @@ void radio_task_run(void) {
         TickType_t now = xTaskGetTickCount();
         if (bits & NOTE_STORM) {
             COUNT(storm);
+            fe_sample.valid = false; /* edges during a storm are not packet edges (#28) */
             /* Re-init at once, but at most once per STORM_REINIT_MIN_MS; a
              * storm that comes straight back leaves the interrupts off until
              * the next health check re-initialises. */
