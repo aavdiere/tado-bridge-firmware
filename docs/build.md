@@ -53,13 +53,12 @@ The radio task now owns SPI1 and blinks no placeholder LED; the cloud LED (PB5) 
 
 1. Boot log as in P1, then `spi1: SCK 6000000 Hz, mode 0`, `flash: JEDEC ID c22815 (MX25R1635F), status register ..`. Note the status register value; bit 0 (WIP) should be 0.
 2. `radio: PARTNUM .. VERSION ..` (datasheet: `00 17`), `radio: calibrated, FSCAL3 .. FSCAL2 .. FSCAL1 ..` without "PLL NOT locked", `radio: RX on channel 26 (868323668 Hz), receive only`.
-3. A 60 s line `radio: 60 s: freqest in packet N, none N (stale sample dropped N), sync rssi differs N` with in-packet equal to the frame count and none 0.
-3b. Frames from the stock network: `rx: t .. len .. crc ok rssi .. dBm ...` lines and `rx: wake train ...` summaries; the cloud LED flickers with them. The SDR scan saw about 84 CRC-valid frames in 30 s on this channel (`test-bench.md`).
-4. Every 60 s a `radio: 60 s: ...` and a `flash: 60 s: JEDEC ID ok 6, mismatch 0 ...` line. Flash mismatches must stay 0 with radio traffic running.
+3. Frames from the stock network: `rx: t .. len .. crc ok rssi .. dBm ...` lines and `rx: wake train ...` summaries; the cloud LED flickers with them. The SDR scan saw about 84 CRC-valid frames in 30 s on this channel (`test-bench.md`).
+4. Every 60 s a `flash: 60 s: JEDEC ID ok 6, mismatch 0 ...` line and these radio lines. Flash mismatches must stay 0 with radio traffic running. The radio line `radio: 60 s: freqest in packet N, none N (stale sample dropped N), sync rssi differs N` (`src/radio.c:936`) reports the in-packet `FREQEST` sampling (f1f6b3a). Expect in packet equal to the frame count, none 0, stale sample dropped 0 and sync rssi differs 0 **[D]**; the 2026-11-12 final image gave exactly that (`radio-runtime.md:97`) **[V]**. A non-zero none or stale count means a sample was missed or outlived its frame; non-zero sync rssi differs means the RSSI frozen at sync is not the appended RSSI byte.
 5. Every 10 s the `alive:` line from P1; the watchdog must not fire (`reset:` shows no `IWDG` after a long run).
 6. Optional with the SDR: confirm the bridge transmits nothing on 863-873 MHz while it runs.
 
-Record PARTNUM/VERSION, the frame and CRC counts, the RSSI range and the `FREQEST` spread in `radio-runtime.md` and `hardware.md` (offset measurement for #7). After the test, power-cycle the board again so the radio leaves our configuration.
+Record PARTNUM/VERSION, the frame and CRC counts, the RSSI range and the `FREQEST` spread in `radio-runtime.md` and `hardware.md` (offset measurement for #7). After the test, power-cycle the board again so the radio leaves our configuration. The owner power-cycled the board after the 2026-11-12 runs **[V]** (owner report to the main session, no log).
 
 Size (`make size`, Release): text 19664, data 116, bss 34492 bytes.
 
