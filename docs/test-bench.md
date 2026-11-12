@@ -133,7 +133,7 @@ Channel 26, receive-only, 300 s capture plus 10 s and 30 s runs, `demod.py` as a
 
 ## P2 receive-only image on air (2026-11-11/12) [V]
 
-Check that the P2 image (CC110L in RX on channel 26, `RADIO_TX_ALLOWED` 0, `docs/radio-runtime.md:115`) emits nothing. RTL-SDR at fc 867.9237 MHz, 2.4 MS/s, gain 20 dB, span 866.72-869.11 MHz (channels 19-29), `burstscan.py` against `demod.py` frames. Captures: before our firmware (16:09, P1 running, radio untouched), across the P2 flash (18:57), and an A/B pair with P2 running (A) and the MCU halted by OpenOCD `halt` for 108 s (B). The bridge was not unpowered; that needs the owner and was not needed.
+Check that the P2 image (CC110L in RX on channel 26, `RADIO_TX_ALLOWED` 0, `docs/radio-runtime.md:115`) emits nothing. RTL-SDR at fc 867.9237 MHz, 2.4 MS/s, gain 20 dB, span 866.72-869.11 MHz (channels 19-29), `burstscan.py` against `demod.py` frames. Captures: before our firmware (16:09, P1 running, radio untouched), across the P2 flash (18:57), and an A/B pair with P2 running (A) and the MCU halted by OpenOCD `halt` for 108 s (B). Then (C, 2026-11-12) a 239 s capture with the bridge unpowered from t = 7.8 s to 228.9 s: the owner unplugged the ST-Link, and the times come from polling its USB presence.
 
 | Item | Result |
 | :--- | :--- |
@@ -141,9 +141,9 @@ Check that the P2 image (CC110L in RX on channel 26, `RADIO_TX_ALLOWED` 0, `docs
 | Channel 26 | Every burst is a decoded tado frame or a collision of two, recovered by re-decoding |
 | Channel 24 | Bursts every 504 ms, 9.4 ms long, 74 kHz below the channel centre, 23 kHz symbol rate. Also before our firmware: a neighbour |
 | Channels 22, 29 | Single 20 ms events, also before our firmware |
-| About 868.48 MHz (channel 27) | Every 6.103 s: a train of 19 pulses (1.97 ms each, every 6.43 ms), then 1.27 s later a short exchange between two transmitters; a weaker train from a second source runs 0.15-0.2 s earlier. 2-FSK with a comb of lines about 35 kHz apart, about 70 kHz transition rate: neither our register table nor tado's PHY. **Not ours:** same period (6.1034 s) and phase with the MCU halted, phase-continuous through the P2 flash and reset, and present (looser cadence, same pulse shape) before our firmware. 6.103 s = 200000/32768 s points to a 32.768 kHz timebase, which the bridge does not use |
+| About 868.48 MHz (channel 27) | Every 6.103 s: a train of 19 pulses (1.97 ms each, every 6.43 ms), then 1.27 s later a short exchange between two transmitters; a weaker train from a second source runs 0.15-0.2 s earlier. 2-FSK with a comb of lines about 35 kHz apart, about 70 kHz transition rate: neither our register table nor tado's PHY. **Not ours:** same period (6.1034 s) and phase with the MCU halted, phase-continuous through the P2 flash and reset, present (looser cadence, same pulse shape) before our firmware, and it keeps going with the bridge unpowered (C: 2397 bursts in the 221 s without power, cadence about 4.9 s). 6.103 s = 200000/32768 s points to a 32.768 kHz timebase, which the bridge does not use |
 
-**Result:** no emission from the bench unit seen with the P2 image running or halted. Every remaining burst belongs to other users of the band.
+**Result:** no emission from the bench unit seen with the P2 image running, halted or unpowered. Every remaining burst belongs to other users of the band.
 
 ## Bench network
 
