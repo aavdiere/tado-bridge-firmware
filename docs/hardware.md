@@ -97,7 +97,11 @@ Chosen in `src/clock.c`. **Verified on the bench 2026-11-11 [V]:** the owner con
 
 ## SPI1: radio and flash (P2, #9, #10)
 
-Implemented in `src/spi1.c`, `src/cc110l.c`, `src/mx25r.c`, `src/radio.c`. Built, **not yet run on hardware**; bench results go here after the run.
+Implemented in `src/spi1.c`, `src/cc110l.c`, `src/mx25r.c`, `src/radio.c`. Run on the bench unit 2026-11-12 (bench RTT capture, 300 s, 2026-11-12, kept outside the repo), receive-only on channel 26, flash read-only:
+
+- **[V]** Boot: reset cause POR/PDR PIN BOR; SYSCLK 96 MHz from HSE 26 MHz; SPI1 SCK 6 MHz, mode 0.
+- **[V]** Flash: JEDEC ID `C2 28 15` (MX25R1635F), status register `00`. 30 periodic ID checks in 5 min, 0 mismatches, 2 of them taken while a frame was arriving. This verifies the shared bus (#10).
+- **[V]** Radio: PARTNUM `00`, VERSION `17`, as documented (`datasheets/cc110l.txt`). Calibrated FSCAL3 `ef`, FSCAL2 `2c`, FSCAL1 `1a`. SPI errors 0, status glitch 0 over the run (#9).
 
 | Item | Setting | Source |
 | :--- | :--- | :--- |

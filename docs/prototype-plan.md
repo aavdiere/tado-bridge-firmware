@@ -102,6 +102,7 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 - Find the stock network's channel with the RTL-SDR and set it as the protected channel (`test-bench.md`).
 - Build the SDR demodulator used later for timing measurements.
 - **Done when:** frames from nearby Tado devices arrive with CRC OK, and flash and radio both work on the shared bus. Settles #7.
+- **Status (2026-11-12, [V]):** receive-only run met the frame and shared-bus criteria (1115 of 1119 CRC OK, 30 of 30 flash ID checks; `radio-runtime.md`, `hardware.md`). #7 is not settled: `FREQEST` needs an earlier read (#11).
 
 ### P3: Ethernet
 

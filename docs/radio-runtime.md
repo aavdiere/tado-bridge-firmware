@@ -87,7 +87,12 @@ The commercial bridge uses a random backoff of 0-6 × 640 µs and a 3.97 ms list
 
 ## P2 receive-only implementation (#9) [I]
 
-`src/radio.c` (task logic) and `src/cc110l.c` (register access, transmit guard). Built, **not yet run on hardware**; the bench results (PARTNUM/VERSION, frames, CRC rate, `FREQEST` offset) will be added after the run. Pins and SPI settings: `hardware.md`, "SPI1: radio and flash".
+`src/radio.c` (task logic) and `src/cc110l.c` (register access, transmit guard). Run on the bench unit 2026-11-12 (bench RTT capture, 300 s, 2026-11-12, kept outside the repo); results below, **[V]** unless marked.
+
+- RX on channel 26 = 868323668 Hz. Five 60 s windows: 285/127/226/242/239 frames, CRC OK 283/126/226/242/238, so **1115 of 1119 CRC OK (99.6%)**. Wake frames 188/62/150/149/149. Overflow 0, bad length 0, stale 0, rearm 0, reinit 0, SPI errors 0, status glitch 0.
+- RSSI from about -41 to -72 dBm.
+- Runtime: FreeRTOS heap free 25560 (min 25560) of 32768; unused stack words radio/net/hk 308/489/342 of 512.
+- **`FREQEST` is not yet usable (#11 open):** 238 frames read 0, 214 read -1, 1 read -6. The SDR measured a 5.1 kHz spread across senders (`test-bench.md`, "Stock network reference"), about 3 units, so this is suspicious. Likely cause **[I]**: `FREQEST` is read after the frame completes, when `MCSM1 = 3F` has put the chip back in RX and `FOCCFG = 16` (`FOC_BS_CS_GATE = 0`) keeps the offset loop running on noise. A fix that reads it earlier is under investigation. Pins and SPI settings: `hardware.md`, "SPI1: radio and flash".
 
 **Channel.** `RADIO_RX_CHANNEL` = 26 (868.3237 MHz), the stock network's channel, so frames from real devices arrive; receive-only there is allowed (`test-bench.md` rule 3). `RADIO_PROTECTED_CHANNEL` = 26 is defined now for the P5 transmit guard. `_Static_assert`s recompute base 863.125 MHz, spacing 199.951 kHz, channels 10 and 26, IF, data rate, bandwidth and deviation from the table with the datasheet formulas (`datasheets/cc110l.txt:3700-3711,3724-3736,3755-3778,3869-3906`).
 
@@ -106,7 +111,7 @@ The commercial bridge uses a random backoff of 0-6 × 640 µs and a 3.97 ms list
 
 **Receive flow.** Interrupts only wake the radio task (`design.md`). The task blocks on a notification with a timeout (2 ms while a frame is being assembled, else 100 ms), so its watchdog check-in never stops. The pump follows freedo's `rxPump` (above): stable `RXBYTES` reads, length byte first, one byte left in the FIFO until the packet is complete (`cc110l.txt:2593-2597`), `FREQEST` read as soon as the last byte is in. Overflow, a length of 0 or above `PKTLEN = 0x80`, or a frame stuck for 60 ms: `SIDLE`, wait for IDLE, `SFRX`, `SRX` (`cc110l.txt:1449-1451,1501`). **Deviation from freedo:** a bad CRC does not flush the FIFO. The chip still wrote exactly `1 + len + 2` bytes, so the FIFO stays aligned, and a flush would need `SIDLE`, which would cut a following packet that may already be arriving.
 
-**Status bytes.** RSSI from the first appended byte, `RSSI_dBm = signed/2 - 74` at 868 MHz (`cc110l.txt:2130-2144`). `CRC_OK` is bit 7 of the second; bits 6:0 are reserved on the CC110L, where a CC1101 has LQI (`cc110l.txt:1747-1757`). The log prints those bits as `lqi(rsvd)` to see whether this die fills them. `FREQEST` is printed raw and in Hz, at `26 MHz / 2^14 = 1586.9 Hz` per unit (`cc110l.txt:4429-4434`).
+**Status bytes.** RSSI from the first appended byte, `RSSI_dBm = signed/2 - 74` at 868 MHz (`cc110l.txt:2130-2144`). `CRC_OK` is bit 7 of the second; bits 6:0 are reserved on the CC110L, where a CC1101 has LQI (`cc110l.txt:1747-1757`). The log prints those bits as `lqi(rsvd)` to see whether this die fills them. **[V]** (2026-11-12) they are filled: 43-48 on CRC-OK frames, so this die appears to fill an LQI-like value. `FREQEST` is printed raw and in Hz, at `26 MHz / 2^14 = 1586.9 Hz` per unit (`cc110l.txt:4429-4434`).
 
 **Log.** One line per frame with tick time, length, CRC, RSSI, `lqi(rsvd)`, `FREQEST` and the first three MAC bytes (frame control and sequence number) only; no addresses or payload. Wake-up frames (frame type 5) are summarised per train (count, CRC OK, RSSI range, mean `FREQEST`). Every 60 s: frames, CRC OK and bad, wake frames, overflows, bad lengths, stale frames, re-arms, re-inits, SPI errors, and the flash ID checks. The cloud LED toggles on each CRC-OK frame (P2 test wiring).
 
