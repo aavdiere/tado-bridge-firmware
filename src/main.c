@@ -1,5 +1,6 @@
 /* Startup delay, clock, RTT, LEDs and buttons, SPI1 for radio and flash,
- * FreeRTOS tasks, independent watchdog (#6, #7, #8, #9, #10). */
+ * FreeRTOS tasks, independent watchdog (#6, #7, #8, #9, #10). SPI2 and the
+ * ENC28J60 are set up by the net task (#12). */
 #include "app.h"
 #include "board.h"
 #include "clock.h"
@@ -31,7 +32,7 @@ int main(void) {
     timebase_init();
     faults_init();
     log_init();
-    LOG("tado-bridge P2: radio receive-only, flash read-only");
+    LOG("tado-bridge P3 #12: radio receive-only, flash read-only, Ethernet driver self-test");
     watchdog_log_reset_cause();
     LOG("clock: SYSCLK %lu Hz, APB1 %lu Hz, APB2 %lu Hz, from %s",
         (unsigned long)clock_hz,

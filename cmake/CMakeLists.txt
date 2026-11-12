@@ -70,6 +70,8 @@ add_executable(${BINARY}
     ../src/cc110l.c
     ../src/mx25r.c
     ../src/radio.c
+    ../src/enc28j60.c
+    ../src/net.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c

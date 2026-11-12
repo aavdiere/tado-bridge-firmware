@@ -31,6 +31,12 @@ _Static_assert(BOARD_FLASH_CS_PIN == (1u << FLASH_CS_PIN_NO), "PB9 flash CS#");
 _Static_assert(RADIO_CS_PIN_NO != 13u && RADIO_CS_PIN_NO != 14u, "never touch PA13/PA14 (SWD)");
 _Static_assert(FLASH_CS_PIN_NO != 6u && FLASH_CS_PIN_NO != 7u, "never touch PB6/PB7 (HomeKit I2C)");
 
+/* GPIOB pins this firmware configures; PB6/PB7 (HomeKit I2C) never. */
+#define GPIOB_USED                                                                                \
+    (BOARD_FLASH_CS_PIN | BOARD_ENC_CS_PIN | BOARD_SPI2_SCK_PIN | BOARD_SPI2_MISO_PIN            \
+     | BOARD_SPI2_MOSI_PIN | BOARD_ENC_INT_PIN | GPIO0 | GPIO1 | GPIO5 | GPIO8 | RESET_BTN_PIN)
+_Static_assert((GPIOB_USED & (GPIO6 | GPIO7)) == 0, "never touch PB6/PB7 (HomeKit I2C)");
+
 void board_cs_early(void) {
     /* GPIOAEN = bit 0, GPIOBEN = bit 1 of RCC_AHB1ENR (rm0383.txt:5900-5960).
      * The read-back makes the enable complete before the first GPIO access
@@ -86,6 +92,23 @@ void board_init(void) {
     }
     gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, RESET_BTN_PIN);
     gpio_mode_setup(GPIOC, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, PAIR_BTN_PIN);
+
+    /* ENC28J60 (#12). CS and RESET have weak pull-ups inside the chip
+     * (enc28j60.txt:262-263,288; 74-173 kOhm, :4008), so both idle high while
+     * the MCU pins float during the startup delay; board_cs_early() therefore
+     * leaves them alone. CS: level first, then output, as for SPI1. INT is a
+     * push-pull output of the chip, driven high while EIE.INTIE = 0
+     * (enc28j60.txt:3336); the pull-up only keeps it defined while the chip
+     * is held in reset. RESET stays released: input, with the MCU pull-up in
+     * parallel to the chip's. PC14 sinks at most 3 mA and may only switch at
+     * up to 2 MHz (stm32f411ce.txt:2734-2737), so it gets the lowest output
+     * speed for the reset pulse and is never driven high. */
+    gpio_set(GPIOB, BOARD_ENC_CS_PIN);
+    gpio_set_output_options(GPIOB, GPIO_OTYPE_PP, GPIO_OSPEED_25MHZ, BOARD_ENC_CS_PIN);
+    gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, BOARD_ENC_CS_PIN);
+    gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, BOARD_ENC_INT_PIN);
+    gpio_set_output_options(GPIOC, GPIO_OTYPE_PP, GPIO_OSPEED_2MHZ, BOARD_ENC_RESET_PIN);
+    gpio_mode_setup(GPIOC, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, BOARD_ENC_RESET_PIN);
 }
 
 void board_led(enum led led, bool on) {

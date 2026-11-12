@@ -12,6 +12,14 @@
 #define BOARD_SPI1_MISO_PIN (1u << 6) /* PA6, SPI1_MISO AF5; also the CC110L SO / CHIP_RDYn */
 #define BOARD_SPI1_MOSI_PIN (1u << 7) /* PA7, SPI1_MOSI AF5 */
 
+/* ENC28J60 (#12), confirmed by continuity (docs/hardware.md). */
+#define BOARD_ENC_CS_PIN    (1u << 12) /* PB12, ENC28J60 CS, active low */
+#define BOARD_SPI2_SCK_PIN  (1u << 13) /* PB13, SPI2_SCK AF5 */
+#define BOARD_SPI2_MISO_PIN (1u << 14) /* PB14, SPI2_MISO AF5 (ENC28J60 SO) */
+#define BOARD_SPI2_MOSI_PIN (1u << 15) /* PB15, SPI2_MOSI AF5 (ENC28J60 SI) */
+#define BOARD_ENC_INT_PIN   (1u << 2)  /* PB2, ENC28J60 INT, active low -> EXTI2 */
+#define BOARD_ENC_RESET_PIN (1u << 14) /* PC14, ENC28J60 RESET, active low */
+
 /* LEDs: push-pull, high = on (docs/hardware.md). */
 enum led { LED_ROUTER, LED_POWER, LED_CLOUD, LED_PAIRING, LED_COUNT };
 
@@ -26,7 +34,9 @@ void board_cs_early(void);
  * outputs (#28), so neither device is selected before SPI1 runs. Then GDO0/GDO2
  * (PA0/PA1) as inputs, the LED outputs (all off), the factory reset button
  * PB10 (active low, pull-up) and the pair button PC15 (active high,
- * pull-down). SPI1's own pins are configured by spi1_init(). No other pin is
+ * pull-down). ENC28J60 (#12): CS PB12 high push-pull output, INT PB2 input
+ * with pull-up, RESET PC14 released (input with pull-up). SPI1's and SPI2's
+ * own pins are configured by spi1_init() and enc28j60_setup(). No other pin is
  * touched; never PA13/PA14 (SWD) or PB6/PB7 (HomeKit I2C). */
 void board_init(void);
 

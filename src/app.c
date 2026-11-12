@@ -1,9 +1,10 @@
-/* Tasks (#8, #9, #10). Priorities follow docs/design.md "Tasks": radio high,
- * net medium, housekeeping low. The net body is still a placeholder. */
+/* Tasks (#8, #9, #10, #12). Priorities follow docs/design.md "Tasks": radio
+ * high, net medium, housekeeping low. */
 #include "app.h"
 
 #include "board.h"
 #include "log.h"
+#include "net.h"
 #include "radio.h"
 #include "watchdog.h"
 
@@ -28,15 +29,7 @@ static void radio_task(void *arg) {
 
 static void net_task(void *arg) {
     (void)arg;
-    bool power = false;
-    for (unsigned n = 0;; n++) {
-        watchdog_checkin(WDG_NET);
-        if (n % 10 == 0) { /* heartbeat: power LED toggles every 500 ms */
-            power = !power;
-            board_led(LED_POWER, power);
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
+    net_task_run(); /* src/net.c; owns SPI2, power LED heartbeat, watchdog check-in */
 }
 
 struct button {
@@ -69,7 +62,7 @@ static void housekeeping_task(void *arg) {
 
         button_update(&reset, board_reset_button_raw());
         button_update(&pair, board_pair_button_raw());
-        board_led(LED_ROUTER, reset.state); /* router LED mirrors the reset button */
+        /* The router LED shows the Ethernet link (net task, #12). */
         board_led(LED_PAIRING, pair.state); /* pairing LED mirrors the pair button */
 
         if (loops % 50 == 49) { /* every 500 ms */
