@@ -7,16 +7,16 @@
 
 #include <libopencm3/cm3/scb.h>
 
-#define FAULT_STUB(handler, label)                                                        \
-    __attribute__((naked)) void handler(void) {                                           \
-        __asm volatile("tst lr, #4\n"                                                     \
-                       "ite eq\n"                                                         \
-                       "mrseq r1, msp\n"                                                  \
-                       "mrsne r1, psp\n"                                                  \
-                       "adr r0, 1f\n"                                                     \
-                       "b fw_fault_report\n"                                              \
-                       ".align 2\n"                                                       \
-                       "1: .asciz \"" label "\"\n");                                      \
+#define FAULT_STUB(handler, label)                   \
+    __attribute__((naked)) void handler(void) {      \
+        __asm volatile("tst lr, #4\n"                \
+                       "ite eq\n"                    \
+                       "mrseq r1, msp\n"             \
+                       "mrsne r1, psp\n"             \
+                       "adr r0, 1f\n"                \
+                       "b fw_fault_report\n"         \
+                       ".align 2\n"                  \
+                       "1: .asciz \"" label "\"\n"); \
     }
 
 FAULT_STUB(hard_fault_handler, "HardFault")

@@ -42,8 +42,8 @@ void spi1_init(void) {
      * high), it idles high, which also reads as "chip not ready" if the
      * radio is missing. */
     gpio_set_af(GPIOA, GPIO_AF5, BOARD_SPI1_SCK_PIN | BOARD_SPI1_MISO_PIN | BOARD_SPI1_MOSI_PIN);
-    gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_25MHZ,
-                            BOARD_SPI1_SCK_PIN | BOARD_SPI1_MOSI_PIN);
+    gpio_set_output_options(
+        GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_25MHZ, BOARD_SPI1_SCK_PIN | BOARD_SPI1_MOSI_PIN);
     gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, BOARD_SPI1_SCK_PIN | BOARD_SPI1_MOSI_PIN);
     gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_PULLUP, BOARD_SPI1_MISO_PIN);
 

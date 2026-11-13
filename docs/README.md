@@ -53,3 +53,4 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 - Stock network found on channel 26 (868.3237 MHz) by SDR scan: protected channel (2026-11-11). Test channel 10 (865.1245 MHz), owner decision 2026-11-11. Pair only a device named by EUI-64.
 - Work is delegated to subagents with a fixed model and effort per task type (`CLAUDE.md`, `.claude/agents/`), 2026-11-11.
 - Progress is tracked in this repo: milestones P0-P7 and issues, see [`prototype-plan.md`](prototype-plan.md).
+- Code format (owner, 2026-11-12, applied 2026-11-13): all of `src/` follows `.clang-format` (LLVM-based, `AlignConsecutiveMacros` on), formatted with clang-format 23.1.4. The pre-commit hook formats staged `src/` files; a different clang-format version may reformat, so reformat in a commit of its own if the version changes.

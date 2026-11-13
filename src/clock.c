@@ -22,19 +22,19 @@
  * 50 MHz limit, and it needs 4 wait states below 2.7 V where 96 MHz needs 3
  * (rm0383.txt:2067-2068). The same PLLN/P/Q work from the 16 MHz HSI with
  * PLLM = 8, so the fallback runs at the same frequencies. */
-#define HSE_HZ 26000000u /* crystal, docs/hardware.md (Components) */
-#define HSI_HZ 16000000u /* stm32f411ce.txt:4968 */
-#define PLLM_HSE 13u     /* 26 MHz / 13 = 2 MHz */
-#define PLLM_HSI 8u      /* 16 MHz / 8 = 2 MHz */
-#define PLLN 96u
-#define PLLP 2u
-#define PLLQ 4u
+#define HSE_HZ    26000000u /* crystal, docs/hardware.md (Components) */
+#define HSI_HZ    16000000u /* stm32f411ce.txt:4968 */
+#define PLLM_HSE  13u       /* 26 MHz / 13 = 2 MHz */
+#define PLLM_HSI  8u        /* 16 MHz / 8 = 2 MHz */
+#define PLLN      96u
+#define PLLP      2u
+#define PLLQ      4u
 #define VCO_IN_HZ 2000000u
-#define VCO_HZ (VCO_IN_HZ * PLLN) /* 192 MHz */
-#define SYSCLK_HZ (VCO_HZ / PLLP) /* 96 MHz */
-#define PLL48_HZ (VCO_HZ / PLLQ)  /* 48 MHz */
-#define APB1_HZ (SYSCLK_HZ / 2)   /* 48 MHz, PPRE1 = /2 */
-#define APB2_HZ SYSCLK_HZ         /* 96 MHz, PPRE2 = /1 */
+#define VCO_HZ    (VCO_IN_HZ * PLLN) /* 192 MHz */
+#define SYSCLK_HZ (VCO_HZ / PLLP)    /* 96 MHz */
+#define PLL48_HZ  (VCO_HZ / PLLQ)    /* 48 MHz */
+#define APB1_HZ   (SYSCLK_HZ / 2)    /* 48 MHz, PPRE1 = /2 */
+#define APB2_HZ   SYSCLK_HZ          /* 96 MHz, PPRE2 = /1 */
 /* 90 < HCLK <= 100 MHz at 2.7-3.6 V, and 72 < HCLK <= 96 MHz at 2.4-2.7 V:
  * both need 3 WS (rm0383.txt:2067). Bench VDD is 3.20 V (hardware.md P0). */
 #define FLASH_WS 3u
@@ -68,9 +68,9 @@ _Static_assert(APB2_HZ <= 100000000u, "APB2 <= 100 MHz");
  * tSU(HSE) is 2 ms typical with no maximum given (stm32f411ce.txt:4859-4862);
  * 100 ms is 50x that. tLOCK is at most 300 us (stm32f411ce.txt:5097-5099).
  * RM0383 gives no time for VOSRDY or the clock switch; 5 ms is generous. */
-#define HSE_TIMEOUT_MS 100u
-#define PLL_TIMEOUT_MS 5u
-#define VOS_TIMEOUT_MS 5u
+#define HSE_TIMEOUT_MS    100u
+#define PLL_TIMEOUT_MS    5u
+#define VOS_TIMEOUT_MS    5u
 #define SWITCH_TIMEOUT_MS 5u
 
 /* RCC_PLLCFGR reserved bits 31:28, 23, 21:18 and 15 must be kept at their

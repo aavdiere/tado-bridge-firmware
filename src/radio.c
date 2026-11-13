@@ -69,8 +69,8 @@ _Static_assert(RADIO_RX_CHANNEL != RADIO_PROTECTED_CHANNEL,
  *   FSCTRL1 0x18 -> 0x06  IF 152 kHz, owner decision (docs/radio.md Conflicts)
  * IOCFG1 stays 0x2E: GDO1 is the SO pin and must be 3-state while CSn is
  * high, because the flash shares MISO (cc110l.txt:2891-2893, 2901). */
-#define PKTLEN_MAX 0x80u /* variable length: max length byte (cc110l.txt:3607-3612) */
-#define MCSM1_VAL 0x3Fu  /* RXOFF_MODE 11 stay in RX, TXOFF_MODE 11 RX, CCA_MODE 11 */
+#define PKTLEN_MAX   0x80u /* variable length: max length byte (cc110l.txt:3607-3612) */
+#define MCSM1_VAL    0x3Fu /* RXOFF_MODE 11 stay in RX, TXOFF_MODE 11 RX, CCA_MODE 11 */
 #define PKTCTRL0_VAL 0x05u
 
 static const uint8_t cc_config[CC_NUM_CONFIG_REGS] = {
@@ -138,10 +138,10 @@ _Static_assert(RADIO_RX_CHANNEL <= 49, "channel plan 0-49 (docs/radio.md)");
  *   rate    = (256 + DRATE_M) x 2^DRATE_E / 2^28 x fXOSC (cc110l.txt:3768-3778)
  *   BW      = fXOSC / (8 x (4 + CHANBW_M) x 2^CHANBW_E) (cc110l.txt:3755-3763)
  *   dev     = fXOSC / 2^17 x (8 + DEVIATION_M) x 2^DEVIATION_E (cc110l.txt:3882-3906) */
-#define FXOSC_HZ 26000000ull
-#define FREQ_WORD 0x213276ull
+#define FXOSC_HZ         26000000ull
+#define FREQ_WORD        0x213276ull
 #define CH_SPACING_X2_18 (FXOSC_HZ * (256u + 0xF8u) * (1u << (0x22 & 3)))
-#define CARRIER_HZ(ch) ((FXOSC_HZ * FREQ_WORD) / 65536u + ((ch) * CH_SPACING_X2_18) / 262144u)
+#define CARRIER_HZ(ch)   ((FXOSC_HZ * FREQ_WORD) / 65536u + ((ch) * CH_SPACING_X2_18) / 262144u)
 _Static_assert(CARRIER_HZ(0) > 863124000ull && CARRIER_HZ(0) < 863126000ull, "base 863.125 MHz");
 _Static_assert(CH_SPACING_X2_18 / 262144u == 199951u, "spacing 199.951 kHz");
 _Static_assert(CARRIER_HZ(26) > 868322700ull && CARRIER_HZ(26) < 868324700ull,
@@ -161,11 +161,11 @@ _Static_assert(FXOSC_HZ * 8u * 16u / (1u << 17) == 25390u, "deviation 25.39 kHz"
 #define FREQEST_HZ(fe) ((int32_t)(int8_t)(fe) * 203125 / 128)
 
 /* --- Interrupts -------------------------------------------------------------- */
-#define NOTE_GDO0 (1u << 0)
-#define NOTE_GDO2 (1u << 1)
+#define NOTE_GDO0  (1u << 0)
+#define NOTE_GDO2  (1u << 1)
 #define NOTE_FLASH (1u << 2)
 #define NOTE_STORM (1u << 3)
-#define NOTE_SYNC (1u << 4)
+#define NOTE_SYNC  (1u << 4)
 
 /* FreeRTOS FromISR calls need a numeric priority >= 5 (FreeRTOSConfig.h,
  * configMAX_SYSCALL_INTERRUPT_PRIORITY = 0x50). */
@@ -392,7 +392,7 @@ static void wake_add(uint8_t seq, bool crc_ok, int rssi, int fe) {
 }
 
 /* --- Receive ----------------------------------------------------------------- */
-#define RX_BUF_MAX (1u + PKTLEN_MAX + 2u) /* length byte, payload, RSSI, CRC_OK */
+#define RX_BUF_MAX  (1u + PKTLEN_MAX + 2u) /* length byte, payload, RSSI, CRC_OK */
 #define RX_STALE_US 60000u /* longest frame 131 B x 160 us = 21 ms; freedo uses 60 ms */
 
 static struct {
@@ -942,9 +942,9 @@ static void log_minute(void) {
     minute = (struct counters){0};
 }
 
-#define HEALTH_PERIOD_MS 10000u
-#define STATS_PERIOD_MS 60000u
-#define RETRY_PERIOD_MS 10000u
+#define HEALTH_PERIOD_MS    10000u
+#define STATS_PERIOD_MS     60000u
+#define RETRY_PERIOD_MS     10000u
 #define STORM_REINIT_MIN_MS 1000u
 
 void radio_task_run(void) {

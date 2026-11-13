@@ -21,8 +21,8 @@
 #define NOTE_INT   (1u << 0)
 #define NOTE_STORM (1u << 1)
 
-#define POLL_MS         50u    /* service pass at least this often, also without INT */
-#define HEARTBEAT_MS    500u   /* power LED toggles: 1 Hz blink, as in P1 */
+#define POLL_MS         50u  /* service pass at least this often, also without INT */
+#define HEARTBEAT_MS    500u /* power LED toggles: 1 Hz blink, as in P1 */
 #define RETRY_PERIOD_MS 10000u
 #define STATS_PERIOD_MS 60000u
 #define RX_PER_PASS     16u
@@ -45,10 +45,10 @@ struct counters {
 };
 static struct counters minute, total;
 
-#define COUNT(field, n)        \
-    do {                       \
-        minute.field += (n);   \
-        total.field += (n);    \
+#define COUNT(field, n)      \
+    do {                     \
+        minute.field += (n); \
+        total.field += (n);  \
     } while (0)
 
 static bool       link_up;
@@ -81,8 +81,10 @@ static const char *mac_str(char *b, size_t sz, const uint8_t *m) {
 static void set_link(bool up, uint16_t phstat2) {
     link_up = up;
     board_led(LED_ROUTER, up); /* router LED = link, for now (#12) */
-    LOG("eth: link %s (PHSTAT2 %04x: %s duplex, polarity %s)", up ? "up" : "down",
-        (unsigned)phstat2, (phstat2 & PHSTAT2_DPXSTAT) ? "full" : "half",
+    LOG("eth: link %s (PHSTAT2 %04x: %s duplex, polarity %s)",
+        up ? "up" : "down",
+        (unsigned)phstat2,
+        (phstat2 & PHSTAT2_DPXSTAT) ? "full" : "half",
         (phstat2 & PHSTAT2_PLRITY) ? "reversed" : "ok");
 }
 
@@ -96,14 +98,18 @@ static void bring_up(void) {
         bool ok = enc28j60_init(mac_addr, &info);
         if (info.erevid) {
             LOG("eth: EREVID %02x (%s), PHID1 %04x PHID2 %04x, PHLCON %04x (reset value kept)%s",
-                (unsigned)info.erevid, info.rev_name, (unsigned)info.phid1,
-                (unsigned)info.phid2, (unsigned)info.phlcon,
+                (unsigned)info.erevid,
+                info.rev_name,
+                (unsigned)info.phid1,
+                (unsigned)info.phid2,
+                (unsigned)info.phlcon,
                 info.soft_reset ? ", reset by SPI command (RESET pin had no effect)" : "");
         }
         if (ok) {
             LOG("eth: configured: MAC %s (placeholder), half duplex (PHCON1 %04x), RX 0000-19ff, "
                 "TX 1a00-1fff, filter unicast+broadcast+CRC",
-                mac_str(m, sizeof m, mac_addr), (unsigned)info.phcon1);
+                mac_str(m, sizeof m, mac_addr),
+                (unsigned)info.phcon1);
             uint16_t st = enc28j60_phstat2();
             set_link((st & PHSTAT2_LSTAT) != 0u, st);
             return;
@@ -121,15 +127,24 @@ static void reinit(void) {
 static void log_minute(void) {
     LOG("eth: 60 s: rx ok %lu, bad %lu (crc %lu, runt %lu), own %lu, overflow %lu; tx ok %lu, "
         "err %lu, late-col retry %lu, busy %lu",
-        (unsigned long)minute.rx_ok, (unsigned long)minute.rx_bad, (unsigned long)minute.rx_crc,
-        (unsigned long)minute.rx_runt, (unsigned long)minute.rx_own,
-        (unsigned long)minute.rx_overflow, (unsigned long)minute.tx_ok,
-        (unsigned long)minute.tx_err, (unsigned long)minute.tx_retry,
+        (unsigned long)minute.rx_ok,
+        (unsigned long)minute.rx_bad,
+        (unsigned long)minute.rx_crc,
+        (unsigned long)minute.rx_runt,
+        (unsigned long)minute.rx_own,
+        (unsigned long)minute.rx_overflow,
+        (unsigned long)minute.tx_ok,
+        (unsigned long)minute.tx_err,
+        (unsigned long)minute.tx_retry,
         (unsigned long)minute.tx_busy);
     LOG("eth: 60 s: link %s, link irq %lu, reinit %lu, int storm %lu; total rx ok %lu, tx ok %lu, "
         "tx err %lu",
-        link_up ? "up" : "down", (unsigned long)minute.link_irq, (unsigned long)minute.reinit,
-        (unsigned long)minute.storm, (unsigned long)total.rx_ok, (unsigned long)total.tx_ok,
+        link_up ? "up" : "down",
+        (unsigned long)minute.link_irq,
+        (unsigned long)minute.reinit,
+        (unsigned long)minute.storm,
+        (unsigned long)total.rx_ok,
+        (unsigned long)total.tx_ok,
         (unsigned long)total.tx_err);
     minute = (struct counters){0};
 }
@@ -156,8 +171,8 @@ static uint32_t selftest_seq;
 static unsigned selftest_rx_logged;
 
 static void selftest_send(void) {
-    static const char tag[16] = {'t', 'a', 'd', 'o', '-', 'b', 'r', 'i',
-                                 'd', 'g', 'e', ' ', '#', '1', '2', ' '};
+    static const char tag[16] = {
+        't', 'a', 'd', 'o', '-', 'b', 'r', 'i', 'd', 'g', 'e', ' ', '#', '1', '2', ' '};
     uint8_t  f[ENC_ETH_HDR_LEN + sizeof tag + 8];
     uint32_t up = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
     memset(f, 0xFF, 6);
@@ -189,12 +204,25 @@ static void selftest_log_rx(const uint8_t *h, size_t got, uint16_t len, uint32_t
     unsigned type = (unsigned)(h[12] << 8 | h[13]);
     if (type == 0x0806u && got >= 42u) {
         LOG("eth: rx len %u dst %s src %s ARP op %u: who has %u.%u.%u.%u tell %u.%u.%u.%u",
-            (unsigned)len, mac_str(d, sizeof d, h), mac_str(s, sizeof s, h + 6),
-            (unsigned)(h[20] << 8 | h[21]), h[38], h[39], h[40], h[41], h[28], h[29], h[30],
+            (unsigned)len,
+            mac_str(d, sizeof d, h),
+            mac_str(s, sizeof s, h + 6),
+            (unsigned)(h[20] << 8 | h[21]),
+            h[38],
+            h[39],
+            h[40],
+            h[41],
+            h[28],
+            h[29],
+            h[30],
             h[31]);
     } else {
-        LOG("eth: rx len %u dst %s src %s type %04x status %08lx", (unsigned)len,
-            mac_str(d, sizeof d, h), mac_str(s, sizeof s, h + 6), type, (unsigned long)rsv);
+        LOG("eth: rx len %u dst %s src %s type %04x status %08lx",
+            (unsigned)len,
+            mac_str(d, sizeof d, h),
+            mac_str(s, sizeof s, h + 6),
+            type,
+            (unsigned long)rsv);
     }
 }
 /* ===== end TEST-ONLY ======================================================= */
@@ -288,7 +316,8 @@ void net_task_run(void) {
         COUNT(tx_retry, ev.tx_retry);
         if (ev.tx_err) {
             LOG("eth: transmission aborted or cancelled (ESTAT %02x, TSV bits 16-31 %04x)",
-                (unsigned)ev.tx_estat, (unsigned)ev.tx_status);
+                (unsigned)ev.tx_estat,
+                (unsigned)ev.tx_status);
         }
 
         unsigned n = 0;

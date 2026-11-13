@@ -14,18 +14,18 @@
  * (docs/design.md "Tasks"); nothing is locked. The chip is the only device on
  * SPI2. Half duplex only (docs/test-bench.md "Duplex"). */
 
-#define ENC_ETH_HDR_LEN 14u   /* destination, source, type/length */
-#define ENC_FRAME_MAX   1518u /* MAMXFL: whole frame including the 4-byte CRC */
+#define ENC_ETH_HDR_LEN 14u                  /* destination, source, type/length */
+#define ENC_FRAME_MAX   1518u                /* MAMXFL: whole frame including the 4-byte CRC */
 #define ENC_TX_MAX      (ENC_FRAME_MAX - 4u) /* the MAC appends the CRC */
-#define ENC_RX_MIN      64u   /* IEEE minimum incl. CRC; shorter frames are runts */
+#define ENC_RX_MIN      64u                  /* IEEE minimum incl. CRC; shorter frames are runts */
 
 struct enc28j60_info {
-    uint8_t  erevid;       /* silicon revision, EREVID<4:0> */
-    uint16_t phid1, phid2; /* PHY identifier: 0x0083 and 0x1400 documented */
-    uint16_t phlcon;       /* LED configuration, left at its reset value */
-    uint16_t phcon1;       /* after configuration: PDPXMD = 0 (half duplex) */
-    const char *rev_name;  /* B1, B4, B5, B7 (errata.txt:19-21) or "unknown" */
-    bool     soft_reset;   /* the RESET pin did not reset the chip; SRC used */
+    uint8_t     erevid;       /* silicon revision, EREVID<4:0> */
+    uint16_t    phid1, phid2; /* PHY identifier: 0x0083 and 0x1400 documented */
+    uint16_t    phlcon;       /* LED configuration, left at its reset value */
+    uint16_t    phcon1;       /* after configuration: PDPXMD = 0 (half duplex) */
+    const char *rev_name;     /* B1, B4, B5, B7 (errata.txt:19-21) or "unknown" */
+    bool        soft_reset;   /* the RESET pin did not reset the chip; SRC used */
 };
 
 /* SPI2 pins and peripheral, EXTI2 for INT (falling edge, NVIC priority 5,
@@ -45,17 +45,17 @@ bool enc28j60_init(const uint8_t mac[6], struct enc28j60_info *info);
 
 /* Events gathered by enc28j60_poll(). */
 struct enc28j60_events {
-    bool    link_up;      /* PHSTAT2.LSTAT, read on every poll */
-    bool    link_changed; /* differs from the previous poll */
-    bool    link_irq;     /* EIR.LINKIF was set (also for a down-up between polls) */
-    bool    rx_overflow;  /* RXERIF: a frame was dropped, buffer full or 255 pending */
-    uint8_t tx_ok;        /* transmissions finished since the last poll, without abort */
-    uint8_t tx_err;       /* ... aborted or cancelled after ENC_TX_WAIT_MS */
-    uint8_t tx_retry;     /* late-collision retransmissions (errata #13) */
-    uint8_t tx_estat;     /* ESTAT after the last finished one (TXABRT 02) */
-    uint16_t tx_status;   /* its transmit status vector bits 16-31 (Table 7-1) */
-    uint8_t pending;      /* EPKTCNT: frames waiting in the receive buffer */
-    bool    bus_error;    /* EREVID changed, RXEN lost or MII stuck: re-initialise */
+    bool     link_up;      /* PHSTAT2.LSTAT, read on every poll */
+    bool     link_changed; /* differs from the previous poll */
+    bool     link_irq;     /* EIR.LINKIF was set (also for a down-up between polls) */
+    bool     rx_overflow;  /* RXERIF: a frame was dropped, buffer full or 255 pending */
+    uint8_t  tx_ok;        /* transmissions finished since the last poll, without abort */
+    uint8_t  tx_err;       /* ... aborted or cancelled after ENC_TX_WAIT_MS */
+    uint8_t  tx_retry;     /* late-collision retransmissions (errata #13) */
+    uint8_t  tx_estat;     /* ESTAT after the last finished one (TXABRT 02) */
+    uint16_t tx_status;    /* its transmit status vector bits 16-31 (Table 7-1) */
+    uint8_t  pending;      /* EPKTCNT: frames waiting in the receive buffer */
+    bool     bus_error;    /* EREVID changed, RXEN lost or MII stuck: re-initialise */
 };
 
 /* Start of service. Clears EIE.INTIE (the datasheet's servicing rule,

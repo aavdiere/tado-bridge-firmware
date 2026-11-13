@@ -20,46 +20,46 @@
 #endif
 
 /* Configuration registers, cc110l.txt:3274-3373. */
-#define CC_IOCFG2   0x00
-#define CC_IOCFG1   0x01
-#define CC_IOCFG0   0x02
-#define CC_FIFOTHR  0x03
-#define CC_SYNC1    0x04
-#define CC_SYNC0    0x05
-#define CC_PKTLEN   0x06
-#define CC_PKTCTRL1 0x07
-#define CC_PKTCTRL0 0x08
-#define CC_ADDR     0x09
-#define CC_CHANNR   0x0A
-#define CC_FSCTRL1  0x0B
-#define CC_FSCTRL0  0x0C
-#define CC_FREQ2    0x0D
-#define CC_FREQ1    0x0E
-#define CC_FREQ0    0x0F
-#define CC_MDMCFG4  0x10
-#define CC_MDMCFG3  0x11
-#define CC_MDMCFG2  0x12
-#define CC_MDMCFG1  0x13
-#define CC_MDMCFG0  0x14
-#define CC_DEVIATN  0x15
-#define CC_MCSM2    0x16
-#define CC_MCSM1    0x17
-#define CC_MCSM0    0x18
-#define CC_FOCCFG   0x19
-#define CC_BSCFG    0x1A
-#define CC_AGCCTRL2 0x1B
-#define CC_AGCCTRL1 0x1C
-#define CC_AGCCTRL0 0x1D
-#define CC_RSVD_20  0x20 /* "RESERVED", use the SmartRF value (cc110l.txt:4275-4280) */
-#define CC_FREND1   0x21
-#define CC_FREND0   0x22
-#define CC_FSCAL3   0x23
-#define CC_FSCAL2   0x24
-#define CC_FSCAL1   0x25
-#define CC_FSCAL0   0x26
-#define CC_TEST2    0x2C
-#define CC_TEST1    0x2D
-#define CC_TEST0    0x2E
+#define CC_IOCFG2          0x00
+#define CC_IOCFG1          0x01
+#define CC_IOCFG0          0x02
+#define CC_FIFOTHR         0x03
+#define CC_SYNC1           0x04
+#define CC_SYNC0           0x05
+#define CC_PKTLEN          0x06
+#define CC_PKTCTRL1        0x07
+#define CC_PKTCTRL0        0x08
+#define CC_ADDR            0x09
+#define CC_CHANNR          0x0A
+#define CC_FSCTRL1         0x0B
+#define CC_FSCTRL0         0x0C
+#define CC_FREQ2           0x0D
+#define CC_FREQ1           0x0E
+#define CC_FREQ0           0x0F
+#define CC_MDMCFG4         0x10
+#define CC_MDMCFG3         0x11
+#define CC_MDMCFG2         0x12
+#define CC_MDMCFG1         0x13
+#define CC_MDMCFG0         0x14
+#define CC_DEVIATN         0x15
+#define CC_MCSM2           0x16
+#define CC_MCSM1           0x17
+#define CC_MCSM0           0x18
+#define CC_FOCCFG          0x19
+#define CC_BSCFG           0x1A
+#define CC_AGCCTRL2        0x1B
+#define CC_AGCCTRL1        0x1C
+#define CC_AGCCTRL0        0x1D
+#define CC_RSVD_20         0x20 /* "RESERVED", use the SmartRF value (cc110l.txt:4275-4280) */
+#define CC_FREND1          0x21
+#define CC_FREND0          0x22
+#define CC_FSCAL3          0x23
+#define CC_FSCAL2          0x24
+#define CC_FSCAL1          0x25
+#define CC_FSCAL0          0x26
+#define CC_TEST2           0x2C
+#define CC_TEST1           0x2D
+#define CC_TEST0           0x2E
 #define CC_NUM_CONFIG_REGS 0x2F /* 0x00..0x2E */
 
 /* Command strobes, cc110l.txt:3225-3260. */
@@ -104,10 +104,10 @@
 #define CC_FIFO_SIZE        64 /* cc110l.txt:2580-2582 */
 
 /* Chip status byte STATE field (bits 6:4), cc110l.txt:1381-1405. */
-#define CC_STATE(status) (((status) >> 4) & 0x07)
-#define CC_STATE_TX          2
-#define CC_STATE_FSTXON      3
-#define CC_STATE_TXFIFO_UNF  7
+#define CC_STATE(status)    (((status) >> 4) & 0x07)
+#define CC_STATE_TX         2
+#define CC_STATE_FSTXON     3
+#define CC_STATE_TXFIFO_UNF 7
 
 /* Manual reset: CSn strobe low/high (>= 40 us high), then SRES with a wait
  * for CHIP_RDYn before and after (cc110l.txt:2398-2408). Leaves the chip in

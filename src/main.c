@@ -62,7 +62,8 @@ int main(void) {
     /* Watchdog last, right before the scheduler: ~2-6 s timeout, kicked only by
      * the housekeeping task. */
     watchdog_start();
-    LOG("watchdog: IWDG started, /%d reload %d (2.0-5.6 s), frozen while halted", WDG_PRESCALER_DIV,
+    LOG("watchdog: IWDG started, /%d reload %d (2.0-5.6 s), frozen while halted",
+        WDG_PRESCALER_DIV,
         WDG_RELOAD);
     vTaskStartScheduler();
 

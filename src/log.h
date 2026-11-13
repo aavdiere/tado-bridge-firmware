@@ -16,7 +16,8 @@ void log_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 __attribute__((noreturn)) void fw_panic(const char *what, const char *file, int line);
 
 /* Fault report: log stacked PC/LR/xPSR and the fault status registers, then spin. */
-__attribute__((noreturn, used, externally_visible)) void fw_fault_report(const char *name, const uint32_t *frame);
+__attribute__((noreturn, used, externally_visible)) void fw_fault_report(const char     *name,
+                                                                         const uint32_t *frame);
 
 #define LOG(fmt, ...) log_printf(fmt "\r\n", ##__VA_ARGS__)
 

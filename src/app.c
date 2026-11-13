@@ -38,14 +38,14 @@ struct button {
     uint8_t     pending; /* consecutive samples that disagree with state */
 };
 
-#define POLL_MS     10
-#define DEBOUNCE_N  3 /* 30 ms */
+#define POLL_MS    10
+#define DEBOUNCE_N 3 /* 30 ms */
 
 static void button_update(struct button *b, bool raw) {
     if (raw == b->state) {
         b->pending = 0;
     } else if (++b->pending >= DEBOUNCE_N) {
-        b->state = raw;
+        b->state   = raw;
         b->pending = 0;
         LOG("button: %s %s", b->name, raw ? "pressed" : "released");
     }
@@ -54,7 +54,7 @@ static void button_update(struct button *b, bool raw) {
 static void housekeeping_task(void *arg) {
     (void)arg;
     struct button reset = {.name = "factory reset (PB10)"};
-    struct button pair = {.name = "pair (PC15)"};
+    struct button pair  = {.name = "pair (PC15)"};
     uint32_t      loops = 0;
 
     for (TickType_t wake = xTaskGetTickCount();; loops++) {
@@ -77,7 +77,8 @@ static void housekeeping_task(void *arg) {
              * receives. The radio task owns the bus and runs it. */
             radio_request_flash_check();
             LOG("alive: heap free %u min %u, stack words never used radio/net/hk %u/%u/%u",
-                (unsigned)xPortGetFreeHeapSize(), (unsigned)xPortGetMinimumEverFreeHeapSize(),
+                (unsigned)xPortGetFreeHeapSize(),
+                (unsigned)xPortGetMinimumEverFreeHeapSize(),
                 (unsigned)uxTaskGetStackHighWaterMark(h_radio),
                 (unsigned)uxTaskGetStackHighWaterMark(h_net),
                 (unsigned)uxTaskGetStackHighWaterMark(h_hk));

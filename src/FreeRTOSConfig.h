@@ -42,7 +42,7 @@ void            fw_panic(const char *what, const char *file, int line);
 #define configSUPPORT_STATIC_ALLOCATION  0
 #define configTOTAL_HEAP_SIZE            ((size_t)(32 * 1024))
 #define configAPPLICATION_ALLOCATED_HEAP 0
-#define configUSE_NEWLIB_REENTRANT       0 /* log.c serialises printf with a mutex; no errno per task */
+#define configUSE_NEWLIB_REENTRANT 0 /* log.c serialises printf with a mutex; no errno per task */
 
 #define configENABLE_FPU 1
 #define configENABLE_MPU 0
@@ -50,25 +50,29 @@ void            fw_panic(const char *what, const char *file, int line);
 /* Cortex-M4 on STM32F4: 4 priority bits. Interrupts that call FromISR APIs
  * (GDO0/GDO2 in P2) must use a numeric priority >= 5 (0x50 and less urgent).
  * The kernel (PendSV, SysTick) runs at the lowest priority. */
-#define configPRIO_BITS                       4
-#define configLIBRARY_LOWEST_INTERRUPT_PRIORITY 15
+#define configPRIO_BITS                              4
+#define configLIBRARY_LOWEST_INTERRUPT_PRIORITY      15
 #define configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY 5
-#define configKERNEL_INTERRUPT_PRIORITY (configLIBRARY_LOWEST_INTERRUPT_PRIORITY << (8 - configPRIO_BITS))
+#define configKERNEL_INTERRUPT_PRIORITY \
+    (configLIBRARY_LOWEST_INTERRUPT_PRIORITY << (8 - configPRIO_BITS))
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY \
     (configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY << (8 - configPRIO_BITS))
 
 /* A failed assert logs over RTT and halts with interrupts off; the watchdog
  * then resets the board. */
-#define configASSERT(x) \
-    do { if (!(x)) fw_panic("configASSERT", __FILE__, __LINE__); } while (0)
+#define configASSERT(x)                                   \
+    do {                                                  \
+        if (!(x))                                         \
+            fw_panic("configASSERT", __FILE__, __LINE__); \
+    } while (0)
 
-#define INCLUDE_vTaskDelay          1
-#define INCLUDE_vTaskDelayUntil     1
-#define INCLUDE_vTaskDelete         0
-#define INCLUDE_vTaskSuspend        1
-#define INCLUDE_xTaskGetSchedulerState 1
+#define INCLUDE_vTaskDelay                  1
+#define INCLUDE_vTaskDelayUntil             1
+#define INCLUDE_vTaskDelete                 0
+#define INCLUDE_vTaskSuspend                1
+#define INCLUDE_xTaskGetSchedulerState      1
 #define INCLUDE_uxTaskGetStackHighWaterMark 1
-#define INCLUDE_xTaskGetCurrentTaskHandle 1
+#define INCLUDE_xTaskGetCurrentTaskHandle   1
 
 /* Kernel handlers under the libopencm3 vector table names. */
 #define vPortSVCHandler     sv_call_handler

@@ -34,8 +34,10 @@
 #define HDR_BURST 0x40
 #define HDR_ADDR  0x3F
 
-#define CHIP_RDY_TIMEOUT_US 1000u /* SO goes low at once unless in SLEEP/XOFF, cc110l.txt:1297-1299 */
-#define RESET_RDY_TIMEOUT_US 5000u /* XOSC restart after SRES; 150 us typical, cc110l.txt:1333,1356-1362 */
+#define CHIP_RDY_TIMEOUT_US \
+    1000u /* SO goes low at once unless in SLEEP/XOFF, cc110l.txt:1297-1299 */
+#define RESET_RDY_TIMEOUT_US \
+    5000u /* XOSC restart after SRES; 150 us typical, cc110l.txt:1333,1356-1362 */
 
 static volatile bool tx_state_seen;
 

@@ -113,58 +113,58 @@
 /* Bits: EIE :3323-3355, EIR :3363-3393, ESTAT :3283-3313, ECON2 :917-944,
  * ECON1 :872-905, ERXFCON :2486-2542, MACON1 :1837-1861, MACON3 :1868-1908,
  * MACON4 :1915-1942, MICMD :1149-1166, MISTAT :1171-1192. */
-#define EIE_INTIE   0x80u
-#define EIE_PKTIE   0x40u
-#define EIE_LINKIE  0x10u
-#define EIE_TXIE    0x08u
-#define EIE_TXERIE  0x02u
-#define EIE_RXERIE  0x01u
-#define EIR_DMAIF   0x20u
-#define EIR_LINKIF  0x10u
-#define EIR_TXIF    0x08u
-#define EIR_TXERIF  0x02u
-#define EIR_RXERIF  0x01u
-#define ESTAT_LATECOL 0x10u
-#define ESTAT_TXABRT  0x02u
-#define ESTAT_CLKRDY  0x01u
-#define ECON2_AUTOINC 0x80u
-#define ECON2_PKTDEC  0x40u
-#define ECON2_PWRSV   0x20u
-#define ECON1_TXRST 0x80u
-#define ECON1_TXRTS 0x08u
-#define ECON1_RXEN  0x04u
-#define ECON1_BSEL  0x03u
-#define ERXFCON_UCEN  0x80u
-#define ERXFCON_CRCEN 0x20u
-#define ERXFCON_BCEN  0x01u
-#define MACON1_MARXEN   0x01u
-#define MACON3_PADCFG0  0x20u
-#define MACON3_TXCRCEN  0x10u
-#define MACON3_FRMLNEN  0x02u
-#define MACON3_FULDPX   0x01u
-#define MACON4_DEFER    0x40u
-#define MICMD_MIIRD     0x01u
-#define MISTAT_BUSY     0x01u
+#define EIE_INTIE      0x80u
+#define EIE_PKTIE      0x40u
+#define EIE_LINKIE     0x10u
+#define EIE_TXIE       0x08u
+#define EIE_TXERIE     0x02u
+#define EIE_RXERIE     0x01u
+#define EIR_DMAIF      0x20u
+#define EIR_LINKIF     0x10u
+#define EIR_TXIF       0x08u
+#define EIR_TXERIF     0x02u
+#define EIR_RXERIF     0x01u
+#define ESTAT_LATECOL  0x10u
+#define ESTAT_TXABRT   0x02u
+#define ESTAT_CLKRDY   0x01u
+#define ECON2_AUTOINC  0x80u
+#define ECON2_PKTDEC   0x40u
+#define ECON2_PWRSV    0x20u
+#define ECON1_TXRST    0x80u
+#define ECON1_TXRTS    0x08u
+#define ECON1_RXEN     0x04u
+#define ECON1_BSEL     0x03u
+#define ERXFCON_UCEN   0x80u
+#define ERXFCON_CRCEN  0x20u
+#define ERXFCON_BCEN   0x01u
+#define MACON1_MARXEN  0x01u
+#define MACON3_PADCFG0 0x20u
+#define MACON3_TXCRCEN 0x10u
+#define MACON3_FRMLNEN 0x02u
+#define MACON3_FULDPX  0x01u
+#define MACON4_DEFER   0x40u
+#define MICMD_MIIRD    0x01u
+#define MISTAT_BUSY    0x01u
 
 /* PHY registers (Table 3-3, :1124-1134). */
-#define PHCON1  0x00u
-#define PHID1   0x02u
-#define PHID2   0x03u
-#define PHCON2  0x10u
-#define PHSTAT2 0x11u
-#define PHIE    0x12u
-#define PHIR    0x13u
-#define PHLCON  0x14u
+#define PHCON1         0x00u
+#define PHID1          0x02u
+#define PHID2          0x03u
+#define PHCON2         0x10u
+#define PHSTAT2        0x11u
+#define PHIE           0x12u
+#define PHIR           0x13u
+#define PHLCON         0x14u
 #define PHCON1_PLOOPBK 0x4000u /* :3186-3188 */
 #define PHCON1_PPWRSV  0x0800u /* :3190-3192 */
 #define PHCON1_PDPXMD  0x0100u /* :3195-3197 */
 #define PHCON2_FRCLNK  0x4000u /* :2010-2012 */
 #define PHCON2_TXDIS   0x2000u /* :2013-2015 */
 #define PHCON2_HDLDIS  0x0100u /* :2021-2026 */
-#define PHIE_PLNKIE   0x0010u /* :3415-3421 */
-#define PHIE_PGEIE    0x0002u
-#define PHID1_VALUE   0x0083u /* :1128 */
-#define PHID2_VALUE   0x1400u /* :1129: OUI bits 000101, part 00h, revision 0h */
+#define PHIE_PLNKIE    0x0010u /* :3415-3421 */
+#define PHIE_PGEIE     0x0002u
+#define PHID1_VALUE    0x0083u /* :1128 */
+#define PHID2_VALUE    0x1400u /* :1129: OUI bits 000101, part 00h, revision 0h */
 
 /* SPI opcodes (:1379-1395). */
 #define OP_RCR 0x00u
@@ -181,11 +181,11 @@
  * Transmit holds exactly one frame: control byte, at most ENC_TX_MAX bytes,
  * then the 7-byte status vector the chip writes after it (:1760-1766,
  * :2136-2141). ERXST and ETXST even, as recommended (:1770-1771, :2129-2131). */
-#define RXST     0x0000u
-#define RXND     0x19FFu
-#define TXST     0x1A00u
-#define BUF_LAST 0x1FFFu
-#define RX_SIZE  (RXND - RXST + 1u)
+#define RXST       0x0000u
+#define RXND       0x19FFu
+#define TXST       0x1A00u
+#define BUF_LAST   0x1FFFu
+#define RX_SIZE    (RXND - RXST + 1u)
 #define RXST_RESET 0x05FAu /* ERXST after any reset (:771-772) */
 _Static_assert(RXST == 0u, "errata #5: receive buffer at 0x0000");
 _Static_assert((RXND & 1u) == 1u, "errata #14: ERXND odd so ERXRDPT can be odd");
@@ -198,14 +198,15 @@ _Static_assert(TXST + 1u + ENC_TX_MAX + 7u - 1u <= BUF_LAST, "one full frame + s
 #define IPGH_HALF  0x0Cu /* :1819-1822 */
 
 /* --- Timing --------------------------------------------------------------- */
-#define SCK_MAX_HZ 20000000u /* :17, :4144 */
-#define SCK_MIN_HZ 8000000u  /* errata #1 (errata.txt:86-95) */
-#define SPI_SPIN_MAX 100000u /* a byte takes 0.7 us at 12 MHz; this is >1 ms */
-#define RESET_LOW_US 10u     /* tRSTLOW >= 400 ns (:4058-4059) */
-#define RESET_WAIT_MS 5u     /* errata #2 >= 1 ms (errata.txt:124-127); OST 300 us (:299-300); PHY 50 us (:3111-3112) */
+#define SCK_MAX_HZ   20000000u /* :17, :4144 */
+#define SCK_MIN_HZ   8000000u  /* errata #1 (errata.txt:86-95) */
+#define SPI_SPIN_MAX 100000u   /* a byte takes 0.7 us at 12 MHz; this is >1 ms */
+#define RESET_LOW_US 10u       /* tRSTLOW >= 400 ns (:4058-4059) */
+#define RESET_WAIT_MS \
+    5u /* errata #2 >= 1 ms (errata.txt:124-127); OST 300 us (:299-300); PHY 50 us (:3111-3112) */
 #define CLKRDY_TIMEOUT_MS 100u
-#define MII_WAIT_US 11u      /* 10.24 us per MIIM operation (:1063-1065, :1082) */
-#define MII_TIMEOUT_US 1000u
+#define MII_WAIT_US       11u /* 10.24 us per MIIM operation (:1063-1065, :1082) */
+#define MII_TIMEOUT_US    1000u
 
 #define INT_IRQ_PRIO (5u << 4) /* FromISR needs >= configMAX_SYSCALL (FreeRTOSConfig.h) */
 _Static_assert(INT_IRQ_PRIO >= configMAX_SYSCALL_INTERRUPT_PRIORITY, "FromISR needs prio >= 5");
@@ -218,21 +219,21 @@ static uint8_t  cur_bank = 0xFFu; /* unknown: force a switch */
 static uint8_t  revid;
 static bool     link_last;
 
-static uint16_t next_pkt;   /* start of the next unread frame */
-static uint16_t rx_next;    /* next-packet pointer of the open frame */
-static uint16_t rx_left;    /* bytes of the open frame still readable */
+static uint16_t next_pkt; /* start of the next unread frame */
+static uint16_t rx_next;  /* next-packet pointer of the open frame */
+static uint16_t rx_left;  /* bytes of the open frame still readable */
 static bool     rx_open;
 
-static uint16_t tx_len;       /* bytes written since tx_begin() */
-static uint16_t tx_sent;      /* length of the frame in flight */
+static uint16_t tx_len;  /* bytes written since tx_begin() */
+static uint16_t tx_sent; /* length of the frame in flight */
 static bool     tx_open, tx_overflow, tx_in_flight;
-static uint8_t  tx_retries;   /* late-collision retransmissions of the frame in flight */
+static uint8_t  tx_retries; /* late-collision retransmissions of the frame in flight */
 static uint8_t  tx_done_ok, tx_done_err, tx_done_retry, tx_last_estat;
 static uint16_t tx_last_status;
 
-static TaskHandle_t      int_task;
-static uint32_t          int_bits, storm_bits;
-static uint32_t          storm_start, storm_edges;
+static TaskHandle_t int_task;
+static uint32_t     int_bits, storm_bits;
+static uint32_t     storm_start, storm_edges;
 
 /* --- Short delays ---------------------------------------------------------- */
 /* At least 2 core cycles per iteration: SUBS and a taken BNE, and the
@@ -384,7 +385,7 @@ static bool phy_read(uint8_t addr, uint16_t *v) {
         return false;
     }
     uint16_t lo = rd(MIRDL);
-    *v = (uint16_t)(lo | (uint16_t)rd(MIRDH) << 8);
+    *v          = (uint16_t)(lo | (uint16_t)rd(MIRDH) << 8);
     return true;
 }
 
@@ -446,8 +447,8 @@ void enc28j60_setup(void *notify_task, uint32_t notify_bits, uint32_t notify_sto
      * is low (:1342); MISO gets the pull-up so it idles defined. */
     configASSERT(gpio_get(GPIOB, BOARD_ENC_CS_PIN));
     gpio_set_af(GPIOB, GPIO_AF5, BOARD_SPI2_SCK_PIN | BOARD_SPI2_MISO_PIN | BOARD_SPI2_MOSI_PIN);
-    gpio_set_output_options(GPIOB, GPIO_OTYPE_PP, GPIO_OSPEED_25MHZ,
-                            BOARD_SPI2_SCK_PIN | BOARD_SPI2_MOSI_PIN);
+    gpio_set_output_options(
+        GPIOB, GPIO_OTYPE_PP, GPIO_OSPEED_25MHZ, BOARD_SPI2_SCK_PIN | BOARD_SPI2_MOSI_PIN);
     gpio_mode_setup(GPIOB, GPIO_MODE_AF, GPIO_PUPD_NONE, BOARD_SPI2_SCK_PIN | BOARD_SPI2_MOSI_PIN);
     gpio_mode_setup(GPIOB, GPIO_MODE_AF, GPIO_PUPD_PULLUP, BOARD_SPI2_MISO_PIN);
 
@@ -469,8 +470,7 @@ void enc28j60_setup(void *notify_task, uint32_t notify_bits, uint32_t notify_sto
     }
     sck_hz = clock_apb1_hz / (2u << br);
     if (sck_hz < SCK_MIN_HZ) {
-        LOG("eth: WARNING SPI2 SCK %lu Hz below 8 MHz (errata #1)",
-            (unsigned long)sck_hz);
+        LOG("eth: WARNING SPI2 SCK %lu Hz below 8 MHz (errata #1)", (unsigned long)sck_hz);
     }
 
     /* Master, software NSS held high (SSM = SSI = 1; PB12 is a GPIO), 8-bit,
@@ -553,7 +553,7 @@ bool enc28j60_init(const uint8_t mac[6], struct enc28j60_info *info) {
     int_enable(false);
     rx_open = tx_open = tx_in_flight = false;
     tx_done_ok = tx_done_err = tx_done_retry = 0;
-    *info = (struct enc28j60_info){.rev_name = "unknown"};
+    *info                                    = (struct enc28j60_info){.rev_name = "unknown"};
 
     /* PC14 is OSC32_IN when LSEON is set, and the GPIO setting then has no
      * effect (stm32f411ce.txt:2738-2740; LSEON rm0383.txt:6529). The register
@@ -572,11 +572,12 @@ bool enc28j60_init(const uint8_t mac[6], struct enc28j60_info *info) {
     uint16_t erxst = rd16(ERXSTL);
     if (erxst != RXST_RESET) {
         LOG("eth: ERXST %04x after the RESET pin pulse, expected %04x; trying the SPI soft reset",
-            erxst, RXST_RESET);
+            erxst,
+            RXST_RESET);
         soft_reset();
         vTaskDelay(pdMS_TO_TICKS(RESET_WAIT_MS) + 1); /* errata #2, #19 step 4 */
         info->soft_reset = true;
-        erxst = rd16(ERXSTL);
+        erxst            = rd16(ERXSTL);
         if (erxst != RXST_RESET) {
             LOG("eth: ERXST %04x after soft reset: no ENC28J60 response on SPI2", erxst);
             return false;
@@ -617,8 +618,11 @@ bool enc28j60_init(const uint8_t mac[6], struct enc28j60_info *info) {
         return false;
     }
     if (info->phid1 != PHID1_VALUE || info->phid2 != PHID2_VALUE) {
-        LOG("eth: PHID1 %04x PHID2 %04x, expected %04x %04x", info->phid1, info->phid2,
-            PHID1_VALUE, PHID2_VALUE);
+        LOG("eth: PHID1 %04x PHID2 %04x, expected %04x %04x",
+            info->phid1,
+            info->phid2,
+            PHID1_VALUE,
+            PHID2_VALUE);
         return false;
     }
 
@@ -698,8 +702,8 @@ bool enc28j60_init(const uint8_t mac[6], struct enc28j60_info *info) {
         }
     }
     const struct {
-        uint8_t  reg;
-        uint16_t want;
+        uint8_t     reg;
+        uint16_t    want;
         const char *name;
     } checks16[] = {
         {ERXSTL, RXST, "ERXST"},
@@ -754,7 +758,7 @@ uint16_t enc28j60_phstat2(void) {
 }
 
 /* --- Service -------------------------------------------------------------- */
-#define TX_LATE_RETRIES 16u /* errata Example 1: retrycount 0 to 15 (errata.txt:275) */
+#define TX_LATE_RETRIES 16u   /* errata Example 1: retrycount 0 to 15 (errata.txt:275) */
 #define TSV_LATECOL     0x20u /* TSV bit 29 = byte 3 bit 5 (Table 7-1, :2171) */
 
 /* Start (or restart) the frame already in the transmit buffer: errata #12
@@ -823,14 +827,14 @@ void enc28j60_poll(struct enc28j60_events *ev) {
     }
 
     tx_harvest();
-    ev->tx_ok       = tx_done_ok;
-    ev->tx_err      = tx_done_err;
-    ev->tx_retry    = tx_done_retry;
-    ev->tx_estat    = tx_last_estat;
-    ev->tx_status   = tx_last_status;
-    tx_done_ok      = 0;
-    tx_done_err     = 0;
-    tx_done_retry   = 0;
+    ev->tx_ok     = tx_done_ok;
+    ev->tx_err    = tx_done_err;
+    ev->tx_retry  = tx_done_retry;
+    ev->tx_estat  = tx_last_estat;
+    ev->tx_status = tx_last_status;
+    tx_done_ok    = 0;
+    tx_done_err   = 0;
+    tx_done_retry = 0;
 
     uint16_t st = 0;
     if (!phy_read(PHSTAT2, &st)) {
@@ -867,7 +871,7 @@ uint16_t enc28j60_rx_begin(uint32_t *rsv) {
     wr16(ERDPTL, next_pkt);
     rbm(h, sizeof h);
     uint16_t nxt = (uint16_t)(h[0] | h[1] << 8);
-    uint32_t v   = (uint32_t)h[2] | (uint32_t)h[3] << 8 | (uint32_t)h[4] << 16 | (uint32_t)h[5] << 24;
+    uint32_t v = (uint32_t)h[2] | (uint32_t)h[3] << 8 | (uint32_t)h[4] << 16 | (uint32_t)h[5] << 24;
     uint16_t cnt = (uint16_t)v; /* whole frame incl. CRC */
 
     /* Consistency: frames shorter than 18 bytes never reach the buffer
@@ -882,7 +886,10 @@ uint16_t enc28j60_rx_begin(uint32_t *rsv) {
     if (cnt < 18u || cnt > ENC_FRAME_MAX || nxt != want) {
         LOG("eth: receive buffer header inconsistent at %04x: next %04x (expected %04lx), "
             "status %08lx",
-            next_pkt, nxt, (unsigned long)want, (unsigned long)v);
+            next_pkt,
+            nxt,
+            (unsigned long)want,
+            (unsigned long)v);
         return ENC_RX_CORRUPT;
     }
     rx_next = nxt;

@@ -32,8 +32,8 @@ _Static_assert(RADIO_CS_PIN_NO != 13u && RADIO_CS_PIN_NO != 14u, "never touch PA
 _Static_assert(FLASH_CS_PIN_NO != 6u && FLASH_CS_PIN_NO != 7u, "never touch PB6/PB7 (HomeKit I2C)");
 
 /* GPIOB pins this firmware configures; PB6/PB7 (HomeKit I2C) never. */
-#define GPIOB_USED                                                                                \
-    (BOARD_FLASH_CS_PIN | BOARD_ENC_CS_PIN | BOARD_SPI2_SCK_PIN | BOARD_SPI2_MISO_PIN            \
+#define GPIOB_USED                                                                    \
+    (BOARD_FLASH_CS_PIN | BOARD_ENC_CS_PIN | BOARD_SPI2_SCK_PIN | BOARD_SPI2_MISO_PIN \
      | BOARD_SPI2_MOSI_PIN | BOARD_ENC_INT_PIN | GPIO0 | GPIO1 | GPIO5 | GPIO8 | RESET_BTN_PIN)
 _Static_assert((GPIOB_USED & (GPIO6 | GPIO7)) == 0, "never touch PB6/PB7 (HomeKit I2C)");
 
@@ -58,10 +58,10 @@ void board_cs_early(void) {
      * write of the one 2-bit field: GPIOA's reset value 0xA8000000 (PA13,
      * PA14, PA15 in AF for SWD/JTAG) and GPIOB's 0x00000280 (PB3, PB4) are
      * kept. */
-    GPIO_MODER(GPIOA) = (GPIO_MODER(GPIOA) & ~(3u << (2u * RADIO_CS_PIN_NO)))
-                        | (1u << (2u * RADIO_CS_PIN_NO));
-    GPIO_MODER(GPIOB) = (GPIO_MODER(GPIOB) & ~(3u << (2u * FLASH_CS_PIN_NO)))
-                        | (1u << (2u * FLASH_CS_PIN_NO));
+    GPIO_MODER(GPIOA) =
+        (GPIO_MODER(GPIOA) & ~(3u << (2u * RADIO_CS_PIN_NO))) | (1u << (2u * RADIO_CS_PIN_NO));
+    GPIO_MODER(GPIOB) =
+        (GPIO_MODER(GPIOB) & ~(3u << (2u * FLASH_CS_PIN_NO))) | (1u << (2u * FLASH_CS_PIN_NO));
 }
 
 void board_init(void) {

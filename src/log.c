@@ -9,8 +9,8 @@
 #include <libopencm3/cm3/scb.h>
 
 #include <stdarg.h>
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 
 static SemaphoreHandle_t lock;
@@ -59,10 +59,16 @@ void fw_panic(const char *what, const char *file, int line) {
 void fw_fault_report(const char *name, const uint32_t *frame) {
     __asm volatile("cpsid i" ::: "memory");
     panicking = 1;
-    LOG("FAULT %s: PC %08lx LR %08lx xPSR %08lx", name, (unsigned long)frame[6],
-        (unsigned long)frame[5], (unsigned long)frame[7]);
-    LOG("FAULT %s: CFSR %08lx HFSR %08lx MMFAR %08lx BFAR %08lx; waiting for the watchdog", name,
-        (unsigned long)SCB_CFSR, (unsigned long)SCB_HFSR, (unsigned long)SCB_MMFAR,
+    LOG("FAULT %s: PC %08lx LR %08lx xPSR %08lx",
+        name,
+        (unsigned long)frame[6],
+        (unsigned long)frame[5],
+        (unsigned long)frame[7]);
+    LOG("FAULT %s: CFSR %08lx HFSR %08lx MMFAR %08lx BFAR %08lx; waiting for the watchdog",
+        name,
+        (unsigned long)SCB_CFSR,
+        (unsigned long)SCB_HFSR,
+        (unsigned long)SCB_MMFAR,
         (unsigned long)SCB_BFAR);
     for (;;) {
     }
