@@ -8,7 +8,7 @@
  * affected revisions per issue are in Table 2 (errata.txt:28-59). Every
  * workaround below is applied whatever the revision, since each is cheap:
  *   #1  MAC registers unreliable below 8 MHz SCK (B1, B4; errata.txt:86-112):
- *       SCK is 12 MHz, 8 MHz on the HSI-only fallback clock.
+ *       not met: the board limit is 6 MHz (SCK_MAX_HZ); only warned on B1/B4.
  *   #2  CLKRDY set early after a reset (all; :115-133): wait at least 1 ms
  *       after a reset instead of trusting CLKRDY.
  *   #5  Receive buffer must start at 0000h (all; :112-137): RX 0000h-19FFh,
@@ -198,10 +198,15 @@ _Static_assert(TXST + 1u + ENC_TX_MAX + 7u - 1u <= BUF_LAST, "one full frame + s
 #define IPGH_HALF  0x0Cu /* :1819-1822 */
 
 /* --- Timing --------------------------------------------------------------- */
-#define SCK_MAX_HZ   20000000u /* :17, :4144 */
-#define SCK_MIN_HZ   8000000u  /* errata #1 (errata.txt:86-95) */
-#define SPI_SPIN_MAX 100000u   /* a byte takes 0.7 us at 12 MHz; this is >1 ms */
-#define RESET_LOW_US 10u       /* tRSTLOW >= 400 ns (:4058-4059) */
+/* The chip allows 20 MHz (:17, :4144), but this board does not: on the bench
+ * unit (B7) 12 MHz reads garbage whatever the pin speed (medium, fast or
+ * high), while 6, 3, 0.75 and 0.19 MHz read the reset values 20 of 20 times
+ * (debugger test 2026-11-13) [V]. So 6 MHz from APB1 48 MHz, 4 MHz on the
+ * HSI-only fallback. */
+#define SCK_MAX_HZ   6500000u
+#define SCK_MIN_HZ   8000000u /* errata #1, B1/B4 only (errata.txt:86-95) */
+#define SPI_SPIN_MAX 100000u  /* a byte takes 1.3 us at 6 MHz; this is >1 ms */
+#define RESET_LOW_US 10u      /* tRSTLOW >= 400 ns (:4058-4059) */
 #define RESET_WAIT_MS \
     5u /* errata #2 >= 1 ms (errata.txt:124-127); OST 300 us (:299-300); PHY 50 us (:3111-3112) */
 #define CLKRDY_TIMEOUT_MS 100u
@@ -461,17 +466,14 @@ void enc28j60_setup(void *notify_task, uint32_t notify_bits, uint32_t notify_sto
     taskEXIT_CRITICAL();
 
     /* SPI2 runs from APB1 (48 MHz; 16 MHz on the HSI-only fallback,
-     * docs/hardware.md "Clock tree"). Smallest divider at or below 20 MHz:
-     * /4 = 12 MHz, /2 = 8 MHz on the fallback. BR encoding
+     * docs/hardware.md "Clock tree"). Smallest divider at or below the board
+     * limit SCK_MAX_HZ: /8 = 6 MHz, /4 = 4 MHz on the fallback. BR encoding
      * rm0383.txt:33096-33105. */
     uint32_t br = 0; /* fPCLK / 2^(br+1) */
     while (br < 7 && clock_apb1_hz / (2u << br) > SCK_MAX_HZ) {
         br++;
     }
     sck_hz = clock_apb1_hz / (2u << br);
-    if (sck_hz < SCK_MIN_HZ) {
-        LOG("eth: WARNING SPI2 SCK %lu Hz below 8 MHz (errata #1)", (unsigned long)sck_hz);
-    }
 
     /* Master, software NSS held high (SSM = SSI = 1; PB12 is a GPIO), 8-bit,
      * MSB first, full duplex, CPOL = CPHA = 0 (:1316-1326;
@@ -608,6 +610,13 @@ bool enc28j60_init(const uint8_t mac[6], struct enc28j60_info *info) {
          * (#3, errata.txt:77-85), RBIAS should be 2.7 kOhm (#8, :144-162). */
         LOG("eth: WARNING silicon %s: 0-70 C only and needs RBIAS 2.7 kOhm (errata #3, #8)",
             info->rev_name);
+        if (sck_hz < SCK_MIN_HZ) {
+            /* errata #1: MAC registers unreliable below 8 MHz on B1/B4; the
+             * board limit above does not allow more. */
+            LOG("eth: WARNING SPI2 SCK %lu Hz below 8 MHz on silicon %s (errata #1)",
+                (unsigned long)sck_hz,
+                info->rev_name);
+        }
     } else if (revid != 0x05u && revid != 0x06u) {
         LOG("eth: WARNING EREVID %02x not in the errata sheet; all workarounds applied anyway",
             revid);
