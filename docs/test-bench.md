@@ -14,7 +14,9 @@ Owner decisions, 2026-11-11, unless noted. Status tags: **[V]** measured, **[D]*
 | RF | RTL-SDR dongle on the laptop, receiving 863-873 MHz |
 | Server | tanoclo in Docker on the laptop, reachable only on the private Ethernet link |
 
-**Power risk [I]:** the ENC28J60 draws much more current while transmitting than the MCU and radio. A clone ST-Link's 3.3 V regulator may sag under that load. Watch for resets or brown-outs from P3 onward. If they appear, the fallback is a current-limited 3.3 V bench supply with the ST-Link wired without its 3V3. That fallback is a decision for the owner.
+**Power risk:** the ENC28J60 draws much more current while transmitting than the MCU and radio. A clone ST-Link's 3.3 V regulator may sag under that load. The fallback is a current-limited 3.3 V bench supply with the ST-Link wired without its 3V3. That fallback is a decision for the owner.
+
+**The sag is real (2026-11-14) [V]:** with the ENC28J60 PHY active and the link up, the board's VDDA measures 2.67-2.83 V, below the chip's 3.10 V minimum. With the chip in power save it measures 3.09-3.21 V. The ST-Link reports 3.20 V in both cases, so its own reading does not show the sag. Out of range, the chip stops answering on SPI2 (`hardware.md`, "Cause: the supply sags below the ENC28J60's minimum"). This blocks P3.1 until the owner decides on the supply. Check it with `tools/bench/enc28j60_supply.tcl`.
 
 ## What Claude may do (owner, 2026-11-11)
 
@@ -56,6 +58,8 @@ The backup shows the bench IB01 is configured for **channel 26**, the same chann
 
 - `docs/tools/read_ib01_system_areas.tcl`: option bytes, OTP, unique ID (read-only).
 - `tools/bench/io_check.tcl`: drives the LEDs in a fixed order and logs button presses as pin changes; peripheral registers only, undone by the final reset. Keeps the stock firmware halted.
+- `tools/bench/enc28j60_probe.tcl`: SPI2 SCK sweep, EREVID and free-pin sweep by hand from the debugger (#12). Restores every register it touches.
+- `tools/bench/enc28j60_supply.tcl`: board VDDA from the MCU's VREFINT and SPI2 read success per SCK, with the ENC28J60 PHY on, then in power save, then on again (#31). Restores every register it touches.
 - `tools/sdr/chanscan.py`, `tools/sdr/frames.py`: channel activity and tado frame decoding.
 - `tools/sdr/demod.py`: per-frame GFSK demodulator with sub-microsecond timestamps, carrier offset and MAC header fields (#26). Usage and accuracy below.
 - `tools/sdr/burstscan.py`: power-versus-time scan of a whole capture; every energy burst per channel must be a decoded frame, spill-over from a stronger channel, or is listed with duration, centroid, width and symbol rate. Used to confirm that a receive-only image emits nothing.
@@ -161,7 +165,7 @@ Tested 2026-11-11 without changing anything.
 
 **Duplex [V]/[I]:** the ENC28J60 is 10BASE-T only and does not auto-negotiate, so the laptop falls back to half duplex. The link comes up even with the MCU halted, because the PHY starts on its own. The P3 driver must run the ENC28J60 in half duplex to match, or both sides must be forced to full duplex; a mismatch works but drops packets.
 
-**Supply with Ethernet connected [V]:** 3.20 V at the ST-Link with the PHY linked and the MCU halted. The current draw that matters comes when the bridge transmits (P3).
+**Supply with Ethernet connected [V]:** 3.20 V at the ST-Link with the PHY linked and the MCU halted. **Conflict (2026-11-14) [V]:** the board itself measures only 2.74-2.83 V by VREFINT in the same state, so the ST-Link figure is not the board voltage ("Power risk" above). The current draw that matters comes when the bridge transmits (P3).
 
 **With Ethernet plugged in, a reset lets the stock firmware reach the tado cloud** through the laptop's NAT, and transmit on channel 26. The stock firmware has been replaced by the P1 image (2026-11-11 **[V]**); keep it that way.
 
