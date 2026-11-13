@@ -1,3 +1,40 @@
 #!/usr/bin/env bash
 # Enable once per clone with: git config core.hooksPath .githooks
-exec "$(git rev-parse --show-toplevel)/tools/check-no-firmware.sh" --staged
+#
+# 1. Format staged C sources under src/ with clang-format (.clang-format).
+#    A fully staged file is formatted in place and re-staged. A file with
+#    unstaged changes as well is only checked, so the hook never stages work
+#    that was left out on purpose; the commit stops if it needs formatting.
+# 2. Refuse firmware, dumps, captures and keys (tools/check-no-firmware.sh).
+set -euo pipefail
+top="$(git rev-parse --show-toplevel)"
+cd "$top"
+
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACMR -- \
+    'src/*.c' 'src/*.h' 'src/*.cpp' 'src/*.hpp')
+
+if ((${#files[@]})); then
+    if ! command -v clang-format >/dev/null 2>&1; then
+        echo "pre-commit: clang-format not found; install it or the commit cannot be checked" >&2
+        exit 1
+    fi
+    bad=()
+    for f in "${files[@]}"; do
+        if git diff --quiet -- "$f"; then
+            # Index and work tree agree: format and re-stage.
+            clang-format -i "$f"
+            git add -- "$f"
+        elif ! git show ":$f" | clang-format --assume-filename="$f" --dry-run --Werror \
+            >/dev/null 2>&1; then
+            bad+=("$f")
+        fi
+    done
+    if ((${#bad[@]})); then
+        echo "pre-commit: these files are partly staged and their staged version is not formatted:" >&2
+        printf '  %s\n' "${bad[@]}" >&2
+        echo "Run 'make format' (or clang-format -i on them), stage, and commit again." >&2
+        exit 1
+    fi
+fi
+
+exec "$top/tools/check-no-firmware.sh" --staged

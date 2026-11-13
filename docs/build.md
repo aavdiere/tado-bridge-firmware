@@ -1,6 +1,6 @@
 # Build, flash and log
 
-- Clone with `git submodule update --init` (libopencm3 at `vendor/libopencm3`, pinned to `10cfbd76`, the commit `stm-template` uses; FreeRTOS-Kernel at `vendor/FreeRTOS-Kernel`, pinned to tag `V11.1.0`). `git config core.hooksPath .githooks` once per clone.
+- Clone with `git submodule update --init` (libopencm3 at `vendor/libopencm3`, pinned to `10cfbd76`, the commit `stm-template` uses; FreeRTOS-Kernel at `vendor/FreeRTOS-Kernel`, pinned to tag `V11.1.0`). `git config core.hooksPath .githooks` once per clone: the pre-commit hook formats staged `src/` files with clang-format and runs `tools/check-no-firmware.sh`. `make format` formats all of `src/` (clang-format 23.1.4 on the bench PC).
 - `make` builds `build/tado-bridge.elf` (Release, `-Os -flto`, newlib-nano) and builds libopencm3 for STM32F4 on first use. `make size` prints `arm-none-eabi-size`. `BUILD_TYPE=Debug BUILD_DIR=build-debug make` gives a debug build.
 - Device `STM32F411CE`, linker script `cmake/stm32f411ce.ld` (512 KB flash, 128 KB RAM).
 - `make flash` or `tools/flash.sh [elf]`: `openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c "program <elf> verify reset exit"`. No `st-flash`, no connect-under-reset (no NRST on the test points).

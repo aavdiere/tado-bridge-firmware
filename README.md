@@ -51,7 +51,7 @@ Each stage is a GitHub milestone, and its tasks are issues. Details: [`docs/prot
 A dump of a real bridge holds its network key and identity. Firmware images, flash dumps, captures and keys must never enter this repository:
 
 - `.gitignore` excludes them.
-- `tools/check-no-firmware.sh` refuses binaries, firmware file types and hex dumps. Enable it as a pre-commit hook once per clone: `git config core.hooksPath .githooks`.
+- `tools/check-no-firmware.sh` refuses binaries, firmware file types and hex dumps. The pre-commit hook runs it and also formats staged `src/` files with clang-format (`.clang-format`; a partly staged file is only checked, not re-staged). Enable the hook once per clone: `git config core.hooksPath .githooks`.
 - The `no-firmware` GitHub Action scans the whole history on every push.
 
 Keep backups of your bridge **outside any git repository**, for example in `~/ib01-backups/`.
