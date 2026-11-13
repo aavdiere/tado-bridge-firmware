@@ -56,6 +56,7 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 | P1 Skeleton | `fw-routine` | `fw-driver` for the clock tree |
 | P2 Radio and flash | `fw-driver` | `rf-bench` for the channel scan and demodulator; `log-reader` for RTT logs |
 | P3 Ethernet | `fw-driver` | `log-reader` |
+| P3.1 ENC28J60 SPI2 bus | `fw-driver` | `log-reader`; the owner probes or captures the bus if the firmware tests do not settle it |
 | P4 TLS and WebSocket | `fw-driver` | `log-reader` for RAM and handshake measurements |
 | P5 Radio link to devices | `fw-critical` | `rf-bench` for over-the-air timing; `fw-reviewer` before flashing |
 | P6 Storage | `fw-driver` | `fw-reviewer` for power-cut safety |
@@ -111,6 +112,17 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 - Bench network: static address on `enp196s0f0`, `dnsmasq`, tanoclo in Docker (`test-bench.md`).
 - lwIP with DHCP, DNS and ping.
 - **Done when:** the bridge gets an address, answers ping and resolves the server name. The router LED shows link and DHCP.
+
+### P3.1: Reliable SPI2 bus to the ENC28J60
+
+Inserted 2026-11-13 after the first P3 bench runs (`hardware.md`, "SPI2: ENC28J60 bring-up"). The chip works from the debugger at 6 MHz and below, but not from the firmware.
+
+- Find what the firmware does differently: CS setup and CS-high time between transactions first (try about 1 µs and 5 µs, then shrink), then gaps between bytes. Small diagnostic images; no change to the radio.
+- Find the margin: the largest SCK and the shortest CS timings that read 1000 of 1000 register reads correctly, then pick values with a factor of 2 margin.
+- If the firmware tests do not explain it: owner measures CS (ENC28J60 pin 5) and SO (pin 2) with a scope or logic analyser during a read.
+- Read the stock firmware's APB1 clock from the backup to know its real SPI2 rate.
+- Record the cause and the chosen timings in `hardware.md`; remove the diagnostic code.
+- **Done when:** the #12 bring-up passes on every boot (EREVID, PHID, read-back of every configured register) and a 10-minute run shows no `reinit` and no read-back mismatch. Then #12 continues.
 
 ### P4: TLS and WebSocket to tanoclo
 

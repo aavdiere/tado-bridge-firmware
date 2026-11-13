@@ -34,7 +34,7 @@ PA5/6/7 carry SPI1 SCK, MISO and MOSI (`docs/datasheets/stm32f411ce.txt:2301-231
 
 **ENC28J60 is on SPI2, on its own bus**, confirmed by continuity (2026-11-11). ENC28J60 QFN pin to STM32 package pin: CS 5 to 25 (PB12), SCK 4 to 26 (PB13), SO 2 to 27 (PB14, MISO), SI 3 to 28 (PB15, MOSI) (`datasheets/enc28j60.txt:257-263`, `stm32f411ce.txt:2433-2455`).
 
-SPI2 runs at up to 25 Mbit/s and the ENC28J60 at up to 20 MHz (`datasheets/enc28j60.txt:17`). SPI2 divides down from its bus clock, so expect about 12.5 MHz with a 50 MHz APB1 **[I]**.
+SPI2 runs at up to 25 Mbit/s and the ENC28J60 at up to 20 MHz (`datasheets/enc28j60.txt:17`), but this board's SPI2 bus does not carry 12 MHz; the driver runs it at 6 MHz ("SPI2: ENC28J60 bring-up" below) **[V]**.
 
 The MCU has a 96-bit unique ID and 16 OTP blocks of 32 bytes (`stm32f411ce.txt:45,891`).
 
@@ -87,7 +87,7 @@ Chosen in `src/clock.c`. **Verified on the bench 2026-11-11 [V]:** the owner con
 
 **Why 96 and not 100 MHz:** 96 MHz gives an exact 48 MHz PLL48CK, keeps APB1 below its 50 MHz limit instead of on it, needs 3 wait states down to 2.4 V where 100 MHz needs 4 (`rm0383.txt:2067-2068`), and the same PLLN/P/Q work from the 16 MHz HSI with PLLM = 8, so the fallback runs at the same frequencies.
 
-**Bus clocks for drivers:** SPI1 (radio, flash) runs from APB2 at 96 MHz, so its prescaler gives 48, 24, 12, 6, 3 MHz...; SPI2 (ENC28J60) runs from APB1 at 48 MHz, giving 24, 12, 6 MHz..., so 12 MHz is the fastest setting under the ENC28J60's 20 MHz limit (`datasheets/enc28j60.txt:17`). `clock_apb1_hz` and `clock_apb2_hz` hold the values, and libopencm3's `rcc_apb1_frequency`/`rcc_apb2_frequency` are set to match.
+**Bus clocks for drivers:** SPI1 (radio, flash) runs from APB2 at 96 MHz, so its prescaler gives 48, 24, 12, 6, 3 MHz...; SPI2 (ENC28J60) runs from APB1 at 48 MHz, giving 24, 12, 6 MHz..., so 12 MHz would be the fastest setting under the ENC28J60's 20 MHz limit (`datasheets/enc28j60.txt:17`); the board only carries 6 MHz ("SPI2: ENC28J60 bring-up") **[V]**. `clock_apb1_hz` and `clock_apb2_hz` hold the values, and libopencm3's `rcc_apb1_frequency`/`rcc_apb2_frequency` are set to match.
 
 **Fallback:** HSE gets 100 ms to report ready (typical start-up is 2 ms, no maximum given, `stm32f411ce.txt:4859-4862`); PLL lock, VOSRDY and the clock switch get 5 ms each (lock is at most 300 µs, `stm32f411ce.txt:5097-5099`). If any step fails, HSE is switched off and the PLL is tried from HSI at the same 96 MHz; if that fails too, the MCU stays on the 16 MHz HSI. `clock_init()` never hangs. The source and the failed step are logged over RTT at boot. On HSI the core clock is accurate to ±1% at 25 °C and ±4% from -10 to 85 °C (`stm32f411ce.txt:4972-4977`), which matters for radio timing done by MCU timers; the radio and Ethernet chips have their own crystals.
 
@@ -117,6 +117,21 @@ Implemented in `src/spi1.c`, `src/cc110l.c`, `src/mx25r.c`, `src/radio.c`. Run o
 **Bus sharing [I].** By design the radio task owns SPI1 and runs flash accesses itself (`design.md`, "Tasks"): the housekeeping task only asks for a flash check every 10 s, and the radio task reads the JEDEC ID between FIFO pumps, also while a frame is arriving (the 64-byte RX FIFO absorbs a 10 µs flash access). A mutex around every transaction and a check that refuses to select one device while the other's CS is low are a second line of defence. MISO is shared, so the CC110L must keep GDO1 (its SO pin) 3-state while CSn is high: `IOCFG1 = 0x2E`, the reset value and the stock value (`cc110l.txt:2891-2893,2901`).
 
 **Flash is read-only in P2.** The driver can send only RDID (0x9F) and RDSR (0x05). Every command that changes the array or the status register needs WREN (0x06) first (program and erase `mx25r1635f.txt:1352-1357`, WRSR `:1471-1473`), and there is no code path that sends it. The firmware never reads array contents, which hold the stock configuration and network key. At boot a CS# pulse releases deep power-down in case the stock firmware left the chip there (tCRDP 20 ns, then tRDP 35-45 µs, `mx25r1635f.txt:2426-2433,3307-3314,3402-3409`), then the boot log prints the JEDEC ID (expected `C2 28 15`, `mx25r1635f.txt:1123-1125`) and the status register (`mx25r1635f.txt:1380-1394`).
+
+## SPI2: ENC28J60 bring-up (P3 #12, P3.1 #31) [V]
+
+Driver in `src/enc28j60.c`, net task in `src/net.c` (commits dd1dbd5, 061a349). Bench unit, 2026-11-13. Debugger tests use `tools/bench/enc28j60_probe.tcl` (halted core, hand-run SPI2 transactions, every register restored).
+
+| Finding | Evidence |
+| :--- | :--- |
+| The ENC28J60 is on SPI2 with CS on PB12 | The stock firmware's SPI2 setup (disassembly of the owner's backup, internal flash `0x08030ef8-0x080311de`) uses PB12 CS, PB13-15 AF5, SPI2 /4, and checks EREVID 06. No other free pin (PA2, PA3, PA8-12, PA15, PB3, PB4, PC13) selects anything on MISO |
+| PC14 is the chip's RESET and rises fast | Holding PC14 low for 3 s dropped the laptop link (`carrier_changes` 4 to 6); after release it reads high within 1 ms |
+| Silicon B7 | EREVID 06 (`datasheets/enc28j60-errata.txt:19-21`); errata #1 (below 8 MHz) does not apply |
+| 12 MHz does not work on this board | Reads of ERXSTL/ERXSTH/ERXNDL/ERXNDH (reset values `fa 05 ff 1f`) are garbage at 12 MHz with the pins at medium, fast or high speed |
+| 6 MHz and below work from the debugger | 20 of 20 reads correct at 6, 3, 0.75 and 0.19 MHz, also with the firmware's own SPI2 setting (CR1 `0354`) and 10 ms after a RESET pulse |
+| **Open (P3.1):** the firmware still fails at 6 MHz | The 061a349 image reads ERXST as `ffff` on most bring-ups. Some reads get the first transaction right and the next one wrong (`fffa`, `00fa`), so the fault is per transaction. Debugger transactions leave milliseconds between bytes and between CS cycles; the firmware leaves about 50 ns of CS high (TCSD minimum, `enc28j60.txt:4148`). Leading hypothesis **[I]**: CS (or SO release) is slow on this board, so a short CS high is not seen as a deselect |
+
+The stock firmware also divides SPI2 by 4, but from an APB1 clock not yet read from the backup, so its real SCK is unknown **[I]**.
 
 ## RF path
 

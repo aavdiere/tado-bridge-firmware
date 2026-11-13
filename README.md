@@ -17,7 +17,8 @@ Design done, nothing built or tested yet. Do not flash this onto a bridge withou
 | P0 | Backup and restore rehearsal | Done |
 | P1 | Skeleton: clock, LEDs, button, RTT, FreeRTOS | Done (2026-11-11): skeleton and RTT (#6), clock tree (#7), FreeRTOS, LEDs, buttons and watchdog (#8) flashed and verified on the bench |
 | P2 | Radio and flash on SPI1 | In progress: receive-only image verified on the bench (2026-11-12): radio PARTNUM/VERSION, 99.6% CRC OK on channel 26, flash and radio on the shared bus (#9, #10); `FREQEST` now valid in the packet (0 to -6 units on stock senders, #11); per-unit trim decision waits for our own transmissions in P5 |
-| P3 | Ethernet (ENC28J60, lwIP) | Not started |
+| P3 | Ethernet (ENC28J60, lwIP) | In progress: ENC28J60 driver written (#12), blocked on P3.1 |
+| P3.1 | Reliable SPI2 bus to the ENC28J60 | In progress: chip answers from the debugger at 6 MHz and below, not yet from the firmware |
 | P4 | TLS and WebSocket to tanoclo | Not started |
 | P5 | Radio link to devices, pairing | Not started |
 | P6 | Persistent storage | Not started |
