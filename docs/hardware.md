@@ -184,7 +184,9 @@ Same bench as above (USB supply, `enp196s0f0` at 10 Mb/s half duplex, laptop `10
 
 **Half duplex.** `MACON3` = `32` (PADCFG 001, TXCRCEN, FRMLNEN, FULDPX 0; `enc28j60.txt:1868-1908`) and `PHCON1` = `0000` (PDPXMD 0; `:3167-3199`) are written and read back at every bring-up; `PHSTAT2` reports `0400`, link up and DPXSTAT 0 = half duplex (`:1296-1301`). MABBIPG `12`, MAIPGL `12`, MAIPGH `0c` as recommended for half duplex (`:1806-1834`). Laptop side: `collisions` 0 and `rx_errors` 0 over the runs below.
 
-**Link status.** After the PHY reset in bring-up the firmware logs `link down (PHSTAT2 0000 ...)`, then `link up (PHSTAT2 0400: half duplex, polarity ok)` once the laptop's link pulses are seen, and the router LED follows. A link loss while running (cable pull) was not tried: it needs the owner. It uses the same PHSTAT2.LSTAT poll on every service pass **[I]**.
+**Link status.** After the PHY reset in bring-up the firmware logs `link down (PHSTAT2 0000 ...)`, then `link up (PHSTAT2 0400: half duplex, polarity ok)` once the laptop's link pulses are seen, and the router LED follows. Cable pull while running (owner, 2026-11-14) **[V]**: the log showed `link down (PHSTAT2 0000)`, then `link up (PHSTAT2 0400)` after replugging, the next per-minute line showed `reinit 0, int storm 0`, and frames flowed again (total rx ok 127 to 133). It uses the PHSTAT2.LSTAT poll on every service pass **[I]**.
+
+**Full USB power cycle (owner, 2026-11-14) [V]:** bring-up passed at the first attempt (EREVID `06`, PHID1 `0083`, PHID2 `1400`, configured, link up), with `reinit 0` in the next per-minute line.
 
 | Test | Result |
 | :--- | :--- |
