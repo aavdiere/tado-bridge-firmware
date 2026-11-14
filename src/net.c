@@ -9,6 +9,7 @@
 #include "board.h"
 #include "enc28j60.h"
 #include "log.h"
+#include "rng.h"
 #include "watchdog.h"
 
 #include "lwip/dhcp.h"
@@ -396,6 +397,14 @@ void net_task_run(void) {
     next_blink        = next_beat;
     enc28j60_setup(self, NOTE_INT, NOTE_STORM);
     LOG("eth: SPI2 SCK %lu Hz, mode 0", (unsigned long)enc28j60_sck_hz());
+
+    /* Random numbers before lwIP: lwip_init() already draws the first TCP
+     * port (LWIP_RAND, src/lwipopts.h). Fail closed: without a seeded DRBG
+     * the bridge stays off the network (#14, docs/design.md "Entropy"). */
+    while (!rng_init()) {
+        LOG("rng: no random numbers; network stays off, retrying in %u s", RETRY_PERIOD_MS / 1000u);
+        idle_ms(RETRY_PERIOD_MS);
+    }
 
     lwip_init();
     netif_add(&eth, IP4_ADDR_ANY4, IP4_ADDR_ANY4, IP4_ADDR_ANY4, NULL, eth_netif_init, netif_input);

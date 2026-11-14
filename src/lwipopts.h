@@ -19,10 +19,11 @@
 #define LWIP_NETCONN         0
 
 /* Random numbers for the DHCP xid, DNS id and source port, and the first TCP
- * local port. PLACEHOLDER until the PA3 entropy pool and DRBG (#26, P4):
- * src/lwip_port.c, not cryptographic. */
-uint32_t lwip_port_rand(void);
-#define LWIP_RAND() lwip_port_rand()
+ * local port: the CTR_DRBG seeded from the PA3 entropy pool (src/rng.h, #14).
+ * The net task seeds it before lwip_init(); rng_u32() never returns a weak
+ * value (it panics instead). */
+uint32_t rng_u32(void);
+#define LWIP_RAND() rng_u32()
 
 /* Protocols. IPv4 only: the bridge talks IPv4 to tanoclo (docs/server-api.md);
  * the radio side's IPv6 is handled by our own 6LoWPAN code (docs/design.md

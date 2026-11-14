@@ -12,6 +12,7 @@ get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(FREERTOS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/FreeRTOS-Kernel")
 set(OPENCM3_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/libopencm3")
 set(LWIP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/lwip")
+set(MBEDTLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/mbedtls")
 
 # Server host name or address the firmware resolves and (P4) connects to
 # (docs/server-api.md "Transport"). The bench server is 10.42.0.1
@@ -90,6 +91,17 @@ set(LWIP_SRCS
 )
 
 ################################################################################
+# mbedTLS 3.6 LTS (#14): only what the entropy pool and the DRBG need so far,
+# SHA-256 and CTR_DRBG with AES. Options in src/tado_mbedtls_config.h; P4
+# (#15) adds the TLS sources.
+set(MBEDTLS_SRCS
+    ${MBEDTLS_DIR}/library/aes.c
+    ${MBEDTLS_DIR}/library/ctr_drbg.c
+    ${MBEDTLS_DIR}/library/platform_util.c
+    ${MBEDTLS_DIR}/library/sha256.c
+)
+
+################################################################################
 # Files
 add_executable(${BINARY}
     ../src/main.c
@@ -111,12 +123,15 @@ add_executable(${BINARY}
     ../src/net.c
     ../src/lwip_port.c
     ../src/pa3_adc.c
+    ../src/entropy.c
+    ../src/rng.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c
     ${FREERTOS_DIR}/portable/GCC/ARM_CM4F/port.c
     ${FREERTOS_DIR}/portable/MemMang/heap_4.c
     ${LWIP_SRCS}
+    ${MBEDTLS_SRCS}
 )
 
 target_include_directories(${BINARY} PRIVATE
@@ -125,12 +140,14 @@ target_include_directories(${BINARY} PRIVATE
     ${FREERTOS_DIR}/include
     ${FREERTOS_DIR}/portable/GCC/ARM_CM4F
     ${LWIP_DIR}/src/include
+    ${MBEDTLS_DIR}/include
 )
 
 target_compile_definitions(${BINARY} PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
     ${MCU_FAMILY}
     NET_SERVER_HOST="${NET_SERVER_HOST}"
+    MBEDTLS_CONFIG_FILE="tado_mbedtls_config.h"
 )
 
 target_compile_options(${BINARY} PRIVATE

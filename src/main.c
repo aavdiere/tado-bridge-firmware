@@ -32,7 +32,8 @@ int main(void) {
     timebase_init();
     faults_init();
     log_init();
-    LOG("tado-bridge P3 #13: radio receive-only, flash read-only, Ethernet with lwIP (DHCP, DNS)");
+    LOG("tado-bridge P4 #14: radio receive-only, flash read-only, Ethernet with lwIP (DHCP, DNS), "
+        "PA3 entropy and CTR_DRBG");
     watchdog_log_reset_cause();
     LOG("clock: SYSCLK %lu Hz, APB1 %lu Hz, APB2 %lu Hz, from %s",
         (unsigned long)clock_hz,
