@@ -38,7 +38,7 @@ SPI2 runs at up to 25 Mbit/s and the ENC28J60 at up to 20 MHz (`datasheets/enc28
 
 The MCU has a 96-bit unique ID and 16 OTP blocks of 32 bytes (`stm32f411ce.txt:45,891`).
 
-**PA3** (pin 13) is unconnected, reported by the user; used as the ADC entropy source (`design.md`).
+**PA3** (pin 13) is unconnected, reported by the user. It is the ADC entropy source (`design.md`). Measured in analog mode on 2026-11-14 **[V]**: it floats at about 910 LSB of 4095 (0.73 V at VDDA 3.28 V), with readings spread at 26 LSB sd. The spread is mostly deterministic, from the ADC's own charge sharing with the floating pin **[I]**, and about 0.9 bit per reading is unpredictable by SP 800-90B estimates (`design.md`, "Entropy: measurement").
 
 **ENC28J60 INT is on PB2** (package pin 20, from ENC28J60 QFN pin 28), confirmed by continuity (2026-11-11). It maps to EXTI2, separate from the radio's EXTI0 and EXTI1 **[I]**. PB2 doubles as BOOT1 on this family (from memory; the manual only says BOOT1 is shared with a GPIO, `datasheets/rm0383.txt:1873-1874`). After reset the pin is free for normal use, and BOOT1 matters only when BOOT0 is high.
 

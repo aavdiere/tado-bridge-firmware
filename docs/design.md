@@ -1,6 +1,6 @@
 # IB01 firmware design
 
-**Status:** storage (#27) and software stack (#18) approved by the user (2026-11-11); self-update (#20) approved on condition that the firmware fits the layout (size check before building). Nothing here is built or tested. Other sections (entropy, network stack, self-update) will be added as they are decided.
+**Status:** storage (#27) and software stack (#18) approved by the user (2026-11-11); self-update (#20) approved on condition that the firmware fits the layout (size check before building). Apart from the entropy pool (#14, built and measured on 2026-11-14), nothing here is built or tested yet. Other sections (entropy, network stack, self-update) will be added as they are decided.
 
 Datasheets are in `datasheets/`. Status tags: **[D]** from a datasheet or repo, **[I]** our own inference.
 
@@ -103,9 +103,54 @@ Radio and flash share the bus (`hardware.md`).
 - Mix in other varying inputs: the 96-bit unique ID, radio `RSSI` readings, and timing jitter.
 - Refuse to create a key if the readings are stuck or barely vary.
 - Seed a DRBG for TLS from this pool, as TLS needs fresh randomness at every connection.
-- Measure the real pin's readings on the board before relying on it.
+- Measure the real pin's readings on the board before relying on it. Done on 2026-11-14, see "Entropy: measurement" below.
 
 Configuring a pin as an analog input does not drive it, so testing a candidate is safe **[I]**.
+
+### Entropy: measurement (#14) [V]
+
+Measured on the bench unit on 2026-11-14. Setup: ADC1 channel 3, 12 bit, ADCCLK = PCLK2 / 4 = 24 MHz (36 MHz maximum at VDDA 2.4-3.6 V, `datasheets/stm32f411ce.txt:6506`), single conversions started by software in a tight loop (`src/pa3_adc.c`). The readings were taken in the net task before the ENC28J60 bring-up, with the radio receiving on channel 26, as the production seed is. USB power, VDDA 3.28 V (`test-bench.md`). For each of the 8 sampling times, 128 blocks of 8192 readings, with the settings interleaved block by block, were read out of RAM over SWD. The first 64 readings of each block were dropped, leaving 1.04 million readings per setting. The temporary sampling code is removed. The captures stay outside git.
+
+Analysis: `tools/entropy/pa3_noise.py`. It runs our own implementation of NIST SP 800-90B section 6.3 estimators on the low 8 bits: MCV, t-tuple, LRS, MultiMCW and Lag. It also runs a nearest-neighbour predictor of our own, which predicts each reading from what followed the closest match of its last 4 readings. NIST's reference tool was not built here; its source was read only to check the structure of the estimators.
+
+**Readings.** At every sampling time the mean is 910 LSB, about 0.73 V **[I]**, and the standard deviation is 26 LSB. Right after power-up the readings start near 560 and reach the pin's level within 10-20 readings as the sample-and-hold capacitor charges, so the first 64 are discarded. The lag-1 autocorrelation is +0.12 to +0.18, and it is under 0.07 from lag 2 on. Less than 6 % of the power lies below 1 kHz, so mains hum is not the main part. The low 4 bits are not uniform: the most common value occurs 1.6-2.2 times as often as the least common one. Bits 0-5 are 1 with a probability of 0.45-0.56.
+
+**The readings are mostly deterministic.** The 26 LSB spread is not 26 LSB of noise. The sequence often falls into exact cycles: a period-3 cycle such as `919 905 869 919 905 869 ...`, which recurs in different blocks and at different sampling times, or one value repeated up to 67 times in a row (at 15 cycles; at most 12 at 3 cycles). A 37-reading pattern recurs 48 times in a million readings at 15 cycles. Our reading is that the ADC's sampling capacitor shares its charge, which depends on the last result, with the floating pin. That makes each reading mostly a function of the previous ones, with a little noise on top **[I]**. Predictors that look for repeats therefore estimate far less than the spread suggests: MCV gives about 5 bits per reading, but t-tuple, LRS and Lag give 0.34-1.1.
+
+| Sampling time (cycles) | µs per reading | MCV | t-tuple | LRS | MultiMCW | Lag | Nearest neighbour | **Lowest** | Longest run of one value | APT max of 512 |
+| --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| **3** | 1.04 | 5.19 | 0.87 | 1.05 | 4.44 | 1.07 | 1.44 | **0.87** | 12 | 50 |
+| 15 | 1.42 | 5.52 | 0.34 | 0.56 | 0.41 | 0.38 | 1.68 | **0.34** | 67 | 55 |
+| 28 | 1.99 | 5.15 | 0.67 | 0.77 | 4.45 | 1.12 | 1.48 | **0.67** | 10 | 49 |
+| 56 | 3.30 | 5.00 | 0.84 | 0.97 | 1.87 | 1.12 | 1.45 | **0.84** | 16 | 59 |
+| 84 | 4.43 | 5.25 | 0.84 | 1.08 | 4.42 | 1.07 | 1.53 | **0.84** | 15 | 52 |
+| 112 | 5.56 | 5.04 | 0.57 | 0.90 | 1.74 | 1.03 | 1.36 | **0.57** | 17 | 54 |
+| 144 | 6.87 | 5.25 | 0.87 | 1.02 | 4.54 | 0.98 | 1.58 | **0.87** | 10 | 50 |
+| 480 | 20.97 | 5.31 | 0.74 | 1.03 | 4.43 | 0.77 | 1.88 | **0.74** | 11 | 40 |
+
+Figures are min-entropy in bits per 12-bit reading. Each estimate is the 99 % bound of SP 800-90B. A low figure comes from a few long exact repeats in the data, through the longest-run term of the prediction estimates and through t-tuple's long tuples. For example, the 15-cycle row comes from one block that stayed on one value for 61-67 readings. No setting gives clearly more noise. **3 cycles** shares the highest lowest estimate (0.87, with 144 cycles) and is the fastest.
+
+**Not locked to the sampling loop.** The mean over the 128 blocks at each index varies by 2.3 LSB. That equals the 26 LSB spread divided by the square root of 128, so no part of the waveform repeats from block to block at the same position.
+
+**Boot to boot.** A block was captured at a fixed time after each of 12 resets, as the production seed is taken. No two boots agree beyond the third reading. From reading 64 on, readings at the same index match in 1.2 % of pairs, which is chance level for this spread.
+
+**Decision [I]:** sample at 3 cycles. **Credit 0.1 bit per reading,** about a ninth of the lowest estimate at this setting and a third of the lowest at any setting. The large margin is there because a model of the charge-sharing process could predict better than generic estimators can. Collecting is cheap: 5120 readings for 512 credited bits take about 5 ms.
+
+**Limits:** these figures come from one board, at room temperature, on one supply. The estimators are our own implementation. The collision, compression, MultiMMC and LZ78Y estimators and the restart tests of SP 800-90B 3.1.4 were not run. The 12-boot comparison is the only restart check.
+
+### Entropy: implementation (#14)
+
+Code: `src/pa3_adc.c` (ADC driver), `src/entropy.c` (health tests and conditioning), `src/rng.c` (DRBG). mbedTLS 3.6.7 LTS in `vendor/mbedtls`, configured in `src/tado_mbedtls_config.h`. The net task owns ADC1 and the DRBG, and seeds the DRBG before `lwip_init()`.
+
+- **Start-up test** (SP 800-90B 4.3) at every boot: power ADC1 up, discard 64 readings, then run the repetition count test (RCT) and the adaptive proportion test (APT) over 1024 readings, and require that the readings span at least 16 LSB. On the bench they span 102-129 LSB, which covers the design's "refuse readings that are stuck or barely vary".
+- **Health-test cutoffs** for H = 0.5 bit per reading and a false-positive probability of 2^-30 per reading: RCT 61 (4.4.1), APT 422 of 512 (4.4.2). They are computed by `pa3_noise.py --h 0.5`, and the tool's values match SP 800-90B's table for 2^-20. H = 0.5 lies between the credit (0.1) and the assessed 0.87. Measured at 3 cycles, the largest values over a million readings were RCT 12 and APT 50, so normal operation stays far from the cutoffs, while a stuck or collapsed source fails. These tests only catch gross failures. A large alternating pattern, for example, would pass them **[I]**.
+- **Conditioning:** each 32-byte block is SHA-256 over 5120 readings (512 credited bits, twice the output size), all tested continuously, plus an uncredited header with a domain tag, a block counter and the TIM2 microsecond count before and after. The whole 12-bit reading is hashed. The design said to keep only the low bits, but hashing more bits cannot lower the entropy, and the credit only counts what the low 8 bits carry **[I]**.
+- **DRBG:** mbedTLS CTR_DRBG with AES-256 and the derivation function. It is seeded with 48 bytes from the pool (1.5 times the 256-bit strength, so no separate nonce is needed), with the personalization string `tado-bridge ctr_drbg` plus the 96-bit unique ID (uncredited). It reseeds from the pool every 10000 requests (mbedTLS default). `entropy_get()` has the `f_entropy` signature of mbedTLS, so P4 can use it directly: as `ALTCP_MBEDTLS_RNG_FN` for lwIP's `altcp_tls`, which builds its own CTR_DRBG (`vendor/lwip/src/apps/altcp_tls/altcp_tls_mbedtls.c:88-96,747`), or by passing `rng_random` to `mbedtls_ssl_conf_rng`.
+- **Fail closed:** a failed start-up test or seed keeps the bridge off the network: the net task logs it, does not start lwIP, and retries every 10 s. A health-test failure during a later reseed latches, and `rng_bytes()`/`rng_u32()` then call `fw_panic()` rather than return a value.
+- **Not yet mixed in:** radio `RSSI` (design list above). It needs an interface to the radio task, which owns SPI1. P5 reworks the radio task, so add it then, uncredited. The pool does not depend on it.
+- **Not yet thread-safe:** callers in other tasks, such as network-key generation in P5/P6, need a lock first.
+
+**Bench result (2026-11-14) [V]:** 11 boots of the final image. Every start-up test passed: range 833-966, longest run 1-3, APT maximum 4-18 of 512, no read timeouts. Every seed took 43-45 ms. DHCP got its lease and ping answered. Host-side runs of `entropy.c` against stub readings gave these results: a constant value fails the RCT after 61 readings, two values 10 LSB apart fail the range check, a stuck stretch in the middle of a collection fails it and latches, and an ADC that never completes fails at once.
 
 ## Software stack (#18, #17, #19)
 

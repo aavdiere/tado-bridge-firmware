@@ -85,7 +85,7 @@ Code: `src/net.c` (net task, netif glue, DHCP and DNS), `src/lwipopts.h` (option
 
 **Server name.** `NET_SERVER_HOST` is a CMake cache value, default `10.42.0.1`, the bench server (`test-bench.md`, "Bench network"; `server-api.md`: server URL is a build value). After every new lease the net task resolves it with `dns_gethostbyname()` and logs `dns: <host> is <address>`. It retries every 10 s on failure. An address literal resolves without a query. P4 connects to the result.
 
-**Random numbers: placeholder [I].** `LWIP_RAND()` is a xorshift32 seeded from the 96-bit unique ID (`datasheets/rm0383.txt:46698-46711`), with the TIM2 microsecond count mixed in at every call. lwIP uses it for the DHCP xid, the DNS id and source port, and the first TCP port. These resist guessing but are not secrets. It is not cryptographic. P4 replaces it with the DRBG from the PA3 pool (`design.md`, "Entropy", #26).
+**Random numbers.** Until P4 (#14), `LWIP_RAND()` was a xorshift32 placeholder seeded from the unique ID. It is now `rng_u32()`, from the CTR_DRBG seeded from the PA3 entropy pool before `lwip_init()` (`design.md`, "Entropy: implementation"; "P4: entropy pool and DRBG" below). lwIP uses it for the DHCP xid, the DNS id and source port, and the first TCP port.
 
 **Router LED (PB0):** off without link, blinking at 2 Hz with link but no address, on with a DHCP lease (P3 "done when": the router LED shows link and DHCP).
 
@@ -101,3 +101,16 @@ Code: `src/net.c` (net task, netif glue, DHCP and DNS), `src/lwipopts.h` (option
 4. DNS through the DHCP server: build with `cmake -Bbuild -DNET_SERVER_HOST=<name> cmake/`, then `dns: <name> is <address> (N ms)`. Afterwards rebuild with `-DNET_SERVER_HOST=10.42.0.1` for the bench server.
 5. The per-minute lines keep `bad 0`, `no pbuf 0`, `busy 0`, `reinit 0`.
 
+## P4: entropy pool and DRBG (#14)
+
+Code: `src/pa3_adc.c` (ADC1 channel 3 on PA3, register level), `src/entropy.c` (SP 800-90B start-up and continuous health tests, SHA-256 conditioning), `src/rng.c` (mbedTLS CTR_DRBG), `src/tado_mbedtls_config.h`. Design, measurement and the chosen values: `design.md`, "Entropy: measurement" and "Entropy: implementation". Analysis tool: `tools/entropy/pa3_noise.py`.
+
+**mbedTLS 3.6.7 (LTS), `vendor/mbedtls` [I].** The design approved mbedTLS (`design.md`, "Software stack"). 3.6 is the long-term-support branch, and lwIP 2.2.1's `altcp_tls` port is written against the 2.x/3.x API (`mbedtls_ctr_drbg_*` and `mbedtls_entropy_*` in `vendor/lwip/src/apps/altcp_tls/altcp_tls_mbedtls.c:71-72`), which 4.x no longer offers as public API (from memory, not checked here). Only `aes.c`, `ctr_drbg.c`, `platform_util.c` and `sha256.c` are compiled so far. The generated library files are in the release tag, so its `framework` submodule is not needed. P4's TLS work (#15) extends the config file and the source list.
+
+**Log lines.** At boot, after the radio lines: `rng: PA3 start-up test passed: 1024 readings, range <lo>-<hi>, longest run N, APT max N of 512, N read timeouts` and `rng: CTR_DRBG (AES-256) seeded with 48 bytes of conditioned PA3 entropy in 44 ms`, then the lwIP lines as in P3. On failure: `rng: PA3 start-up test failed: <test>` and `rng: no random numbers; network stays off, retrying in 10 s`.
+
+**Memory (Release, `make size`):** text 67868, data 124, bss 51856 bytes (P3: 58844, 124, 51508). mbedTLS adds about 9 KB of flash (AES tables in flash), and the DRBG context adds 348 bytes of bss. Net task stack: 493-500 of 1024 words never used (P3: 766), because seeding uses about 1 KB more stack **[V]**. Heap free 23504 bytes, unchanged.
+
+**Bench test (2026-11-14) [V].** `make flash` (OpenOCD verify OK), `make rtt`: 11 boots, every start-up test passed and every seed took 43-45 ms. DHCP lease 10.42.0.43 from the laptop, `ping` 3 of 3. The per-minute counters were clean: `bad 0`, `no pbuf 0`, `reinit 0`.
+
+**RTT after flashing a different image [V]:** if `tools/rtt.sh` starts during the 2 s startup delay, it can find an earlier image's RTT control block, which is still in RAM at that image's address, and print that image's stale log. The running firmware writes its block elsewhere, so nothing new appears. Start `make rtt` after the delay, or send `rtt stop` and `rtt start` on OpenOCD's Tcl or telnet port once the firmware runs.

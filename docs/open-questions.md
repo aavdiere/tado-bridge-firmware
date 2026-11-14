@@ -7,7 +7,7 @@ Master list of what is still required. Details and citations are in `hardware.md
 Enough is known to start building. What remains is gathered during the build:
 
 1. ~~Backup session~~ (#8, #9): done 2026-11-11, see `hardware.md` (P0 results).
-2. **Prototype** (#16, #17, #19, #28) and on-board measurements (#7, #26 noise).
+2. **Prototype** (#16, #17, #19, #28) and on-board measurements (#7; #26 noise measured 2026-11-14).
 3. **Before building self-update** (#20): check the bootloader and image sizes fit the layout.
 4. **Optional:** stock capture (section C); pair button pin at firmware stage.
 
@@ -55,7 +55,7 @@ Because tanoclo is the compatibility target and accepts zeros for #10, the firmw
 | 18 | Stack choice | **Approved (user, 2026-11-11):** FreeRTOS, lwIP, mbedTLS, own 6LoWPAN and MAC ported from freedo. See `design.md` |
 | 19 | Radio deadlines versus Ethernet and flash work | Task design in `design.md`; to be proven on a prototype. Ethernet is on SPI2, so only flash shares the radio's bus |
 | 20 | Bridge self-update and rollback; first flash path | **Approved (user, 2026-11-11) if the firmware fits:** check bootloader and image sizes against the layout before building. Images are unsigned. Open: how the uploader reaches tanoclo |
-| 26 | Entropy source for the network key and TLS | Decision: ADC on unconnected pin PA3, conditioned as in `design.md`. Still needs a measurement of its readings on the board |
+| 26 | Entropy source for the network key and TLS | Decision: ADC on unconnected pin PA3, conditioned as in `design.md`. **Settled (2026-11-14, [V], #14):** measured on the board. Spread 26 LSB sd at every sampling time, but mostly deterministic; SP 800-90B estimates give 0.34-0.87 bit per reading. Implementation: 3 cycles, credit 0.1 bit per reading, 5120 readings per SHA-256 block, start-up and continuous RCT/APT tests that fail closed, CTR_DRBG seeded with 48 bytes. Every boot passed on the bench, and seeding takes 43-45 ms (`design.md`, "Entropy: measurement" and "Entropy: implementation"). Open: RSSI mixing (P5) and a lock before other tasks use it |
 | 27 | Where the network key and frame counter are stored, with wear limits | **Approved (user, 2026-11-11)**, layout in `design.md` |
 | 28 | Pairing beacon answer on real hardware | Must leave the bridge within 2.4-7.4 ms; freedo's on-chip path is "not validated on air" (`freedo/docs/PROTOCOL.md:732`). `tools/sdr/demod.py --summary` reports the request-to-beacon gap; no stock answer was seen yet (coordinator not in pairing mode, 2026-11-11) |
 
