@@ -23,6 +23,7 @@ Design done, nothing built or tested yet. Do not flash this onto a bridge withou
 | P5 | Radio link to devices, pairing | Not started |
 | P6 | Persistent storage | Not started |
 | P7 | Size check, bootloader, self-update | Not started |
+| P8 | Code clean-up checkpoint | Not started: runs after P7; behaviour-preserving (#32, #33), major changes only after owner approval (#34) |
 
 Each stage is a GitHub milestone, and its tasks are issues. Details: [`docs/prototype-plan.md`](docs/prototype-plan.md).
 

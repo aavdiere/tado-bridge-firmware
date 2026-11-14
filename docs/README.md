@@ -33,7 +33,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 | [`radio-runtime.md`](radio-runtime.md) | How to drive the CC110L after init: RX, TX, ACKs, wake trains, anchors. |
 | [`tools/read_ib01_system_areas.tcl`](tools/read_ib01_system_areas.tcl) | Read-only OpenOCD script for option bytes, OTP and unique ID. Run alongside `read.sh`. |
 | [`test-bench.md`](test-bench.md) | Bench setup (ST-Link, Ethernet, RTL-SDR), what Claude may do on hardware, protecting the stock network. |
-| [`prototype-plan.md`](prototype-plan.md) | Staged prototype plan P0-P7 based on `stm-template`, with GitHub progress tracking. |
+| [`prototype-plan.md`](prototype-plan.md) | Staged prototype plan P0-P8 based on `stm-template`, with GitHub progress tracking. |
 | [`build.md`](build.md) | Build, flash (OpenOCD) and RTT log commands. |
 | [`design.md`](design.md) | Firmware design proposals. Persistent storage, entropy, software stack, self-update and first flash. |
 | [`radio.md`](radio.md) | 868 MHz PHY, CC110L registers, frames, coordinator behaviour, repo conflicts, reuse. |
@@ -52,5 +52,6 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 - Claude may flash and test the bench bridge within `test-bench.md`; power over USB with the ST-Link 3V3 wire disconnected (changed 2026-11-14 from ST-Link 3V3 only, after the rail sagged to 2.67-2.98 V; USB gives 3.29 V, `hardware.md`); never two supplies at once; tanoclo runs in Docker on the laptop; the stock network's channel is found by SDR scan; no test device yet (2026-11-11).
 - Stock network found on channel 26 (868.3237 MHz) by SDR scan: protected channel (2026-11-11). Test channel 10 (865.1245 MHz), owner decision 2026-11-11. Pair only a device named by EUI-64.
 - Work is delegated to subagents with a fixed model and effort per task type (`CLAUDE.md`, `.claude/agents/`), 2026-11-11.
-- Progress is tracked in this repo: milestones P0-P7 and issues, see [`prototype-plan.md`](prototype-plan.md).
+- Progress is tracked in this repo: milestones P0-P8 and issues, see [`prototype-plan.md`](prototype-plan.md).
 - Code format (owner, 2026-11-12, applied 2026-11-13): all of `src/` follows `.clang-format` (LLVM-based, `AlignConsecutiveMacros` on), formatted with clang-format 23.1.4. The pre-commit hook formats staged `src/` files; a different clang-format version may reformat, so reformat in a commit of its own if the version changes.
+- P8 code clean-up checkpoint (owner, 2026-11-14): after P7, `fw-critical` (Fable) skims the whole repository and rewrites messy or unclear code without changing functionality, in small commits; `fw-reviewer` reviews. Major changes (architecture, module boundaries, API changes, renames across modules) are proposed to the owner as a plan and made only after approval. See [`prototype-plan.md`](prototype-plan.md), P8.

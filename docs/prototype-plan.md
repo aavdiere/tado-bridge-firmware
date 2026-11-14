@@ -10,7 +10,7 @@ Requirement (user, 2026-11-11): progress is tracked in a GitHub repo on the user
 
 Proposal:
 - **One repo** holding the firmware and the design docs. Name and visibility still to be decided.
-- **Milestones** = the stages below, P0 to P7.
+- **Milestones** = the stages below, P0 to P8.
 - **Issues** = the tasks in each stage, plus the open measurements: #7, #16, #17, #19, #26, #28, the pair button, and the #20 size check.
 - **README** shows a status table per stage. Each finished task is a commit or pull request that closes its issue.
 - **Never pushed:** firmware dumps (they hold the bridge's secrets), keys, datasheet PDFs and their text extracts (third-party copyright). Enforced by `.gitignore`, `tools/check-no-firmware.sh` as a pre-commit hook, and the `no-firmware` CI scan of the whole history.
@@ -61,6 +61,7 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 | P5 Radio link to devices | `fw-critical` | `rf-bench` for over-the-air timing; `fw-reviewer` before flashing |
 | P6 Storage | `fw-driver` | `fw-reviewer` for power-cut safety |
 | P7 Size check, bootloader, self-update | `fw-critical` | `fw-reviewer` before flashing; `log-reader` for size reports |
+| P8 Code clean-up | `fw-critical` (Fable, high) | `fw-reviewer`; `log-reader` for size reports |
 | Any stage | `docs-keeper` for docs, issues and commits | `fw-reviewer` before anything goes onto a board |
 
 ## Stages
@@ -162,6 +163,18 @@ Inserted 2026-11-13 after the first P3 bench runs (`hardware.md`, "SPI2: ENC28J6
 - Bootloader at `0x08000000`, application at `0x08010000`, update and rollback as in `design.md`.
 - Uploader through tanoclo (`POST /api/send-raw` or one added handler).
 - **Done when:** an update installs, a broken image rolls back, and a power cut during install recovers.
+
+### P8: Code clean-up checkpoint
+
+Owner request, 2026-11-14 (`docs/README.md`, "Project decisions"). Runs after P7. Fable skims the whole repository and rewrites messy or unclear code without changing functionality. Issues: #32 (survey and progress list), #33 (per-module clean-up), #34 (proposal for major changes).
+
+- **Behaviour-preserving only.** No functional change. Verify each step with the build and the size report, and where hardware is involved with the existing bench checks within `test-bench.md`. Any change touching the bootloader, the storage format or radio timing still needs a `fw-reviewer` "safe to flash" verdict before it is flashed.
+- **Test-only code:** remove none that the owner wants kept; otherwise the existing rule applies, no test-only code is left in (`docs/README.md`, "Project decisions", 2026-11-11).
+- **Small steps, frequent checkpoints.** One commit per file or module, with the build passing, so work can resume from the last commit if Fable usage runs out. On a Fable limit, rerun on Opus high (owner's standing fallback rule).
+- **Progress list:** a checklist of files and modules (done, todo, needs proposal) lives in #32 and is ticked after each commit, so a later session can continue.
+- **Major changes are not made directly.** Architecture, module boundaries, API changes and renames across modules are written up as a plan and proposed to the owner for approval first (#34).
+- **Subagents:** `fw-critical` (Fable, high) does the rewriting; `fw-reviewer` reviews.
+- **Done when:** every module on the progress list is done or moved to an approved proposal, the build and size report match the pre-clean-up behaviour, and the bench checks still pass.
 
 ## Equipment
 

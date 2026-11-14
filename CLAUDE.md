@@ -7,7 +7,7 @@ Replacement firmware for the tado Internet Bridge (IB01): STM32F411 + CC110L rad
 - `docs/README.md`: index of the design notes and every project decision.
 - `docs/open-questions.md`: what is still open, with a status summary at the top.
 - `docs/test-bench.md`: bench setup, what Claude may do on hardware, and how the stock network is protected.
-- `docs/prototype-plan.md`: stages P0-P7. Each stage is a GitHub milestone, and its tasks are issues (`gh issue list`).
+- `docs/prototype-plan.md`: stages P0-P8. Each stage is a GitHub milestone, and its tasks are issues (`gh issue list`).
 - Source citations such as `freedo/...`, `tanoclo/...`, `Tado_Hardware_Teardown.wiki/...` refer to sibling folders of this repo (`../freedo`, `../tanoclo`, ...).
 
 ## Hard rules
@@ -36,6 +36,7 @@ Pick the subagent by the task, not by the stage. Each one has its own model and 
 | Project setup from `stm-template`, CMake, build scripts, simple GPIO (LEDs, button), routine code | `fw-routine` | Sonnet, medium |
 | Clock tree, CC110L driver, ENC28J60 driver, lwIP port, mbedTLS config, entropy, storage records | `fw-driver` | Opus, high |
 | freedo MAC and 6LoWPAN port, ACK timing, pairing, wake trains; bootloader, self-update, rollback | `fw-critical` | Fable, high |
+| Behaviour-preserving clean-up of the whole repository (P8), in small commits | `fw-critical` (reviewed by `fw-reviewer`) | Fable, high |
 | Review before anything is flashed, and of any change to bootloader, storage format or radio timing | `fw-reviewer` | Fable, high, read-only |
 | RTL-SDR: channel scans, GFSK demodulation, frequency offset, ACK and beacon timing over the air | `rf-bench` | Opus, high |
 | Reading long RTT logs, OpenOCD output, logic captures, size reports | `log-reader` | Haiku, low, read-only |
