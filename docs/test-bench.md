@@ -173,6 +173,36 @@ Tested 2026-11-11 without changing anything.
 
 **With Ethernet plugged in, a reset lets the stock firmware reach the tado cloud** through the laptop's NAT, and transmit on channel 26. The stock firmware has been replaced by the P1 image (2026-11-11 **[V]**); keep it that way.
 
-**Keep the test server off the home LAN:** tanoclo's `docker-compose.yml` publishes 988, 3111, 80 and 443 on all interfaces (`tanoclo/docker-compose.yml:34-51`). Use a local override that binds them to `10.42.0.1` only. The override lives outside the tanoclo repo.
+**tanoclo in Docker on the link (#27, 2026-11-14) [V]:** tanoclo's `docker-compose.yml` publishes 988, 3111, 80 and 443 on all interfaces (`tanoclo/docker-compose.yml:34-51`), so a local override outside both repos binds them to `10.42.0.1` only. Nothing under `../tanoclo` is changed (`git status` clean).
+
+- Override: `~/tanoclo-bench/docker-compose.override.yml`. Start with `cd ../tanoclo && docker compose -p tanoclo-bench -f docker-compose.yml -f ~/tanoclo-bench/docker-compose.override.yml up -d --build` (stop with `down`; add `-v` to drop the database). It uses `ports: !override` for `node` (988, 3111) and `nginx` (80, 443), all as `10.42.0.1:N:N`. The containers have `restart: always` (`tanoclo/docker-compose.yml`), so they come back after a reboot, still bound to `10.42.0.1`; Docker fails to publish if the address is missing.
+- **The base compose file does not start as is [V]:** it bind-mounts `./ws-server` over `/app/ws-server` (`tanoclo/docker-compose.yml:33`), which hides the image's `node_modules` (`tanoclo/Dockerfile.node:3-10`), and the node container loops with `Cannot find module 'uWebSockets.js'`. The override drops that mount (`volumes: !override`) and uses the files baked into the image. Also, `nginx` mounts `./ssl`, which does not exist in the repo (`tanoclo/docker-compose.yml:48`); the override mounts the bench certificate directory there instead, so Docker does not create a root-owned `ssl/` in the tanoclo tree.
+- The node container downloads an OTA web bundle and APK from `raw.githubusercontent.com` at start-up (log lines `[ota-sync]`); that uses the laptop's internet, not the bridge's.
+
+**How TLS reaches the bridge [D]:** port 988 is a plain Node `tls.createServer` in `ws-server/lib/proxy-manager.js:110-113`, listening via a `net` proxy on `wsPort` (default 988, `tanoclo/ws-server/lib/config.js:47`) and forwarding to an internal uWebSockets server on 19880 that serves `/hw/v2` (`tanoclo/ws-server/server.js:283,402`; proxy `tanoclo/ws-server/lib/proxy-manager.js:146-147`). It takes its key and certificate from `SSL_KEY_PATH` and `SSL_CERT_PATH` (default `ws-server/certs/tanoclo_key.pem`, `tanoclo_cert.pem`, `tanoclo/ws-server/lib/config.js:50-51`); a per-client-IP certificate map `certs/ip_certs.json` is optional (`tanoclo/ws-server/lib/config.js:15-31`). No client certificate is requested. The server also reads `TADO_ROOT_CA_PATH` at start-up (`tanoclo/ws-server/server.js:80`, `tanoclo/ws-server/lib/config.js:52`); it only matters for the tado-cloud proxy mode (`tanoclo/ws-server/lib/proxy-manager.js:198`), which is off. The stock procedure clones tado's root CA and signs a leaf for `tanoclo.tado.lan` with a DNS SAN only (`tanoclo/patch_ib_firmware/clone_chain.sh:97-150`); our firmware does not patch the stock image, so the bench uses its own CA with an IP SAN. Design: TLS 1.2, P-256 ECDSA (`docs/design.md:155`).
+
+**Bench certificate [V]:** all in `~/tanoclo-bench/certs/` (outside git; `bench-ca.key` is mode 600).
+
+| Item | Value |
+| :--- | :--- |
+| Bench CA | `bench-ca.pem`, `CN=tado-bridge-firmware bench CA`, self-signed, P-256, CA:true pathlen 0, valid to 2046-11-09. SHA-256 fingerprint `E9:E9:0E:A4:59:40:56:AD:7D:CA:85:FF:BB:AD:F3:3C:96:4F:42:0A:8F:86:43:6E:0B:90:0B:DA:43:9F:18:9E` |
+| Server leaf | `tanoclo_cert.pem` / `tanoclo_key.pem`, `CN=10.42.0.1`, **SAN `IP:10.42.0.1`**, P-256, serverAuth, signed directly by the bench CA, valid to 2046-11-09. Copies as `tanoclo.fullchain` / `tanoclo.key` for nginx |
+| Trust anchor for P4 (#15) | **`bench-ca.pem`** (public part only; embed as a build or config value, `docs/design.md:156`). The firmware must verify the IP SAN `10.42.0.1`, not a DNS name. The leaf is sent without the CA; the chain is leaf plus anchor. Pinning the leaf instead would also work, but then every re-issue needs a new firmware |
+| `tadoRootCA.cer` | A copy of `bench-ca.pem`, only so the server finds the file it reads at start-up |
+
+The certificate validity runs to 2046, so a bridge with no real-time clock cannot fail on dates other than by having a wrong clock **[I]**; the firmware has no time source yet.
+
+**Verification (2026-11-14) [V]:**
+
+| Check | Result |
+| :--- | :--- |
+| `ss -ltnp` | Listeners only on `10.42.0.1:988`, `:3111`, `:80`, `:443`; none on `0.0.0.0` or `[::]` |
+| TLS to `10.42.0.1:988` | `openssl s_client -CAfile bench-ca.pem -verify_ip 10.42.0.1`: `Verification: OK`, TLS 1.3 `TLS_AES_256_GCM_SHA384`, ecdsa_secp256r1_sha256; the leaf shows `IP Address:10.42.0.1` |
+| TLS 1.2 as the firmware will use | `-tls1_2 -cipher ECDHE-ECDSA-AES128-GCM-SHA256`: negotiated, `Verification: OK` |
+| `10.42.0.1:443` (nginx) | `Verification: OK` with the same certificate |
+| Wi-Fi address `10.13.1.210` | 988, 3111, 80, 443: connection refused |
+| Containers | `tanoclo-ws` healthy, `tanoclo-db` and `tanoclo-nginx` up |
+
+Not yet tested: a WebSocket upgrade on `/hw/v2` from the bridge (P4), and the `tun0` (192.168.124.6) interface, which is not covered by the bind but gets nothing because Docker publishes on `10.42.0.1` only **[I]**.
 
 **NAT gives the bridge internet access.** Our firmware never contacts tado, but the stock firmware would try to reach the tado cloud if it ran with Ethernet plugged in. It is no longer on the board since P1 (2026-11-11), so this only matters after a restore. P0 runs with Ethernet unplugged anyway (`tanoclo/patch_ib_firmware/README.md:247`).
