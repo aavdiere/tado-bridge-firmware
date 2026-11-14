@@ -594,10 +594,7 @@ static void frame_done(void) {
 
     COUNT(frames);
     if (crc_ok) {
-        static bool cloud;
-        COUNT(crc_ok);
-        cloud = !cloud;
-        board_led(LED_CLOUD, cloud); /* P2 test wiring: cloud LED toggles per CRC-OK frame */
+        COUNT(crc_ok); /* the cloud LED shows the server connection since P4 (src/session.c) */
     } else {
         COUNT(crc_bad);
     }

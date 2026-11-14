@@ -56,3 +56,8 @@ build-release/
 
 # Cortex Debug register state
 .vscode/.cortex-debug.registers.state.json
+
+# Local provisioning: the bridge's serial and EUI-64 and the trust anchor
+# path (cmake/CMakeLists.txt, docs/build.md P4). Template:
+# config/local.cmake.example
+config/local.cmake

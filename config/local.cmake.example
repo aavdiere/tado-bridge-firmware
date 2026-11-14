@@ -1,0 +1,20 @@
+# Local provisioning for one bridge (cmake/CMakeLists.txt, docs/build.md P4).
+# Copy to config/local.cmake, which is gitignored, and fill in. Never commit
+# the real values: they identify the owner's bridge (CLAUDE.md).
+#
+# Plain set(), not CACHE: a changed value then takes effect on the next build.
+# After creating or deleting this file, run `make clean` once.
+
+# Full serial as tanoclo stores it in its `devices` table: "IB" and 10 digits.
+# The backup holds it as a u32 at the config marker + 8
+# (tanoclo/patch_ib_firmware/extract_rf_key.js:58); the serial is "IB" and
+# that number in decimal, zero-padded to 10 digits (docs/build.md P4).
+set(BRIDGE_SERIAL "IB0000000000")
+
+# EUI-64, 8 bytes in hex in the order stored in the backup at config start
+# + 50 (extract_rf_key.js:71). Starts with tado's OUI 00 1b c5.
+set(BRIDGE_EUI64 "00 1b c5 00 00 00 00 00")
+
+# Trust anchor for the server certificate: the public CA certificate only,
+# never a key. The bench CA: docs/test-bench.md "Bench certificate".
+set(SERVER_CA_PEM "$ENV{HOME}/tanoclo-bench/certs/bench-ca.pem")

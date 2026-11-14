@@ -1,6 +1,7 @@
-/* Net task (#12, #13): ENC28J60 bring-up and service, lwIP (IPv4, DHCP, DNS,
- * ICMP echo), link and address on the router LED, per-minute counters, power
- * LED heartbeat, watchdog check-in.
+/* Net task (#12, #13, #15): ENC28J60 bring-up and service, lwIP (IPv4, DHCP,
+ * DNS, ICMP echo), link and address on the router LED, the server session
+ * (TLS, WebSocket, auth: src/session.c), per-minute counters, power LED
+ * heartbeat, watchdog check-in.
  * Design: docs/design.md "Tasks" (the net task owns SPI2 and runs lwIP);
  * driver: src/enc28j60.c; lwIP options: src/lwipopts.h (NO_SYS: this task is
  * the only lwIP context). */
@@ -10,6 +11,7 @@
 #include "enc28j60.h"
 #include "log.h"
 #include "rng.h"
+#include "session.h"
 #include "watchdog.h"
 
 #include "lwip/dhcp.h"
@@ -33,7 +35,7 @@
 /* The server's host name or address (docs/server-api.md "Transport": a build
  * or config value). The bench server is 10.42.0.1 (docs/test-bench.md "Bench
  * network"); an address literal resolves without a query. Set with
- * `cmake -DNET_SERVER_HOST=...`. P4 connects to it. */
+ * `cmake -DNET_SERVER_HOST=...`. src/session.c connects to it. */
 #ifndef NET_SERVER_HOST
 #error "NET_SERVER_HOST not defined (cmake/CMakeLists.txt)"
 #endif
@@ -418,14 +420,18 @@ void net_task_run(void) {
     bring_up();
 
     TickType_t next_stats = xTaskGetTickCount() + pdMS_TO_TICKS(STATS_PERIOD_MS);
-    bool       more       = false;
+    bool       more = false, session_busy = false;
     for (;;) {
         uint32_t bits = 0;
         /* Never block forever: the watchdog check-in, the heartbeat, lwIP's
          * timers and the EPKTCNT poll (errata #6, enc28j60.c) keep coming
          * without INT. lwIP's shortest timer is TCP's 250 ms (TCP_TMR_INTERVAL),
-         * so POLL_MS keeps every timer within 50 ms of its time. */
-        (void)xTaskNotifyWait(0, UINT32_MAX, &bits, more ? 0 : pdMS_TO_TICKS(POLL_MS));
+         * so POLL_MS keeps every timer within 50 ms of its time. While the TLS
+         * handshake runs, wait one tick between its steps: the P-256 steps
+         * take hundreds of ms each, and the lower-priority housekeeping task,
+         * which kicks the watchdog, must get the CPU in between. */
+        TickType_t wait = more ? 0 : (session_busy ? 1 : pdMS_TO_TICKS(POLL_MS));
+        (void)xTaskNotifyWait(0, UINT32_MAX, &bits, wait);
         watchdog_checkin(WDG_NET);
         leds();
         more = false;
@@ -472,6 +478,7 @@ void net_task_run(void) {
 
         sys_check_timeouts();
         address_check();
+        session_poll(link_up && have_addr && dns_state == DNS_DONE, &server_ip, &session_busy);
 
         TickType_t now = xTaskGetTickCount();
         if ((int32_t)(now - next_stats) >= 0) {

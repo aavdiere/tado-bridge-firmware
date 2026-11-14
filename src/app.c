@@ -19,7 +19,7 @@
 #define PRIO_RADIO        (tskIDLE_PRIORITY + 3)
 
 #define STACK_WORDS     512  /* 2 KB each; LOG() needs about 1 KB of it */
-#define NET_STACK_WORDS 1024 /* 4 KB: lwIP input runs down to the driver's transmit (#13) */
+#define NET_STACK_WORDS 1536 /* 6 KB: lwIP input down to the driver (#13), then TLS (#15) */
 
 static TaskHandle_t h_radio, h_net, h_hk;
 
@@ -40,7 +40,8 @@ struct button {
 };
 
 #define POLL_MS    10
-#define DEBOUNCE_N 3 /* 30 ms */
+#define DEBOUNCE_N 3   /* 30 ms */
+#define KICK_MS    500 /* watchdog window (docs/build.md P1) */
 
 static void button_update(struct button *b, bool raw) {
     if (raw == b->state) {
@@ -54,9 +55,10 @@ static void button_update(struct button *b, bool raw) {
 
 static void housekeeping_task(void *arg) {
     (void)arg;
-    struct button reset = {.name = "factory reset (PB10)"};
-    struct button pair  = {.name = "pair (PC15)"};
-    uint32_t      loops = 0;
+    struct button reset     = {.name = "factory reset (PB10)"};
+    struct button pair      = {.name = "pair (PC15)"};
+    uint32_t      loops     = 0;
+    TickType_t    next_kick = xTaskGetTickCount() + pdMS_TO_TICKS(KICK_MS);
 
     for (TickType_t wake = xTaskGetTickCount();; loops++) {
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(POLL_MS));
@@ -66,7 +68,13 @@ static void housekeeping_task(void *arg) {
         /* The router LED shows Ethernet link and DHCP (net task, #13). */
         board_led(LED_PAIRING, pair.state); /* pairing LED mirrors the pair button */
 
-        if (loops % 50 == 49) { /* every 500 ms */
+        /* Every 500 ms by the clock, not by loop count: after the net task's
+         * P-256 steps have held this task off for a few hundred ms (#15),
+         * vTaskDelayUntil() catches up in a burst, and counted windows would
+         * then close a few ms apart with no check-ins in the second one. */
+        TickType_t now = xTaskGetTickCount();
+        if ((int32_t)(now - next_kick) >= 0) {
+            next_kick = now + pdMS_TO_TICKS(KICK_MS);
             watchdog_checkin(WDG_HOUSEKEEPING);
             uint32_t missing = watchdog_kick_if_alive();
             if (missing) {
