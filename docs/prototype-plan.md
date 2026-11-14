@@ -112,6 +112,7 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 - Bench network: static address on `enp196s0f0`, `dnsmasq`, tanoclo in Docker (`test-bench.md`).
 - lwIP with DHCP, DNS and ping.
 - **Done when:** the bridge gets an address, answers ping and resolves the server name. The router LED shows link and DHCP.
+- **Status 2026-11-14 [V]:** ENC28J60 driver (#12): half duplex, link up/down status on the router LED, frame TX and RX against the laptop (ARP probe answered, 1514-byte frames both ways, 125 of 125 received pings intact; `hardware.md`, "Result: half duplex, link, frame RX and TX"). Still to try with the owner: link loss on a cable pull and bring-up after a power cycle. lwIP (#13) next.
 
 ### P3.1: Reliable SPI2 bus to the ENC28J60
 

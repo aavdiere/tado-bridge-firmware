@@ -178,6 +178,24 @@ Owner-changed supply, Ethernet linked to the laptop (10 Mb/s half duplex), firmw
 
 **Open:** bring-up after a full power cycle with the owner-changed supply was not tried (Claude cannot cut the power). The stock firmware's APB1 clock (its real SPI2 rate) is still unread, and no longer needed for P3.1.
 
+### Result: half duplex, link, frame RX and TX against the laptop (#12, 2026-11-14) [V]
+
+Same bench as above (USB supply, `enp196s0f0` at 10 Mb/s half duplex, laptop `10.42.0.1`). A test-only image extended the self-test in `src/net.c`, then the self-test was removed (project rule) and the final image flashed (sha256 of `build/tado-bridge.bin` `5e0041f7c3720772677d71b368b3b5b97bed0d0f26ea06003b93e73dc569ea85`, OpenOCD verify OK). The laptop has no `tcpdump` and no root, so the laptop side was checked with its interface counters (`/sys/class/net/enp196s0f0/statistics/`) and with frames that Linux answers. RTT logs kept outside the repo.
+
+**Half duplex.** `MACON3` = `32` (PADCFG 001, TXCRCEN, FRMLNEN, FULDPX 0; `enc28j60.txt:1868-1908`) and `PHCON1` = `0000` (PDPXMD 0; `:3167-3199`) are written and read back at every bring-up; `PHSTAT2` reports `0400`, link up and DPXSTAT 0 = half duplex (`:1296-1301`). MABBIPG `12`, MAIPGL `12`, MAIPGH `0c` as recommended for half duplex (`:1806-1834`). Laptop side: `collisions` 0 and `rx_errors` 0 over the runs below.
+
+**Link status.** After the PHY reset in bring-up the firmware logs `link down (PHSTAT2 0000 ...)`, then `link up (PHSTAT2 0400: half duplex, polarity ok)` once the laptop's link pulses are seen, and the router LED follows. A link loss while running (cable pull) was not tried: it needs the owner. It uses the same PHSTAT2.LSTAT poll on every service pass **[I]**.
+
+| Test | Result |
+| :--- | :--- |
+| TX round trip | Every 10 s an ARP probe (RFC 5227: sender IP `0.0.0.0`, claims no address) for `10.42.0.1`. The laptop answered each one with a unicast ARP reply to the bridge's MAC, which the bridge received and logged: 24 probes, 24 replies, so the frames left with a valid CRC, padding to 60 bytes worked (laptop counts 60 bytes) and the unicast filter (ERXFCON.UCEN) passes our own address |
+| TX full size | Every 10 s a 1514-byte broadcast (ethertype 88b5), written in 100-byte chunks. In a 137 s window the laptop's `rx_bytes` rose by exactly 14 x 1514 + 13 x 60 = 21976 over 27 packets, `rx_errors` 0; the 14 ethertype-88b5 frames show up as `rx_dropped` (no protocol handler). Bridge side: `tx ok` 47, `err` 0, `late-col retry` 0 |
+| RX full size, whole frame | 125 broadcast pings from the laptop (`ping -b -s 1472 -i 1 10.42.0.255`, 1514-byte frames) all received, read out whole and checked with the ICMP checksum: **125 of 125 good**. That is about 190 KB through the 6.5 KB receive ring, so the read pointer wrapped from ERXND to ERXST many times. Receive status vector `03c005ee`: 1518 bytes with CRC, Received OK, type field, broadcast (`:2295-2325`) |
+| RX filter, loop-back | `own 0` throughout: HDLDIS keeps our own transmissions out of the receive buffer (`:2021-2026`). `overflow 0`, `bad 0`, `reinit 0`, `int storm 0` |
+| Final image (no self-test) | Bring-up and `link up` at the first attempt; 125 broadcast pings in 2 min counted as `rx ok`, `bad 0`, `reinit 0`; `tx ok 0` and the laptop's `rx_packets` did not change, so nothing is sent until lwIP (#13). Radio receive-only and flash checks ran alongside without error |
+
+**RTT tooling notes [V].** The RTT up buffer (1 KB, skip when full, `src/rtt.c`) can drop or cut lines in the boot burst: one run lost the `link up` line and truncated another. After a flash, `tools/rtt.sh` can find the previous image's control block, still in RAM, at its old address and show stale output; check the found address against `arm-none-eabi-nm build/tado-bridge.elf | grep ' cb$'`.
+
 ## RF path
 
 Differential CC110L output, balun, insert-to-break test connector, three-element match, TI helical antenna (`wiki/RF-Hardware.md:1-12`). The test connector is fitted backwards on the stock board: a probe disconnects the CC110L and attaches to the antenna (`wiki/RF-Hardware.md:15`). Refitting it the correct way with an external dipole improved range by about 50% **[V]** (`wiki/RF-Hardware.md:30-34`).

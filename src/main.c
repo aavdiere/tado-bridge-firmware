@@ -32,7 +32,7 @@ int main(void) {
     timebase_init();
     faults_init();
     log_init();
-    LOG("tado-bridge P3 #12: radio receive-only, flash read-only, Ethernet driver self-test");
+    LOG("tado-bridge P3 #12: radio receive-only, flash read-only, Ethernet driver (no IP yet)");
     watchdog_log_reset_cause();
     LOG("clock: SYSCLK %lu Hz, APB1 %lu Hz, APB2 %lu Hz, from %s",
         (unsigned long)clock_hz,
