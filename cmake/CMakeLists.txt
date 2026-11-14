@@ -110,6 +110,7 @@ add_executable(${BINARY}
     ../src/enc28j60.c
     ../src/net.c
     ../src/lwip_port.c
+    ../src/pa3_adc.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c
