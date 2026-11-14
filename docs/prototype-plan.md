@@ -128,10 +128,11 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 | Renewal and 30-minute run | Final image: the laptop logged the renewal REQUEST and ACK at 11:06:08, exactly T1 = 1800 s after the 10:36:08 ACK; no `address lost` on the bridge. 30 per-minute lines without an error or re-init and no fault or watchdog reset, while the radio received up to 2053 frames a minute on channel 26 (50 of 50 pings then, average 1.16 ms) |
 | Counters | Per-minute lines: `bad 0`, `no pbuf 0`, `busy 0`, `drop 0`, `tx err 0`, `late-col retry 0`, `reinit 0`, `int storm 0`; laptop `rx_errors` and `collisions` 0 |
 | RAM | Heap free 23504-23512 of 32768 bytes; net task 766-768 of 1024 stack words never used |
+| Cable pull with lwIP [V] | 2026-11-14: the owner unplugged the cable at the bridge for about 10 s and replugged it. RTT log: `eth: link down (PHSTAT2 0000...)`, the 60 s line `link irq 1, reinit 0`, `eth: link up (PHSTAT2 0400...)`, then `ip: DHCP lease 10.42.0.43/255.255.255.0, gateway 10.42.0.1, DNS 10.42.0.1, lease 3600 s` (same address as before). Laptop ping 3 of 3, 1.1-1.9 ms. No PANIC, no re-init. Router LED (owner's observation): off unplugged, blinking after replug, steady on once the lease was back |
 
 Final image sha256 (`build/tado-bridge.bin`) `74836cca837f716334afcae069a14f9d5d7a481f0fdd0198781666deed5994d2`, flashed with OpenOCD verify OK.
 
-`nmcli device disconnect` on the laptop (IP outage, PHY carrier stays up): the bridge kept its lease and answered again right after reconnect. **Still to try with the owner:** a cable pull with lwIP running (link down, router LED off, then DHCP re-request on link up, LED blinking until the ACK).
+`nmcli device disconnect` on the laptop (IP outage, PHY carrier stays up): the bridge kept its lease and answered again right after reconnect. Cable pull with lwIP: see the last row of the result table above.
 
 ### P3.1: Reliable SPI2 bus to the ENC28J60
 
