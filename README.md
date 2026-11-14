@@ -17,8 +17,8 @@ Design done, nothing built or tested yet. Do not flash this onto a bridge withou
 | P0 | Backup and restore rehearsal | Done |
 | P1 | Skeleton: clock, LEDs, button, RTT, FreeRTOS | Done (2026-11-11): skeleton and RTT (#6), clock tree (#7), FreeRTOS, LEDs, buttons and watchdog (#8) flashed and verified on the bench |
 | P2 | Radio and flash on SPI1 | In progress: receive-only image verified on the bench (2026-11-12): radio PARTNUM/VERSION, 99.6% CRC OK on channel 26, flash and radio on the shared bus (#9, #10); `FREQEST` now valid in the packet (0 to -6 units on stock senders, #11); per-unit trim decision waits for our own transmissions in P5 |
-| P3 | Ethernet (ENC28J60, lwIP) | In progress: ENC28J60 driver written (#12), blocked on P3.1 |
-| P3.1 | Reliable SPI2 bus to the ENC28J60 | Blocked on the supply: the board rail sags to about 2.7 V with the PHY on (chip minimum 3.10 V); in range, SPI2 works at 12 MHz with the existing timings |
+| P3 | Ethernet (ENC28J60, lwIP) | In progress: ENC28J60 driver (#12) brings the chip up and sends its self-test frames since P3.1; lwIP (#13) next |
+| P3.1 | Reliable SPI2 bus to the ENC28J60 | Done (2026-11-14): the cause was the ST-Link 3V3 sagging to about 2.7 V; with the owner-changed supply (3.29 V) SPI2 reads 12000 of 12000 correctly at 12 and 6 MHz, runs at 6 MHz for margin, and a 10-minute run had no re-init |
 | P4 | TLS and WebSocket to tanoclo | Not started |
 | P5 | Radio link to devices, pairing | Not started |
 | P6 | Persistent storage | Not started |

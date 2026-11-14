@@ -8,7 +8,8 @@
  * affected revisions per issue are in Table 2 (errata.txt:28-59). Every
  * workaround below is applied whatever the revision, since each is cheap:
  *   #1  MAC registers unreliable below 8 MHz SCK (B1, B4; errata.txt:86-112):
- *       not met: the board limit is 6 MHz (SCK_MAX_HZ); only warned on B1/B4.
+ *       not met: SPI2 runs at 6 MHz for timing margin (SCK_MAX_HZ); only
+ *       warned on B1/B4.
  *   #2  CLKRDY set early after a reset (all; :115-133): wait at least 1 ms
  *       after a reset instead of trusting CLKRDY.
  *   #5  Receive buffer must start at 0000h (all; :112-137): RX 0000h-19FFh,
@@ -198,11 +199,18 @@ _Static_assert(TXST + 1u + ENC_TX_MAX + 7u - 1u <= BUF_LAST, "one full frame + s
 #define IPGH_HALF  0x0Cu /* :1819-1822 */
 
 /* --- Timing --------------------------------------------------------------- */
-/* The chip allows 20 MHz (:17, :4144), but this board does not: on the bench
- * unit (B7) 12 MHz reads garbage whatever the pin speed (medium, fast or
- * high), while 6, 3, 0.75 and 0.19 MHz read the reset values 20 of 20 times
- * (debugger test 2026-11-13) [V]. So 6 MHz from APB1 48 MHz, 4 MHz on the
- * HSI-only fallback. */
+/* The chip allows 20 MHz (:17, :4144), SPI2 as master 25 MHz
+ * (stm32f411ce.txt:6166-6171). The 12 MHz failures of 2026-11-13 were the
+ * supply sag, not the bus (docs/hardware.md, P3.1). With the rail in range,
+ * 12 and 6 MHz both read 12000 of 12000 iterations correctly with the CS
+ * timings below (bench unit, B7, 2026-11-14) [V]. 6 MHz is kept for a
+ * factor of 2: 12 MHz is the fastest rate tested (24 MHz exceeds the chip's
+ * 20 MHz), and its half period of 41.7 ns holds the worst-case data path
+ * only 1.6 times [I]: MOSI tv(MO) 6 ns (stm32f411ce.txt:6218) + edge 10 ns
+ * at medium speed, 50 pF (:5843) + chip setup TSU 10 ns (:4149) = 26 ns;
+ * MISO chip TV 10 ns (:4151) + SCK edge 10 ns + tsu(MI) 4 ns
+ * (stm32f411ce.txt:6190) = 24 ns. At 6 MHz (83.3 ns) that is a factor of
+ * 3.2. So 6 MHz from APB1 48 MHz, 4 MHz on the HSI-only fallback. */
 #define SCK_MAX_HZ   6500000u
 #define SCK_MIN_HZ   8000000u /* errata #1, B1/B4 only (errata.txt:86-95) */
 #define SPI_SPIN_MAX 100000u  /* a byte takes 1.3 us at 6 MHz; this is >1 ms */
@@ -242,7 +250,10 @@ static uint32_t     storm_start, storm_edges;
 
 /* --- Short delays ---------------------------------------------------------- */
 /* At least 2 core cycles per iteration: SUBS and a taken BNE, and the
- * Cortex-M4 issues at most one instruction per cycle [I]. */
+ * Cortex-M4 issues at most one instruction per cycle [I]. Measured with the
+ * DWT cycle counter at 96 MHz: 3 cycles per iteration, so TCSS and TCSD
+ * spin 94 ns, TCSH 31 ns (ETH) and 344 ns (MAC/MII), before the GPIO and
+ * SPI accesses around them (2026-11-14) [V]. */
 static void spin(uint32_t n) {
     __asm__ volatile("1: subs %0, %0, #1\n\tbne 1b" : "+r"(n) : : "cc");
 }
@@ -466,8 +477,8 @@ void enc28j60_setup(void *notify_task, uint32_t notify_bits, uint32_t notify_sto
     taskEXIT_CRITICAL();
 
     /* SPI2 runs from APB1 (48 MHz; 16 MHz on the HSI-only fallback,
-     * docs/hardware.md "Clock tree"). Smallest divider at or below the board
-     * limit SCK_MAX_HZ: /8 = 6 MHz, /4 = 4 MHz on the fallback. BR encoding
+     * docs/hardware.md "Clock tree"). Smallest divider at or below the
+     * margin limit SCK_MAX_HZ: /8 = 6 MHz, /4 = 4 MHz on the fallback. BR encoding
      * rm0383.txt:33096-33105. */
     uint32_t br = 0; /* fPCLK / 2^(br+1) */
     while (br < 7 && clock_apb1_hz / (2u << br) > SCK_MAX_HZ) {
@@ -612,7 +623,7 @@ bool enc28j60_init(const uint8_t mac[6], struct enc28j60_info *info) {
             info->rev_name);
         if (sck_hz < SCK_MIN_HZ) {
             /* errata #1: MAC registers unreliable below 8 MHz on B1/B4; the
-             * board limit above does not allow more. */
+             * margin limit SCK_MAX_HZ does not allow more. */
             LOG("eth: WARNING SPI2 SCK %lu Hz below 8 MHz on silicon %s (errata #1)",
                 (unsigned long)sck_hz,
                 info->rev_name);

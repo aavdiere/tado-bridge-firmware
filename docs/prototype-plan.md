@@ -126,6 +126,8 @@ Inserted 2026-11-13 after the first P3 bench runs (`hardware.md`, "SPI2: ENC28J6
 
 **Status 2026-11-14 [V]:** the cause is not CS timing but the supply. With the PHY active, the board rail sags to about 2.7 V, below the ENC28J60's 3.10 V minimum, and the chip stops answering. With the chip in power save (3.1-3.2 V), 1000 of 1000 iterations are correct at 12, 6 and 3 MHz with the existing CS timings (`hardware.md`, "Cause: the supply sags below the ENC28J60's minimum"). Next: the owner decides on the supply (`test-bench.md`, "Power risk"). Then re-run `tools/bench/enc28j60_supply.tcl` and the margin test.
 
+**Result 2026-11-14 [V]: done.** With the owner-changed supply, the board rail reads 3.28-3.29 V. Margin test with the firmware's own CS timings: 12000 of 12000 iterations good at 12 MHz and at 6 MHz. SPI2 stays at 6 MHz for a factor of 2 on timing margin. Bring-up passed at the first attempt on 7 consecutive resets, and a 10-minute run showed no `reinit`, no read-back mismatch and 65 of 65 self-test frames sent (`hardware.md`, "Result: margin test and 10-minute run"). The diagnostic code is removed. Still to try: bring-up after a full power cycle.
+
 ### P4: TLS and WebSocket to tanoclo
 
 - Entropy pool from PA3 (`design.md`); log the raw readings to measure the noise (#26).

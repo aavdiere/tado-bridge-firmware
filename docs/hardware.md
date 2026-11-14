@@ -34,7 +34,7 @@ PA5/6/7 carry SPI1 SCK, MISO and MOSI (`docs/datasheets/stm32f411ce.txt:2301-231
 
 **ENC28J60 is on SPI2, on its own bus**, confirmed by continuity (2026-11-11). ENC28J60 QFN pin to STM32 package pin: CS 5 to 25 (PB12), SCK 4 to 26 (PB13), SO 2 to 27 (PB14, MISO), SI 3 to 28 (PB15, MOSI) (`datasheets/enc28j60.txt:257-263`, `stm32f411ce.txt:2433-2455`).
 
-SPI2 runs at up to 25 Mbit/s and the ENC28J60 at up to 20 MHz (`datasheets/enc28j60.txt:17`). The driver runs it at 6 MHz, because 12 MHz failed on 2026-11-13. On 2026-11-14, 12 MHz read correctly 1000 of 1000 times once the chip's supply was back in range, so the earlier limit was most likely the supply sag rather than the bus ("SPI2: ENC28J60 bring-up" below) **[V]**.
+SPI2 runs at up to 25 Mbit/s and the ENC28J60 at up to 20 MHz (`datasheets/enc28j60.txt:17`). The driver runs it at 6 MHz. The 12 MHz failures of 2026-11-13 were the supply sag, not the bus: with the rail in range, the firmware reads correctly at 12 and 6 MHz, and 6 MHz is kept for a factor of 2 on timing margin ("Result: margin test and 10-minute run" below) **[V]**.
 
 The MCU has a 96-bit unique ID and 16 OTP blocks of 32 bytes (`stm32f411ce.txt:45,891`).
 
@@ -87,7 +87,7 @@ Chosen in `src/clock.c`. **Verified on the bench 2026-11-11 [V]:** the owner con
 
 **Why 96 and not 100 MHz:** 96 MHz gives an exact 48 MHz PLL48CK, keeps APB1 below its 50 MHz limit instead of on it, needs 3 wait states down to 2.4 V where 100 MHz needs 4 (`rm0383.txt:2067-2068`), and the same PLLN/P/Q work from the 16 MHz HSI with PLLM = 8, so the fallback runs at the same frequencies.
 
-**Bus clocks for drivers:** SPI1 (radio, flash) runs from APB2 at 96 MHz, so its prescaler gives 48, 24, 12, 6, 3 MHz...; SPI2 (ENC28J60) runs from APB1 at 48 MHz, giving 24, 12, 6 MHz..., so 12 MHz would be the fastest setting under the ENC28J60's 20 MHz limit (`datasheets/enc28j60.txt:17`). The driver uses 6 MHz until the bus is measured again with an in-range supply ("SPI2: ENC28J60 bring-up") **[V]**. `clock_apb1_hz` and `clock_apb2_hz` hold the values, and libopencm3's `rcc_apb1_frequency`/`rcc_apb2_frequency` are set to match.
+**Bus clocks for drivers:** SPI1 (radio, flash) runs from APB2 at 96 MHz, so its prescaler gives 48, 24, 12, 6, 3 MHz...; SPI2 (ENC28J60) runs from APB1 at 48 MHz, giving 24, 12, 6 MHz..., so 12 MHz is the fastest setting under the ENC28J60's 20 MHz limit (`datasheets/enc28j60.txt:17`). The driver uses 6 MHz for timing margin ("SPI2: ENC28J60 bring-up", "Result: margin test and 10-minute run") **[V]**. `clock_apb1_hz` and `clock_apb2_hz` hold the values, and libopencm3's `rcc_apb1_frequency`/`rcc_apb2_frequency` are set to match.
 
 **Fallback:** HSE gets 100 ms to report ready (typical start-up is 2 ms, no maximum given, `stm32f411ce.txt:4859-4862`); PLL lock, VOSRDY and the clock switch get 5 ms each (lock is at most 300 µs, `stm32f411ce.txt:5097-5099`). If any step fails, HSE is switched off and the PLL is tried from HSI at the same 96 MHz; if that fails too, the MCU stays on the 16 MHz HSI. `clock_init()` never hangs. The source and the failed step are logged over RTT at boot. On HSI the core clock is accurate to ±1% at 25 °C and ±4% from -10 to 85 °C (`stm32f411ce.txt:4972-4977`), which matters for radio timing done by MCU timers; the radio and Ethernet chips have their own crystals.
 
@@ -151,7 +151,32 @@ Each iteration has 10 transactions with 8 checks: BFC and BFS bank switches, a W
 - **The drop is about 0.4-0.5 V at roughly 120-150 mA**, which points to about 3-4 Ω between the ST-Link's regulator and the board: the jumper wires, the Tag-Connect contacts, or the clone's regulator **[I]**. Transmitting (180 mA) will pull the rail lower still.
 - The MCU itself stays in range (1.7-3.6 V, and 3 wait states are valid down to 2.4 V at 96 MHz, "Clock tree" above). Brown-out reset is off in the option bytes (P0 results), so the MCU does not reset when the rail sags.
 
-**Open: the supply.** This needs the owner, not firmware: the `test-bench.md` fallback is a current-limited 3.3 V bench supply with the ST-Link wired without its 3V3. Once the supply is fixed, re-run `tools/bench/enc28j60_supply.tcl`, then the margin test (1000 of 1000 at the chosen SCK, with a factor of 2), and decide whether SPI2 goes back to 12 MHz.
+**The supply was the fix, not firmware.** The owner changed the bench supply on 2026-11-14 (owner-changed supply; the ST-Link 3V3 wire is disconnected; details in `test-bench.md`, "Setup"). Results below.
+
+### Result: margin test and 10-minute run (P3.1 #31, 2026-11-14) [V]
+
+Owner-changed supply, Ethernet linked to the laptop (10 Mb/s half duplex), firmware at 6 MHz (current `src/enc28j60.c`), radio receive-only on channel 26 as in P2. RTT logs kept outside the repo.
+
+**Supply.** `tools/bench/enc28j60_supply.tcl` against the running firmware: VDDA **3.28-3.29 V** with the PHY on, in power save and on again, inside the ENC28J60's 3.10-3.60 V (`enc28j60.txt:3988`). 40 of 40 good reads at 12, 6, 3 and 1.5 MHz in every state.
+
+**Why the script reported 0 of 40 before.** Its good-read test compared ERXST/ERXND with the reset values `fa 05 ff 1f` (`enc28j60.txt:771-774`). Once bring-up succeeds, the firmware writes its own buffer layout, RXST `0000` and RXND `19ff` (`src/enc28j60.c`, `wr16(ERXSTL, RXST)` and `wr16(ERXNDL, RXND)` in `enc28j60_init()`). Confirmed from the debugger: the reference read at 187 kHz is `00 00 ff 19`, and the firmware's own boot log shows bring-up passing (`eth: configured ...`), which needs that read-back. The script now takes a reference at 187 kHz, accepts either pattern, and counts reads against it. It was also made safe against a running firmware: it halts only between two SPI2 transactions (PB12 high), restores the chip's bank select (the old version left bank 0 selected while the firmware's cached bank was 3: ECON1 read `07` at the halt), and enters and leaves power save with the datasheet sequence (RXEN off, RXBUSY and TXRTS clear, PWRSV; then CLKRDY, RXEN back; `enc28j60.txt:3749-3770`). After a run, the firmware continued with `reinit 0`.
+
+**Margin test** (diagnostic image, removed afterwards). The firmware's own transaction code with its CS timings, link up, run after each self-test transmission, 12 runs of 1000 iterations at each SCK (an earlier build of the same test ran 2 more runs at each SCK right after bring-up, link still down, also without a failure). Each iteration: forced BFC/BFS bank switches, WCR of EWRPTL with a changing pattern and its read-back, ERXSTL/H and ERXNDL/H against `0000`/`19ff`, EREVID `06`, the ECON1 bank bits, MAADR1 and MAADR6 (MAC registers: dummy byte, 210 ns hold), and PHID1 `0083` through MII.
+
+| SCK | Result |
+| :--- | :--- |
+| 12 MHz | **12000 of 12000 iterations good**, no failing check |
+| 6 MHz | **12000 of 12000 iterations good**, no failing check |
+
+**CS timings as built**, measured with the DWT cycle counter at 96 MHz: the delay loop takes 3 cycles per iteration, not the 2 that `spin_for_ns()` assumes, so the delays are longer than asked for. Spin alone, before the GPIO and SPI accesses around it: TCSS and TCSD 94 ns (minimum 50 ns), TCSH 31 ns for ETH and buffer (minimum 10 ns) and 344 ns for MAC and MII (minimum 210 ns) (`enc28j60.txt:4143-4148`).
+
+**SCK choice: 6 MHz stays.** 12 MHz passes, but it is the fastest rate tested (24 MHz is above the chip's 20 MHz, `enc28j60.txt:4144`), so the test shows no factor of 2 above it. The worst-case data path at 12 MHz fits its 41.7 ns half period only 1.6 times **[I]**: MOSI tv(MO) 6 ns (`stm32f411ce.txt:6218`) plus a 10 ns edge at medium pin speed and 50 pF (`stm32f411ce.txt:5843`) plus the chip's 10 ns setup (`enc28j60.txt:4149`) is 26 ns; MISO the chip's 10 ns output valid (`enc28j60.txt:4151`) plus a 10 ns SCK edge plus tsu(MI) 4 ns (`stm32f411ce.txt:6190`) is 24 ns. At 6 MHz (83.3 ns) the factor is 3.2, and the 12 MHz test is a measured factor of 2 in clock rate. 6 MHz gives 0.75 MB/s on the bus, below the 1.25 MB/s of 10 Mb/s Ethernet at full load; the bridge's traffic is far smaller **[I]**. Silicon B1 or B4 would want 8 MHz or more (errata #1, `datasheets/enc28j60-errata.txt:86-112`); the firmware warns if it reads such a revision.
+
+**Bring-up at every boot.** Six consecutive resets (OpenOCD `reset run`, `RCC_CSR` `SOFTWARE PIN`): bring-up passed at the first attempt each time, EREVID `06`, PHID1 `0083`, PHID2 `1400`, every read-back correct, no `bring-up failed` line. Not yet tried after a power cycle.
+
+**10-minute run.** Final image (no diagnostic code, sha256 of `build/tado-bridge.bin` `67379ceb6e0c952437174b5076e2237f205282e54c19b4ced5ef9137364e7b1e`, flashed with OpenOCD verify), reset, then 670 s of RTT: bring-up at the first attempt, link up within the first minute, then 11 per-minute reports with `reinit 0`, `int storm 0`, no chip-check failure, no read-back mismatch, no fault and no watchdog reset. Self-test: 65 frames sent, `tx ok 65`, `err 0`, `late-col retry 0`; the laptop's `rx_packets` on `enp196s0f0` rose by 67 in the same time. Radio and flash on SPI1 ran alongside with no flash mismatch. The #12 bring-up and service now work on this bench; #12 continues.
+
+**Open:** bring-up after a full power cycle with the owner-changed supply was not tried (Claude cannot cut the power). The stock firmware's APB1 clock (its real SPI2 rate) is still unread, and no longer needed for P3.1.
 
 ## RF path
 
