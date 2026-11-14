@@ -40,7 +40,7 @@ libopencm3 is LGPL-3. That is fine for own use. Distributing binaries would requ
 
 Bench setup, Claude's permission to flash and test, and protection of the owner's stock network: `test-bench.md`.
 
-- Power from the ST-Link only while it is attached; no USB, no Ethernet (`tanoclo/patch_ib_firmware/README.md:211`).
+- Power over USB with the ST-Link's 3V3 wire disconnected (owner decision, 2026-11-14); never two supplies at once (`tanoclo/patch_ib_firmware/README.md:211`).
 - Never reconfigure PA13 or PA14, the SWD pins. With no NRST on the test points, losing SWD makes recovery hard.
 - Start every build with a short delay before low-power modes or risky code, so the debugger can still attach **[I]**.
 - Last resort if SWD is lost: pull BOOT0 high so the chip starts in ST's ROM bootloader, which leaves SWD usable (`hardware.md`) **[I]**.

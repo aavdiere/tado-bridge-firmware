@@ -151,7 +151,7 @@ Each iteration has 10 transactions with 8 checks: BFC and BFS bank switches, a W
 - **The drop is about 0.4-0.5 V at roughly 120-150 mA**, which points to about 3-4 Ω between the ST-Link's regulator and the board: the jumper wires, the Tag-Connect contacts, or the clone's regulator **[I]**. Transmitting (180 mA) will pull the rail lower still.
 - The MCU itself stays in range (1.7-3.6 V, and 3 wait states are valid down to 2.4 V at 96 MHz, "Clock tree" above). Brown-out reset is off in the option bytes (P0 results), so the MCU does not reset when the rail sags.
 
-**The supply was the fix, not firmware.** The owner changed the bench supply on 2026-11-14 (owner-changed supply; the ST-Link 3V3 wire is disconnected; details in `test-bench.md`, "Setup"). Results below.
+**The supply was the fix, not firmware.** The owner changed the bench supply on 2026-11-14 (USB; the ST-Link 3V3 wire is disconnected; details in `test-bench.md`, "Setup"). Results below.
 
 ### Result: margin test and 10-minute run (P3.1 #31, 2026-11-14) [V]
 
@@ -211,7 +211,7 @@ Tooling: `tanoclo/patch_ib_firmware/read.sh`, with ST-Link V2 and OpenOCD. Guide
 
 **Before powering, with the board unpowered, check by continuity through the cable:** IDC pin 2 to STM32 pin 34, IDC pin 3 to STM32 pin 37, IDC pin 6 to ground (e.g. the Ethernet jack shield), and IDC pin 10 to the 3V3 rail (STM32 pin 24, 36 or 48). Only connect the ST-Link after all four agree.
 
-**Power from the ST-Link 3V3 only**; no USB, no Ethernet (`README.md:211,247`).
+**Power over USB with the ST-Link 3V3 wire disconnected** (owner decision, 2026-11-14; the ST-Link 3V3 sagged, see "Cause" above); never two supplies at once (`README.md:211,247`).
 
 **Outputs:** `unmodded.bin` (512 KiB internal flash) and `unmodded_spi.bin` (2 MiB external flash). External reads are done twice per chunk (`README.md:232`).
 

@@ -49,7 +49,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 - 2026-11-11: test-only code paths (such as the P1 watchdog hang test) are removed once their test passes, not left in behind flags.
 - Firmware update images are not signed.
 - Listen before transmit, as the stock bridge does it.
-- Claude may flash and test the bench bridge within `test-bench.md`; power from the ST-Link 3V3 only; tanoclo runs in Docker on the laptop; the stock network's channel is found by SDR scan; no test device yet (2026-11-11).
+- Claude may flash and test the bench bridge within `test-bench.md`; power over USB with the ST-Link 3V3 wire disconnected (changed 2026-11-14 from ST-Link 3V3 only, after the rail sagged to 2.67-2.98 V; USB gives 3.29 V, `hardware.md`); never two supplies at once; tanoclo runs in Docker on the laptop; the stock network's channel is found by SDR scan; no test device yet (2026-11-11).
 - Stock network found on channel 26 (868.3237 MHz) by SDR scan: protected channel (2026-11-11). Test channel 10 (865.1245 MHz), owner decision 2026-11-11. Pair only a device named by EUI-64.
 - Work is delegated to subagents with a fixed model and effort per task type (`CLAUDE.md`, `.claude/agents/`), 2026-11-11.
 - Progress is tracked in this repo: milestones P0-P7 and issues, see [`prototype-plan.md`](prototype-plan.md).

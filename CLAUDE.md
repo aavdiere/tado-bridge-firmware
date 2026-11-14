@@ -17,7 +17,7 @@ Replacement firmware for the tado Internet Bridge (IB01): STM32F411 + CC110L rad
 - **Bench permission (owner, 2026-11-11):** Claude may flash and test the bench bridge (ST-Link + Ethernet + RTL-SDR), within the gates in `docs/test-bench.md`: P0 done first, never change option bytes without asking, verify every write, and get a `fw-reviewer` "safe to flash" verdict before radio-transmit (P5) or bootloader (P7) code.
 - **The owner's stock tado network runs nearby on channel 26 (868.3237 MHz), the protected channel.** The test network uses channel 10 (865.1245 MHz). Never transmit on channel 26, never ACK or answer frames not addressed to our EUI-64, pair only on the test channel, and keep SDR captures out of git. Details: `docs/test-bench.md`.
 - **Never drive the HomeKit coprocessor's I2C bus** (MFI337S3959, probably PB6/PB7). HomeKit is out of scope, and the chip must stay exactly as shipped.
-- **IB01 safety:** power from the ST-Link 3V3 only (owner decision; USB stays unplugged while the ST-Link is attached); never reconfigure PA13 or PA14 (SWD); no NRST on the test points, so flash with OpenOCD, not `st-flash --connect-under-reset`. Details: `docs/hardware.md`, `docs/prototype-plan.md`.
+- **IB01 safety:** power over USB with the ST-Link's 3V3 wire disconnected (owner decision, 2026-11-14: the ST-Link 3V3 sagged below the ENC28J60's minimum; never feed the board from two sources at once); never reconfigure PA13 or PA14 (SWD); no NRST on the test points, so flash with OpenOCD, not `st-flash --connect-under-reset`. Details: `docs/hardware.md`, `docs/prototype-plan.md`.
 
 ## Docs conventions
 

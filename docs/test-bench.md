@@ -9,7 +9,7 @@ Owner decisions, 2026-11-11, unless noted. Status tags: **[V]** measured, **[D]*
 | Link | Connection |
 | :--- | :--- |
 | SWD | ST-Link V2 on the test points: 3V3, GND, SWDIO, SWCLK (`hardware.md`) |
-| Power | **Owner-changed supply (2026-11-14)**; the ST-Link 3V3 wire is disconnected, the ST-Link carries only GND, SWDIO and SWCLK. Never feed the board from two sources at once (`tanoclo/patch_ib_firmware/README.md:211`). Until 2026-11-14: ST-Link 3V3 only, which sagged (below) |
+| Power | **USB, owner-changed supply (2026-11-14)**; the ST-Link 3V3 wire is disconnected, the ST-Link carries only GND, SWDIO and SWCLK. Never feed the board from two sources at once (`tanoclo/patch_ib_firmware/README.md:211`). Until 2026-11-14: ST-Link 3V3 only, which sagged (below) |
 | Ethernet | Bridge straight to the laptop's wired port `enp196s0f0`, on a private subnet of its own |
 | RF | RTL-SDR dongle on the laptop, receiving 863-873 MHz |
 | Server | tanoclo in Docker on the laptop, reachable only on the private Ethernet link |
