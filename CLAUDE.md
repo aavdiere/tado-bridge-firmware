@@ -13,7 +13,7 @@ Replacement firmware for the tado Internet Bridge (IB01): STM32F411 + CC110L rad
 ## Hard rules
 
 - **Never commit firmware, flash dumps, captures or keys.** A dump of a real bridge holds its network key. `.gitignore`, `tools/check-no-firmware.sh` and the `no-firmware` CI job enforce this. The pre-commit hook needs `git config core.hooksPath .githooks` once per clone. Never use `git add -f` or `--no-verify` to get around them.
-- **This repo is public.** Check content before every push. Backups of the bridge belong outside any git repository, for example `~/ib01-backups/`.
+- **This repo is public.** Check content before every push. **Push permission (owner, 2026-11-14):** Claude may always push, as long as `tools/check-no-firmware.sh` has been run and passed on what is being pushed. Backups of the bridge belong outside any git repository, for example `~/ib01-backups/`.
 - **Bench permission (owner, 2026-11-11):** Claude may flash and test the bench bridge (ST-Link + Ethernet + RTL-SDR), within the gates in `docs/test-bench.md`: P0 done first, never change option bytes without asking, verify every write, and get a `fw-reviewer` "safe to flash" verdict before radio-transmit (P5) or bootloader (P7) code.
 - **The owner's stock tado network runs nearby on channel 26 (868.3237 MHz), the protected channel.** The test network uses channel 10 (865.1245 MHz). Never transmit on channel 26, never ACK or answer frames not addressed to our EUI-64, pair only on the test channel, and keep SDR captures out of git. Details: `docs/test-bench.md`.
 - **Never drive the HomeKit coprocessor's I2C bus** (MFI337S3959, probably PB6/PB7). HomeKit is out of scope, and the chip must stay exactly as shipped.
