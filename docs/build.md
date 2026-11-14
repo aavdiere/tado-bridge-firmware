@@ -114,3 +114,56 @@ Code: `src/pa3_adc.c` (ADC1 channel 3 on PA3, register level), `src/entropy.c` (
 **Bench test (2026-11-14) [V].** `make flash` (OpenOCD verify OK), `make rtt`: 11 boots, every start-up test passed and every seed took 43-45 ms. DHCP lease 10.42.0.43 from the laptop, `ping` 3 of 3. The per-minute counters were clean: `bad 0`, `no pbuf 0`, `reinit 0`.
 
 **RTT after flashing a different image [V]:** if `tools/rtt.sh` starts during the 2 s startup delay, it can find an earlier image's RTT control block, which is still in RAM at that image's address, and print that image's stale log. The running firmware writes its block elsewhere, so nothing new appears. Start `make rtt` after the delay, or send `rtt stop` and `rtt start` on OpenOCD's Tcl or telnet port once the firmware runs.
+
+## P4: TLS and WebSocket (#15)
+
+Code: `src/tls.c`, `src/ws.c`, `src/coap.c`, `src/session.c`; mbedTLS options in `src/tado_mbedtls_config.h`. Design and the reasons for each choice: `design.md`, "TLS and WebSocket (#15)". The net task runs it after DHCP and the server lookup (`src/net.c`).
+
+**Provisioning: `config/local.cmake` (gitignored).** Copy `config/local.cmake.example` and fill in `BRIDGE_SERIAL`, `BRIDGE_EUI64` and `SERVER_CA_PEM`. CMake writes them to `build/generated/provision.h`. It refuses a malformed serial or EUI-64, and a PEM file that holds a private key. Run `make clean` once after creating the file. Without it, the image builds and logs `session: no bridge identity built in ...`, and never connects. The serial and EUI-64 must never enter git (`CLAUDE.md`); `build/` and `config/local.cmake` are ignored. P6 replaces this with the identity record in external flash (`design.md`).
+- **EUI-64:** the 8 bytes at config start + 50, in stored order (`tanoclo/patch_ib_firmware/extract_rf_key.js:71`). They start with tado's OUI `00 1b c5`.
+- **Serial [I]:** the backup holds a u32 at the config marker + 8 (`extract_rf_key.js:58`). The serial is `IB` and that number in decimal, padded to 10 digits. Reasons: tado serials are `IB` plus 10 characters (`tanoclo/ws-server/test/ci_seed.sql:46`), a u32 has at most 10 decimal digits, and no ASCII `IB` serial appears anywhere in either dump (searched 2026-11-14). **The owner should compare this with the label on the bridge.** The bench test only needs the same string in tanoclo's database, so it works either way. A tanoclo import from the tado cloud would register the label's serial.
+- **Trust anchor:** for the bench, `~/tanoclo-bench/certs/bench-ca.pem` (`test-bench.md`, "Bench certificate"). It is a public certificate, built in as PEM text.
+
+**Server port:** CMake cache value `NET_SERVER_PORT`, default 988 (`tanoclo/ws-server/lib/config.js:47`). The certificate must name `NET_SERVER_HOST`.
+
+**Registering the bridge in tanoclo (bench, done 2026-11-14).** tanoclo answers auth only for a serial in its `devices` table, and otherwise stays silent (`tanoclo/ws-server/lib/handlers.js:129-133`). auth/token also needs a `websocket_whitelist` entry for the serial or its home, unless that table is empty. It is empty on the bench, so every known device passes (`tanoclo/ws-server/lib/db-auth.js:45-52`). The bench database had no homes, users or devices, so one row was added, as `prototype-plan.md` P4 planned (`ci_seed.sql:39-67` does the same for its test bridge):
+
+```sh
+docker exec tanoclo-db mysql -utanoclo -p'<MYSQL_PASSWORD from tanoclo/docker-compose.yml>' tanoclo -e \
+  "INSERT INTO devices (serial_no, device_type, home_id, current_fw_version, connection_state,
+     in_pairing_mode, connection_state_timestamp)
+   VALUES ('<BRIDGE_SERIAL>', 'IB01', 0, 'p4-bench', 0, 0, '2026-11-14T00:00:00Z');"
+```
+
+`home_id` 0 is a placeholder: no `homes` row exists. Before a real tanoclo setup, for example an import from the tado cloud, delete this row (`DELETE FROM devices WHERE serial_no = ...`) or reset the database (`docker compose ... down -v`). The import updates an existing row but not its `home_id`. For the test, tanoclo's `log_level` (table `server_settings`) was set to `debug`, which logs `AUTH OK` and `TIME_SYNC`, and set back to `info` afterwards. It is read when the server starts.
+
+**Log lines.**
+- Boot: `tls: trust anchor CN=..., P-256 yes`, then `session: bridge <serial>, server wss://10.42.0.1:988/hw/v2`.
+- Each connection: `tls: TLSv1.2 TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256: handshake N ms (TCP N ms), N ms CPU in N steps, longest N ms; records 2048/2048; heap free N min N`, `session: WebSocket open ...`, `session: auth/key accepted ...`, `session: auth/token accepted ...: 8-byte session token, lifetime 1440 min`, `time: <UTC date> (unix N) from GET time`, `session: ready: ...`.
+- Failures: `session: <reason> (in <phase>); retrying in N ms`. A missing database row shows as `no reply to auth/key in 10 s; is the serial a device in tanoclo's database?`.
+
+**Memory (Release, `make size`):** text 131236, data 136, bss 56192 bytes (P4 #14: 67868, 124, 51856). TLS, X.509 and the WebSocket add about 63 KB of flash. The 4.3 KB of new bss are the WebSocket buffers (2062 + 1280 bytes) and the mbedTLS context, configuration and trust anchor. The net task stack is now 1536 words. Measured on the bench **[V]**:
+- 928 words never used, so the peak is 608 words (2.4 KB, against 2.1 KB in P4 #14).
+- FreeRTOS heap free: 20800 bytes before the first connection, 12824 while connected, 9568 at the lowest point, which is the handshake. So a connection holds about 8 KB (mostly the record buffers), and the handshake peaks at about 11.2 KB.
+- Static RAM plus the 4 KB main stack: about 60 KB of 128 KB. These figures feed #16 and #17.
+
+**Bench test (2026-11-14) [V].** Image flashed with OpenOCD `program ... verify` (Verified OK), with tanoclo in Docker on `10.42.0.1` (`test-bench.md`).
+- **8 resets in a row:** each one authenticated on the first attempt.
+  - Handshake 1070-1076 ms (TCP connect 1-2 ms, CPU 1051-1057 ms, longest step 364-367 ms).
+  - WebSocket open 1075-1083 ms after the connect started; auth/key and auth/token 4-6 ms each.
+  - `session: ready` 1088-1097 ms after the connect started.
+- **tanoclo's side:** it logged `WS upgrade ... protocol: binary`, `AUTH_KEY: device=<serial> ipv6=fe80:0:0:0:21b:...`, `AUTH OK: <serial> registered` and `TIME_SYNC: Sent <unix>`. The `devices` row shows `connection_state` 1, the bridge's link-local address and a stored token.
+- **`docker restart tanoclo-ws`:** the bridge logged `tls closed by server (0)` and was ready again about 3 s later.
+- **`docker stop` for 40 s:** retries were refused (`tls tcp (-14)`, lwIP `ERR_RST`) after 3.1, 8.5, 19.6 and 32.1 s. After `docker start`, the next retry succeeded, 25 s after the start.
+- **Idle:** the session stayed up for 130 s, past three ping intervals.
+- **Watchdog:** with the timed kick window, no `watchdog: not kicked` line in these runs.
+
+**Found during the test [V]:**
+- **The timeout bug.** At first, about one connection in three stalled, with `no reply to auth/token` or `to time` after 10 s. A packet capture in the server container's network namespace showed the cause: the bridge itself sent a WebSocket ping and a close straight after its request, and the server then closed the connection. The method was a throwaway sidecar, `docker run --rm --net container:tanoclo-ws --cap-add NET_RAW nginx:alpine`, with `apk add tcpdump`, filtered to port 988; the capture stayed out of git. The timeouts compared a tick count read before the reply handlers ran with times those handlers had just stamped. The unsigned difference wrapped, and both timeouts fired at once. They now read the tick fresh and compare signed (`elapsed()` in `src/ws.c` and `src/session.c`).
+- **No-fault checks on the server side.** A host-side Python client did the same exchange: TLS 1.3, then TLS 1.2 with the same suite, then through `openssl s_client -maxfraglen 2048`, with stale connections left open. Every reply came within 0.2-3.1 ms, so tanoclo and the max_fragment_length extension were cleared.
+- **The first server flight is retransmitted once** about 210 ms after it is sent. lwIP's delayed ACK does not go out while the net task is busy in the first P-256 step, and the server's retransmission timeout is 200 ms. It costs a duplicate 731 bytes and nothing else. Sending an immediate ACK before long steps would avoid it (#16).
+
+**Owner checks on hardware:**
+1. The cloud LED (PB5) blinks at 2 Hz for about 1 s after the router LED comes on, then stays on.
+2. Unplug Ethernet: the LED goes off (`session: network down`). Plug it back in: the LED is on again within a few seconds.
+3. Compare the serial in the log with the label on the bridge (see "Serial" above).

@@ -275,9 +275,9 @@ enum tls_state tls_poll(bool *busy) {
                 if (mbedtls_ssl_is_handshake_over(&ssl)) {
                     timing.handshake_ms = (uint32_t)(xTaskGetTickCount() - t_connected);
                     state               = TLS_OPEN;
-                    LOG("tls: %s %s in %lu ms after TCP connect (%lu ms): %lu ms CPU in %lu steps, "
-                        "longest step %lu ms; records in/out up to %d/%d bytes; heap free %u, min "
-                        "%u",
+                    LOG("tls: %s %s: handshake %lu ms (TCP %lu ms), %lu ms CPU in %lu steps, "
+                        "longest %lu ms; "
+                        "records %d/%d; heap free %u min %u",
                         mbedtls_ssl_get_version(&ssl),
                         mbedtls_ssl_get_ciphersuite(&ssl),
                         (unsigned long)timing.handshake_ms,

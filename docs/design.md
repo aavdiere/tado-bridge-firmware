@@ -1,6 +1,6 @@
 # IB01 firmware design
 
-**Status:** storage (#27) and software stack (#18) approved by the user (2026-11-11); self-update (#20) approved on condition that the firmware fits the layout (size check before building). Apart from the entropy pool (#14, built and measured on 2026-11-14), nothing here is built or tested yet. Other sections (entropy, network stack, self-update) will be added as they are decided.
+**Status:** storage (#27) and software stack (#18) approved by the user (2026-11-11); self-update (#20) approved on condition that the firmware fits the layout (size check before building). Built and tested so far: the entropy pool (#14, 2026-11-14) and TLS, WebSocket and auth to tanoclo (#15, 2026-11-14); the rest is not built yet. Other sections (entropy, network stack, self-update) will be added as they are decided.
 
 Datasheets are in `datasheets/`. Status tags: **[D]** from a datasheet or repo, **[I]** our own inference.
 
@@ -199,8 +199,33 @@ Preemption is required, because a TLS handshake uses hundreds of milliseconds of
 
 - Client, TLS 1.2, `ECDHE-ECDSA-AES128-GCM-SHA256`, P-256 chain (`tanoclo/patch_ib_firmware/clone_chain.sh:42,97`). Server is plain Node `tls.createServer` (`tanoclo/ws-server/lib/proxy-manager.js:110-113`), so its defaults should accept this **[I]**.
 - Trust root is a build or config value, so no patching applies.
-- Buffers: 4 KB in, 2 KB out, instead of mbedTLS's 16 KB default. Depends on the server not sending records over 4 KB. WebSocket messages are small, but confirm on a prototype **[I]**.
+- Buffers: 4 KB in, 2 KB out, instead of mbedTLS's 16 KB default. Depends on the server not sending records over 4 KB. WebSocket messages are small, but confirm on a prototype **[I]**. **Built (#15):** the client also sends max_fragment_length, so the server is bound to small records. mbedTLS can only ask for the smaller of its two buffers (`vendor/mbedtls/library/ssl_misc.h:334-341`, `ssl_tls.c:3033-3038`), so it asks for 2048, and tanoclo honours it **[V]** (see "TLS and WebSocket (#15)").
 - WebSocket clients must mask frames with random values, using the same DRBG (RFC 6455).
+
+### TLS and WebSocket (#15)
+
+Code: `src/tls.c` (TLS over lwIP TCP), `src/ws.c` (WebSocket), `src/coap.c` (CoAP codec, TLV), `src/session.c` (auth, time, reconnect); mbedTLS options in `src/tado_mbedtls_config.h`. Build, provisioning and bench results: `build.md`, "P4: TLS and WebSocket (#15)".
+
+**Transport: mbedTLS directly over lwIP's raw TCP API, not `altcp_tls_mbedtls` [I].** The lwIP port builds its own entropy context and a second CTR_DRBG (`vendor/lwip/src/apps/altcp_tls/altcp_tls_mbedtls.c:88-96,740-750`), allocates through lwIP's 6 KB heap (`altcp_tls_mbedtls_mem.c:165-198`), and steps the handshake inside TCP callbacks. The bridge has one connection, so the altcp layering buys nothing. The direct port (about 300 lines) uses the one DRBG of `src/rng.c` (`mbedtls_ssl_conf_rng(rng_random)`, as the entropy section planned), allocates mbedTLS memory from the FreeRTOS heap, and runs one `mbedtls_ssl_handshake_step()` per net-task pass. Received pbufs wait in a queue, and the TCP window is opened (`tcp_recved`) only once mbedTLS has taken the bytes.
+
+**Handshake pacing [V]:** the handshake needs 1.05-1.06 s of CPU in 19-21 steps. The longest step is 364-367 ms (one P-256 operation). Between steps the net task blocks for one tick, so the lower-priority housekeeping task can kick the watchdog. The housekeeping kick window is timed (500 ms by the clock), so the catch-up after a long step cannot produce an empty window. The radio task has the higher priority and is not held up.
+
+**Certificate check:** `MBEDTLS_SSL_VERIFY_REQUIRED` against one built-in trust anchor, with `mbedtls_ssl_set_hostname(NET_SERVER_HOST)`. For an address literal, mbedTLS matches the IP subjectAltName (`vendor/mbedtls/library/x509_crt.c:2912-2980`). **Validity dates are not checked:** there is no `MBEDTLS_HAVE_TIME`, because the bridge has no clock until the server sends the time over this very connection **[I]**. The bench certificates run to 2046 (`test-bench.md`).
+
+**WebSocket (RFC 6455):** HTTP/1.1 upgrade with `Sec-WebSocket-Protocol: binary`. The client checks `101`, `Upgrade: websocket` and the `Sec-WebSocket-Accept` value (SHA-1 and Base64 from mbedTLS), and rejects any other subprotocol. Every client frame is masked with 4 fresh bytes from the DRBG. Ping is answered with pong. Fragmented messages are reassembled in place, up to 2 KB. The close handshake waits up to 2 s. **Liveness [I]:** tanoclo never pings (uWebSockets `idleTimeout: 0`, `tanoclo/ws-server/server.js:404-408`). So the client pings after 30 s without a frame and gives up when nothing arrives within 10 s after that. Stock timing is unknown (`open-questions.md` row 14).
+
+**Session.** In order: `POST auth/key`, then `POST auth/token`, then `GET time`. Each is a CON request with a random 4-byte token, matched by message ID and token, with a 10 s timeout. Message IDs start at a random value. The 28-byte frame carries direction 1, the bridge's link-local address, `field_a/b/c` = 0, and port 5683.
+- **Identity in requests:** TLV `0x0260` holds the full serial in ASCII, which tanoclo looks up in its `devices` table (`tanoclo/ws-server/lib/handlers.js:118-133,214-232`).
+- **Source address [I]:** `fe80::` plus the EUI-64 with the universal/local bit inverted (RFC 4291). tanoclo stores it as the bridge's address (`handlers.js:269-276`). What stock uses is open (`open-questions.md` row 10).
+- **Replies [V]:** `auth/key` returns `0x0260` and 16 bytes of `0x0261`. The firmware does not use the `0x0261` value (open question 11). `auth/token` returns an 8-byte token and its lifetime, 1440 min. Requests after auth/token carry the token as option 2048; tanoclo only compares it (`server-api.md`). The lifetime is not acted on, because tanoclo does not expire tokens **[I]**.
+- **Time:** taken from the `GET time` reply and from the NON time broadcast (`tanoclo/ws-server/server.js:220-246`).
+- **Downlinks:** other downlinks are only logged until P5.
+
+**Reconnect:** a failure or close gives a retry delay of 75-125 % of a backoff that starts at 2 s and doubles up to 60 s. The backoff falls back to 2 s once a session has stayed ready for 60 s. A 4.01 on auth/token (not whitelisted) jumps straight to 60 s. A link or address loss drops the session, and it restarts when the network returns.
+
+**Cloud LED (PB5):** off without a session, 2 Hz while connecting and authenticating, on once ready. Since P2 it had toggled per radio frame (`build.md` P2).
+
+**Identity and trust anchor:** build values from a gitignored `config/local.cmake`, written to a generated header (`build.md`, P4 TLS). P6 moves the serial and EUI-64 into the identity record. The trust anchor stays a build value, as "TLS settings" says.
 
 ### RAM estimate (#17) [I]
 

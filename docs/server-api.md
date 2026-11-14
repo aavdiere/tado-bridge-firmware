@@ -44,6 +44,12 @@ TLV payloads: FID u16be, length u8, value (`docs/coap_tlv.md:183-197`). FID dict
 | `PUT d/{id}/neighbors` | Block1 at 64 bytes | `docs/coap_tlv.md:600-618` |
 | `...found` | Pairing: new device IPv6, reply factory key. Exact URI unknown | `ws-server/lib/handlers.js:177-210` |
 
+**Observed with our firmware against tanoclo (2026-11-14) [V]** (`build.md`, P4 TLS):
+- All three replies are piggybacked ACKs with 2.05: `auth/key` with `0x0260` (the serial echoed) and a 16-byte `0x0261`; `auth/token` with an 8-byte `0x025E` and `0x025F` = 1440; `GET time` with `0D` plus u32le.
+- The serial only has to be a row in `devices`. The whitelist is empty on the bench, so it lets every known device through. An unknown serial gets no answer at all.
+- tanoclo stores the address from the frame header as the bridge's IPv6 address.
+- It takes HTTP/1.1, `Sec-WebSocket-Protocol: binary` and TLS 1.2 with max_fragment_length 2048.
+
 ## Bridge handles itself [D]
 
 | Resource | Purpose | Source |

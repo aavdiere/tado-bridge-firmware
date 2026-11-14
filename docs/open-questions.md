@@ -7,7 +7,7 @@ Master list of what is still required. Details and citations are in `hardware.md
 Enough is known to start building. What remains is gathered during the build:
 
 1. ~~Backup session~~ (#8, #9): done 2026-11-11, see `hardware.md` (P0 results).
-2. **Prototype** (#16, #17, #19, #28) and on-board measurements (#7; #26 noise measured 2026-11-14).
+2. **Prototype** (#16, #17, #19, #28) and on-board measurements (#7; #26 noise measured 2026-11-14; TLS, WebSocket and auth to tanoclo working with RAM and handshake figures, #15, 2026-11-14).
 3. **Before building self-update** (#20): check the bootloader and image sizes fit the layout.
 4. **Optional:** stock capture (section C); pair button pin at firmware stage.
 
@@ -29,7 +29,7 @@ Enough is known to start building. What remains is gathered during the build:
 | # | Missing | Why it matters | How to get it |
 | :-- | :-- | :-- | :-- |
 | 7 | Crystal offset; is per-unit trim needed | Stock uses `FSCTRL0=0`, freedo's module needed trim. **Stock coordinator on air (2026-11-11, [V]):** its bit clock runs 37 ppm slower than its carrier offset implies, while every device's two figures agree, so stock probably trims its RF after init **[I]**; see `test-bench.md`, "Stock network reference" | **Partly settled (2026-11-12, [V]):** read after the packet, `FREQEST` was 0 or -1 on 452 of 453 frames; read in the packet it is valid: 1706 frames, 0 to -6 units (~8 kHz), matching the SDR spread across all senders (8.1 kHz, `test-bench.md:123`) (`radio-runtime.md`; #11). Relative offsets of the stock senders are measured; the bridge's own crystal offset and the per-unit trim decision still need our own transmissions (P5). Measure the bench unit's own offset with `tools/sdr/demod.py` on our first channel-10 frames (`freedo/docs/PROTOCOL.md:1668+`) |
-| 8 | Which values the new firmware needs from the backup. Nothing must survive on the chip once a full backup exists, but the firmware still needs the serial and EUI-64 **[I]** | tanoclo identifies the bridge by serial | Read them from the backup (`tanoclo/patch_ib_firmware/extract_rf_key.js` documents the offsets) and provision them with the new firmware |
+| 8 | Which values the new firmware needs from the backup. Nothing must survive on the chip once a full backup exists, but the firmware still needs the serial and EUI-64 **[I]** | tanoclo identifies the bridge by serial | Read them from the backup (`tanoclo/patch_ib_firmware/extract_rf_key.js` documents the offsets) and provision them with the new firmware. **P4 (2026-11-14):** provisioned through the gitignored `config/local.cmake`; the serial string is `IB` plus the u32 in decimal **[I]**, and tanoclo accepted it **[V]**. To confirm against the bridge's label (`build.md`, P4 TLS) |
 | 9 | Option bytes and read protection on this unit; confirm the restore path works | The guide reads shipped units over SWD, but the docs do not state the protection level | Read the option bytes during backup; see "Full backup" in `hardware.md` |
 
 ## C. Needs a stock bridge observed on the wire
@@ -42,7 +42,7 @@ Single method: run a stock bridge through tanoclo proxy mode with logging (`tano
 | 11 | Stock use of `auth/key`, how `0x0261` is used, what credential is sent |
 | 12 | Option 2048 requirement; Option 7 `0xFFFF` meaning |
 | 13 | Exact `found` URI; `d/rfkey` reply format; `d/reboot`, `d/identify`, `d/info` responses |
-| 14 | Keepalive, reconnect and backoff timing; RF retries; message ID preservation |
+| 14 | Keepalive, reconnect and backoff timing; RF retries; message ID preservation. Our own choice meanwhile **[I]**: ping after 30 s without a frame, give up 10 s later; retry backoff from 2 s, doubling up to 60 s (`design.md`, "TLS and WebSocket (#15)") |
 
 Because tanoclo is the compatibility target and accepts zeros for #10, the firmware can be built before #10 and #11 are answered, but it would be matching tanoclo rather than stock.
 
@@ -51,7 +51,7 @@ Because tanoclo is the compatibility target and accepts zeros for #10, the firmw
 | # | Risk | Note |
 | :-- | :-- | :-- |
 | 16 | Enhanced ACK turnaround over SPI; gap may be under 1 ms | **Stock reference [V] (2026-11-11):** the stock coordinator starts its ACK 1.50-1.99 ms after the Data frame ends (n=56), devices 0.35-0.39 ms (n=32), timestamps good to under 1 µs (`test-bench.md`). Eased further: the ACK is unencrypted and mostly static, so it can be prebuilt (`wiki/Tado-868-MHz-Link-Protocol.md:346-348`), and the radio's RX-to-TX switch is only about 30 µs (`datasheets/cc110l-vs-cc1101.md`) |
-| 17 | RAM budget for TLS, WebSocket, IP and radio in 128 KB | Estimated 71 KB in `design.md`; to be measured. First runtime numbers from P1 (2026-11-11, **[V]**, early data point only): FreeRTOS heap 25632 of 32768 bytes free, unused task stack 489/489/352 of 512 words (radio/net/hk); no TLS, lwIP or radio buffers yet. **P2 data point (2026-11-12, [V]):** with radio RX running, heap free 25560 (min 25560) of 32768 bytes, unused stack 308/489/342 of 512 words (radio/net/hk) (`radio-runtime.md`); still no TLS or lwIP. **P3 data point (2026-11-14, [V]):** with lwIP (DHCP, DNS, TCP enabled), lwIP's static RAM is about 16.4 KB (6 KB heap, 6 pool buffers of 1516 bytes), above the 12 KB estimate. Heap free 23504 of 32768 bytes with the net stack raised to 4 KB, of which about 1 KB is used; bss 51508 bytes in total (`build.md`, P3) |
+| 17 | RAM budget for TLS, WebSocket, IP and radio in 128 KB | Estimated 71 KB in `design.md`; to be measured. First runtime numbers from P1 (2026-11-11, **[V]**, early data point only): FreeRTOS heap 25632 of 32768 bytes free, unused task stack 489/489/352 of 512 words (radio/net/hk); no TLS, lwIP or radio buffers yet. **P2 data point (2026-11-12, [V]):** with radio RX running, heap free 25560 (min 25560) of 32768 bytes, unused stack 308/489/342 of 512 words (radio/net/hk) (`radio-runtime.md`); still no TLS or lwIP. **P3 data point (2026-11-14, [V]):** with lwIP (DHCP, DNS, TCP enabled), lwIP's static RAM is about 16.4 KB (6 KB heap, 6 pool buffers of 1516 bytes), above the 12 KB estimate. Heap free 23504 of 32768 bytes with the net stack raised to 4 KB, of which about 1 KB is used; bss 51508 bytes in total (`build.md`, P3). **P4 TLS data point (2026-11-14, [V], #15):** a connection holds about 8 KB of heap, and the handshake peaks at about 11.2 KB. Heap free: 12824 while connected, 9568 at the lowest point, of 32768. bss 56192 bytes; net stack peak 608 of 1536 words. Handshake 1.07 s, longest step 367 ms (`build.md`, P4 TLS). Still to measure: radio and 6LoWPAN buffers (P5) |
 | 18 | Stack choice | **Approved (user, 2026-11-11):** FreeRTOS, lwIP, mbedTLS, own 6LoWPAN and MAC ported from freedo. See `design.md` |
 | 19 | Radio deadlines versus Ethernet and flash work | Task design in `design.md`; to be proven on a prototype. Ethernet is on SPI2, so only flash shares the radio's bus |
 | 20 | Bridge self-update and rollback; first flash path | **Approved (user, 2026-11-11) if the firmware fits:** check bootloader and image sizes against the layout before building. Images are unsigned. Open: how the uploader reaches tanoclo |

@@ -204,6 +204,8 @@ The certificate validity runs to 2046, so a bridge with no real-time clock canno
 | Wi-Fi address `10.13.1.210` | 988, 3111, 80, 443: connection refused |
 | Containers | `tanoclo-ws` healthy, `tanoclo-db` and `tanoclo-nginx` up |
 
-Not yet tested: a WebSocket upgrade on `/hw/v2` from the bridge (P4), and the `tun0` (192.168.124.6) interface, which is not covered by the bind but gets nothing because Docker publishes on `10.42.0.1` only **[I]**.
+**The bridge on `/hw/v2` (#15, 2026-11-14) [V]:** the WebSocket upgrade, auth and time from the bridge work, with the certificate and its IP SAN verified by the firmware. The bridge is registered with one `devices` row in the bench database. The database previously had no homes, users or devices. The row, how to remove it, and the `log_level` setting: `build.md`, P4 TLS. For packet captures on port 988, a throwaway sidecar in tanoclo's network namespace works without root on the host, with the captures kept out of git (`build.md`, P4 TLS). The bridge's TCP peer is Node inside the container itself; the host has no established socket for it.
+
+Not yet tested: the `tun0` (192.168.124.6) interface, which is not covered by the bind but gets nothing because Docker publishes on `10.42.0.1` only **[I]**.
 
 **NAT gives the bridge internet access.** Our firmware never contacts tado, but the stock firmware would try to reach the tado cloud if it ran with Ethernet plugged in. It is no longer on the board since P1 (2026-11-11), so this only matters after a restore. P0 runs with Ethernet unplugged anyway (`tanoclo/patch_ib_firmware/README.md:247`).

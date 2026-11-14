@@ -157,6 +157,15 @@ Inserted 2026-11-13 after the first P3 bench runs (`hardware.md`, "SPI2: ENC28J6
 - Measure peak RAM and handshake time (#17).
 - **Done when:** tanoclo shows the bridge connected and authenticated, time is set, and RAM is within budget. The cloud LED shows the connection.
 
+**P4 #15 result (2026-11-14) [V]:**
+- tanoclo logs `AUTH OK` and `TIME_SYNC` for the bench bridge, and its `devices` row shows it connected.
+- Time is set from `GET time`.
+- Handshake 1.07 s.
+- Heap free 12824 bytes while connected, 9568 at the lowest point (handshake); bss 56 KB.
+- Reconnect after a tanoclo restart: about 3 s; backoff to 32 s during a 40 s outage.
+
+Details: `build.md`, P4 TLS. The cloud LED is wired to the session; the owner still has to check it by eye. #16 (ACK timing during a handshake) and #17 (RAM budget) are separate tasks.
+
 ### P5: Radio link to devices
 
 - Port from freedo (`radio-runtime.md`): ACKs, CCM, 6LoWPAN, wake trains, anchors, listen-before-transmit.
