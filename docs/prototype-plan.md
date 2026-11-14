@@ -113,7 +113,25 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 - Bench network: static address on `enp196s0f0`, `dnsmasq`, tanoclo in Docker (`test-bench.md`).
 - lwIP with DHCP, DNS and ping.
 - **Done when:** the bridge gets an address, answers ping and resolves the server name. The router LED shows link and DHCP.
-- **Status 2026-11-14 [V]:** ENC28J60 driver (#12): half duplex, link up/down status on the router LED, frame TX and RX against the laptop (ARP probe answered, 1514-byte frames both ways, 125 of 125 received pings intact; `hardware.md`, "Result: half duplex, link, frame RX and TX"). Still to try with the owner: link loss on a cable pull and bring-up after a power cycle. lwIP (#13) next.
+- **Status 2026-11-14 [V]:** ENC28J60 driver (#12), done: half duplex, link status, frame TX and RX against the laptop (ARP probe answered, 1514-byte frames both ways, 125 of 125 received pings intact), cable pull and full power cycle passed (`hardware.md`, "Result: half duplex, link, frame RX and TX"). lwIP (#13): result below. Open in P3: tanoclo in Docker on the link (#27).
+
+**P3 lwIP result (#13), 2026-11-14 [V].** Bench as in `test-bench.md` (USB supply, `enp196s0f0` shared mode, radio receive-only on channel 26 as in P2). lwIP 2.2.1 in the net task (`build.md`, P3). RTT logs kept outside the repo.
+
+| Check | Result |
+| :--- | :--- |
+| DHCP | Lease `10.42.0.43/24`, gateway and DNS `10.42.0.1`, 3600 s, on each of 5 boots (flash resets and OpenOCD `reset run`). The laptop's journal shows DISCOVER, OFFER, REQUEST, ACK for `02:7a:d0:b1:00:01 tado-bridge` within the same second. On the very first boot the bridge sent DISCOVER twice: dnsmasq checks a new address with a ping before it offers it, and lwIP retransmitted meanwhile **[I]**. dnsmasq then resolves `tado-bridge` to `10.42.0.43` |
+| DNS | Test image built with `NET_SERVER_HOST=example.com`: `dns: example.com is 104.20.23.154 (163 ms)` and on another boot `172.66.147.243 (613 ms)`, the two A records the laptop's own query to `10.42.0.1` returned. The final image resolves the literal `10.42.0.1` without a query |
+| Ping, laptop to bridge | Final image: 200 of 200 (56 bytes, average 1.11 ms) and 100 of 100 with `-s 1472 -M do` (1514-byte frames, average 10.3 ms). Test image: 100/100, 100/100 and 20/20 at 0 bytes |
+| Ping, bridge to laptop | Test-only gateway ping in the test image (raw API, 1472-byte payload checked byte by byte): 60 of 60 good replies, RTT 10.1-12.3 ms. Removed afterwards, with `LWIP_RAW` back to 0 (project rule) |
+| TCP | A connect from the laptop to ports 80 and 988 is refused at once (lwIP answers with RST) |
+| Router LED | PB0 in GPIOB_ODR read over SWD while running: steady 1 with the lease; power LED PB1 toggling at 1 Hz |
+| Renewal and 30-minute run | Final image: the laptop logged the renewal REQUEST and ACK at 11:06:08, exactly T1 = 1800 s after the 10:36:08 ACK; no `address lost` on the bridge. 30 per-minute lines without an error or re-init and no fault or watchdog reset, while the radio received up to 2053 frames a minute on channel 26 (50 of 50 pings then, average 1.16 ms) |
+| Counters | Per-minute lines: `bad 0`, `no pbuf 0`, `busy 0`, `drop 0`, `tx err 0`, `late-col retry 0`, `reinit 0`, `int storm 0`; laptop `rx_errors` and `collisions` 0 |
+| RAM | Heap free 23504-23512 of 32768 bytes; net task 766-768 of 1024 stack words never used |
+
+Final image sha256 (`build/tado-bridge.bin`) `74836cca837f716334afcae069a14f9d5d7a481f0fdd0198781666deed5994d2`, flashed with OpenOCD verify OK.
+
+`nmcli device disconnect` on the laptop (IP outage, PHY carrier stays up): the bridge kept its lease and answered again right after reconnect. **Still to try with the owner:** a cable pull with lwIP running (link down, router LED off, then DHCP re-request on link up, LED blinking until the ACK).
 
 ### P3.1: Reliable SPI2 bus to the ENC28J60
 

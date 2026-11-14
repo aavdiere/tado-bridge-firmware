@@ -1,4 +1,4 @@
-/* Tasks (#8, #9, #10, #12). Priorities follow docs/design.md "Tasks": radio
+/* Tasks (#8, #9, #10, #12, #13). Priorities follow docs/design.md "Tasks": radio
  * high, net medium, housekeeping low. */
 #include "app.h"
 
@@ -18,7 +18,8 @@
 #define PRIO_NET          (tskIDLE_PRIORITY + 2)
 #define PRIO_RADIO        (tskIDLE_PRIORITY + 3)
 
-#define STACK_WORDS 512 /* 2 KB each; LOG() needs about 1 KB of it */
+#define STACK_WORDS     512  /* 2 KB each; LOG() needs about 1 KB of it */
+#define NET_STACK_WORDS 1024 /* 4 KB: lwIP input runs down to the driver's transmit (#13) */
 
 static TaskHandle_t h_radio, h_net, h_hk;
 
@@ -62,7 +63,7 @@ static void housekeeping_task(void *arg) {
 
         button_update(&reset, board_reset_button_raw());
         button_update(&pair, board_pair_button_raw());
-        /* The router LED shows the Ethernet link (net task, #12). */
+        /* The router LED shows Ethernet link and DHCP (net task, #13). */
         board_led(LED_PAIRING, pair.state); /* pairing LED mirrors the pair button */
 
         if (loops % 50 == 49) { /* every 500 ms */
@@ -88,7 +89,7 @@ static void housekeeping_task(void *arg) {
 
 void app_create_tasks(void) {
     BaseType_t ok = xTaskCreate(radio_task, "radio", STACK_WORDS, NULL, PRIO_RADIO, &h_radio);
-    ok &= xTaskCreate(net_task, "net", STACK_WORDS, NULL, PRIO_NET, &h_net);
+    ok &= xTaskCreate(net_task, "net", NET_STACK_WORDS, NULL, PRIO_NET, &h_net);
     ok &= xTaskCreate(housekeeping_task, "housekeep", STACK_WORDS, NULL, PRIO_HOUSEKEEPING, &h_hk);
     configASSERT(ok == pdPASS);
 }

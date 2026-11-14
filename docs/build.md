@@ -1,6 +1,6 @@
 # Build, flash and log
 
-- Clone with `git submodule update --init` (libopencm3 at `vendor/libopencm3`, pinned to `10cfbd76`, the commit `stm-template` uses; FreeRTOS-Kernel at `vendor/FreeRTOS-Kernel`, pinned to tag `V11.1.0`). `git config core.hooksPath .githooks` once per clone: the pre-commit hook formats staged `src/` files with clang-format and runs `tools/check-no-firmware.sh`. `make format` formats all of `src/` (clang-format 23.1.4 on the bench PC).
+- Clone with `git submodule update --init` (libopencm3 at `vendor/libopencm3`, pinned to `10cfbd76`, the commit `stm-template` uses; FreeRTOS-Kernel at `vendor/FreeRTOS-Kernel`, pinned to tag `V11.1.0`; lwIP at `vendor/lwip`, pinned to tag `STABLE-2_2_1_RELEASE`, commit `77dcd25a`). `git config core.hooksPath .githooks` once per clone: the pre-commit hook formats staged `src/` files with clang-format and runs `tools/check-no-firmware.sh`. `make format` formats all of `src/` (clang-format 23.1.4 on the bench PC; 23.1.5 since 2026-11-14, which left the existing files unchanged).
 - `make` builds `build/tado-bridge.elf` (Release, `-Os -flto`, newlib-nano) and builds libopencm3 for STM32F4 on first use. `make size` prints `arm-none-eabi-size`. `BUILD_TYPE=Debug BUILD_DIR=build-debug make` gives a debug build.
 - Device `STM32F411CE`, linker script `cmake/stm32f411ce.ld` (512 KB flash, 128 KB RAM).
 - `make flash` or `tools/flash.sh [elf]`: `openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c "program <elf> verify reset exit"`. No `st-flash`, no connect-under-reset (no NRST on the test points).
@@ -72,3 +72,32 @@ Size (`make size`, Release): text 19664, data 116, bss 34492 bytes.
 - CMake: re-running `cmake` on an existing build directory used to append the linker flags to their own cache entry again, and `ld` then refused the linker script given twice ("appears multiple times"). The toolchain file now sets `CMAKE_EXE_LINKER_FLAGS` instead of appending, and the linker script is a `target_link_options(-T...)` in `cmake/CMakeLists.txt` (CMake 3.13 or newer); the cached flags stay identical across re-runs **[V]** (build PC, CMake 4.4.5).
 
 Size after the follow-ups (`make size`, Release): text 20680, data 116, bss 34512 bytes. After the in-packet `FREQEST` change (#11): text 21404, data 116, bss 34568 bytes.
+
+## P3: lwIP with DHCP, DNS and ping (#13)
+
+Code: `src/net.c` (net task, netif glue, DHCP and DNS), `src/lwipopts.h` (options), `src/lwip_port.c` (`sys_now`, random numbers), `src/arch/cc.h` (asserts to `fw_panic`). lwIP 2.2.1 from `vendor/lwip`; `cmake/CMakeLists.txt` lists the core, IPv4 and Ethernet sources it compiles.
+
+**Threading: `NO_SYS = 1` inside the net task [I].** `design.md` ("Tasks") puts ENC28J60, lwIP, TLS and WebSocket in one medium-priority net task that owns SPI2. With `NO_SYS`, that task is lwIP's only context: it reads frames from the chip, calls `netif->input`, and runs `sys_check_timeouts()` on every pass (at least every 50 ms; lwIP's shortest timer is TCP's 250 ms). There is no extra `tcpip_thread` and no lwIP locking, and nothing calls lwIP from an interrupt. P4 can run TLS over lwIP's raw TCP API in the same task (`altcp_tls` in lwIP has an mbedTLS port).
+
+**Netif.** `eth_output()` writes the pbuf chain with `enc28j60_tx_begin/write/end` and skips lwIP's 2 bytes of `ETH_PAD_SIZE` padding. `rx_frames()` reads each good frame into a `PBUF_POOL` chain, frees it in the chip (`enc28j60_rx_end()`) and only then calls `netif->input`. That way a reply sent from inside `input`, such as an ARP or echo reply, never starts `tx_begin()` between `rx_begin()` and `rx_end()`, which the driver forbids (`src/enc28j60.h`). Frames with a bad receive status, runts and our own looped-back frames are dropped and counted. A failed pbuf allocation drops the frame and counts it as `no pbuf`. MTU 1500, MAC still the #12 placeholder. The PHY link drives `netif_set_link_up/down`. On link up, lwIP starts DHCP or re-requests the old lease (`dhcp_network_changed_link_up()`, `vendor/lwip/src/core/ipv4/dhcp.c`). A chip re-init sets the link down first.
+
+**Protocols (`src/lwipopts.h`).** IPv4 only; ARP, ICMP (answers echo), UDP, TCP (for P4), DHCP with address conflict detection (`LWIP_DHCP_DOES_ACD_CHECK`), DNS with servers from DHCP. No IPv6, IGMP, AutoIP or raw API. No IP fragmentation or reassembly: TCP keeps to the MSS, and DNS and DHCP messages stay within one frame. Software checksums: the ENC28J60's DMA checksum is not used (errata #17, `datasheets/enc28j60-errata.txt:356-381`). DHCP host name `tado-bridge` (option 12).
+
+**Server name.** `NET_SERVER_HOST` is a CMake cache value, default `10.42.0.1`, the bench server (`test-bench.md`, "Bench network"; `server-api.md`: server URL is a build value). After every new lease the net task resolves it with `dns_gethostbyname()` and logs `dns: <host> is <address>`. It retries every 10 s on failure. An address literal resolves without a query. P4 connects to the result.
+
+**Random numbers: placeholder [I].** `LWIP_RAND()` is a xorshift32 seeded from the 96-bit unique ID (`datasheets/rm0383.txt:46698-46711`), with the TIM2 microsecond count mixed in at every call. lwIP uses it for the DHCP xid, the DNS id and source port, and the first TCP port. These resist guessing but are not secrets. It is not cryptographic. P4 replaces it with the DRBG from the PA3 pool (`design.md`, "Entropy", #26).
+
+**Router LED (PB0):** off without link, blinking at 2 Hz with link but no address, on with a DHCP lease (P3 "done when": the router LED shows link and DHCP).
+
+**Log lines.** At boot: `ip: lwIP 2.2.1, DHCP as tado-bridge, server ...`. Then `ip: DHCP lease <ip>/<mask>, gateway ..., DNS ..., lease N s`, `dns: ...`, and `ip: address lost (DHCP state N)` if the lease goes. Every 60 s: the two `eth: 60 s:` counter lines (new: `no pbuf`, and `drop` for frames refused while the link is down or too long) and `ip: 60 s: address ..., server ... is ...`.
+
+**Memory (Release, `make size`):** text 58844, data 124, bss 51508 bytes (before: 27728, 120, 34740). lwIP adds about 31 KB of flash. Its RAM is static: `ram_heap` (`MEM_SIZE` 6 KB) 6163 bytes, `PBUF_POOL` (6 buffers of 1516 bytes) 9195 bytes, other pools, PCBs, ARP and DNS tables under 1 KB: about 16.4 KB (`arm-none-eabi-nm -S`). The net task's stack is now 4 KB (1024 words) out of the FreeRTOS heap. Measured on the bench [V]: 766-768 words never used, so lwIP input and transmit with `LOG()` use about 1 KB. Heap free 23504-23512 bytes of 32768.
+
+**Bench test, expected result after `make flash` and `make rtt`** (Ethernet to the laptop's `enp196s0f0`, NetworkManager shared mode, `test-bench.md`):
+
+1. Boot log as in P2, then `ip: lwIP 2.2.1, DHCP as tado-bridge, server 10.42.0.1`, the `eth:` bring-up lines, `ip: DHCP lease 10.42.0.x/255.255.255.0, gateway 10.42.0.1, DNS 10.42.0.1, lease 3600 s`, `dns: 10.42.0.1 is 10.42.0.1 (no query needed)`. The router LED blinks briefly and then stays on.
+2. Laptop side: `journalctl | grep dnsmasq-dhcp` shows DISCOVER, OFFER, REQUEST and ACK for `02:7a:d0:b1:00:01 tado-bridge`; dnsmasq then resolves `tado-bridge` to the lease. The lease file in `/var/lib/NetworkManager/` is root-only.
+3. `ping <ip>` and `ping -s 1472 -M do <ip>` (full 1514-byte frames): no loss. A TCP connect to any port is refused at once (lwIP answers RST).
+4. DNS through the DHCP server: build with `cmake -Bbuild -DNET_SERVER_HOST=<name> cmake/`, then `dns: <name> is <address> (N ms)`. Afterwards rebuild with `-DNET_SERVER_HOST=10.42.0.1` for the bench server.
+5. The per-minute lines keep `bad 0`, `no pbuf 0`, `busy 0`, `reinit 0`.
+

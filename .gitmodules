@@ -4,3 +4,6 @@
 [submodule "vendor/FreeRTOS-Kernel"]
 	path = vendor/FreeRTOS-Kernel
 	url = https://github.com/FreeRTOS/FreeRTOS-Kernel
+[submodule "vendor/lwip"]
+	path = vendor/lwip
+	url = https://github.com/lwip-tcpip/lwip.git

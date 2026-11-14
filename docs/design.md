@@ -147,6 +147,7 @@ Preemption is required, because a TLS handshake uses hundreds of milliseconds of
 - **One owner per bus,** as in freedo (`freedo/firmware/cc1101_bridge/README.md:58-59`). Flash access is a request to the radio task, which runs it only when no deadline is near.
 - Radio and net talk through two queues, so neither blocks the other.
 - The ENC28J60 is on SPI2, separate from the radio and flash on SPI1, confirmed on the board (`hardware.md`). The net task owns SPI2.
+- lwIP runs with `NO_SYS = 1` inside the net task, which is its only context: no `tcpip_thread`, no lwIP locking (#13, `build.md`, P3) **[I]**.
 - The ENC28J60 has an 8 KB packet buffer and an INT pin (`datasheets/enc28j60.txt:22,257`), so net can run late without losing Ethernet frames.
 
 ### TLS settings
@@ -163,7 +164,7 @@ Estimates, to be measured on a prototype.
 | Item | KB |
 | :--- | --: |
 | TLS, peak during handshake | 30 |
-| lwIP and packet buffers | 12 |
+| lwIP and packet buffers (measured in P3: about 16.4 KB static, `build.md`) | 12 |
 | Task and interrupt stacks | 13 |
 | Inbound frame ring (32 × 143 bytes) | 5 |
 | CSL job pool, reduced to about 24 | 4 |
