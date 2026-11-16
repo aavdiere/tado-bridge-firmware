@@ -246,11 +246,14 @@ func main() {
 	// message freedo's reassembler returns from the frames that carry them.
 	fmt.Fprintf(&out, "struct vfrag { struct vblob pkt, src, dst; uint16_t tag; unsigned count; struct vblob body[16]; struct vblob frame[16]; struct vblob coap; };\n")
 	rows = nil
-	for _, n := range []int{70, 71, 150, 400, 1205} {
+	for _, n := range []int{73, 74, 150, 153, 154, 400, 1205} {
 		q := coapMsg(n)
 		q.SrcEUI, q.DstEUI = eui(r), eui(r)
 		p, err := tado.BuildCoAP(q)
 		must(err)
+		if len(p) <= 97 {
+			must(fmt.Errorf("%d bytes fit one Data frame; freedo's callers do not fragment that", len(p)))
+		}
 		tag := uint16(r.Intn(65536))
 		bodies, err := tado.Fragment6LoWPANDatagram(p, tag)
 		must(err)
