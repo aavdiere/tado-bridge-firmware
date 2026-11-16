@@ -221,6 +221,7 @@ add_executable(${BINARY}
     ../src/mac.c
     ../src/lowpan.c
     ../src/txgate.c
+    ../src/csl.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c
