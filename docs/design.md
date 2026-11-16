@@ -152,6 +152,16 @@ Code: `src/pa3_adc.c` (ADC driver), `src/entropy.c` (health tests and conditioni
 
 **Bench result (2026-11-14) [V]:** 11 boots of the final image. Every start-up test passed: range 833-966, longest run 1-3, APT maximum 4-18 of 512, no read timeouts. Every seed took 43-45 ms. DHCP got its lease and ping answered. Host-side runs of `entropy.c` against stub readings gave these results: a constant value fails the RCT after 61 readings, two values 10 LSB apart fail the range check, a stuck stretch in the middle of a collection fails it and latches, and an ADC that never completes fails at once.
 
+**Fail-closed on the board (#35 check 1, 2026-11-16) [V]:** production image c2b9b4d (flash matched the ELF by OpenOCD `verify_image`), USB power, Ethernet and tanoclo up. The internal pull-down does nothing in analog mode (`datasheets/rm0383.txt:7926`), so PA3 was switched to input with pull-down over SWD. A hardware breakpoint at `0x08000714` in `source_on()`, the first instruction after the inlined `pa3_adc_on()` (after its `delay_us(TSTAB_US)`, `src/pa3_adc.c:45`, `src/entropy.c:111-112`), then `reset halt` and `resume`. At each hit, read-modify-write of PA3's bits only (MODER bits 7:6 = 00 input, `rm0383.txt:8084-8089`; PUPDR at offset 0x0C, bits 7:6 = 10 pull-down, `rm0383.txt:8150,8171-8175`): GPIOA MODER `0xa800a9c0` to `0xa800a900`, PUPDR `0x6400100a` to `0x6400108a`, read back equal, PA13/PA14 bits (`0xa8000000`, alternate function) unchanged. `pa3_adc_on()` sets analog and no pull again on every attempt (`src/pa3_adc.c:30`), so the change was re-applied at each of 4 hits: the boot and 3 retries, 10.1 s apart.
+
+- Every sabotaged attempt: `rng: PA3 start-up test failed: repetition count test: 61 readings, range 0-0, longest run 61, APT max 61 of 512, 0 read timeouts`, then `rng: no random numbers; network stays off, retrying in 10 s`. The ADC still converts with the pin in input mode, and the pull-down holds the floating pin at exactly 0 **[V]**; that the analog path stays connected in input mode is not documented **[I]**. The RCT fails at its cutoff of 61 (`src/entropy.c:48`).
+- No DHCP while failing: dnsmasq logged no DISCOVER from the bridge's MAC between the boot before the test and the first passing attempt (`journalctl`, `dnsmasq-dhcp`).
+- Power LED code 3: GPIOB ODR bit 1 (PB1), sampled every 20 ms over SWD while running, rose 11 times in 9 s, 3 per 2.5 s cycle (`src/net.c:120`, `hardware.md`, "LED roles"). Not watched by eye.
+- Breakpoint removed, no reset: the next 10 s retry passed (range 852-964, longest run 2, APT max 9), the DRBG seeded in 43 ms, the LED went back to steady on (one rising edge in 15 s, `src/net.c:422`), DHCP lease 10.42.0.43, TLS 1.2 handshake 1073 ms, WebSocket and auth to tanoclo `10.42.0.1:988` ready.
+- `reset run` (twice): start-up test passed (range 851-962 and 851-961, longest run 5 and 3, APT max 9 and 11), DHCP lease, `session: ready` after 1093-1101 ms, `ping` 3 of 3.
+
+So a stuck source keeps the bridge off the network on every retry, and a working source brings it back on the next retry or after a reset.
+
 ## Software stack (#18, #17, #19)
 
 ### Proposal
