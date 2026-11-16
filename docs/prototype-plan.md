@@ -164,7 +164,9 @@ Inserted 2026-11-13 after the first P3 bench runs (`hardware.md`, "SPI2: ENC28J6
 - Heap free 12824 bytes while connected, 9568 at the lowest point (handshake); bss 56 KB.
 - Reconnect after a tanoclo restart: about 3 s; backoff to 32 s during a 40 s outage.
 
-Details: `build.md`, P4 TLS. The cloud LED is wired to the session; the owner still has to check it by eye. #16 (ACK timing during a handshake) and #17 (RAM budget) are separate tasks.
+Details: `build.md`, P4 TLS. The cloud LED is wired to the session; the owner still has to check it by eye.
+
+**P4 #16 result (2026-11-16) [V]:** peak RAM 59 KB reserved and about 46 KB used of 128 KB, at the TLS handshake; 69 KB unreserved, against about 11 KB estimated for P5 (`design.md`, "RAM measured (#16, #17)", open question 17). Handshake 1070-1083 ms, 1055-1064 ms CPU, three P-256 steps of 316-366 ms. The server retransmitted its first flight and the `GET time` reply in every connection, because lwIP's delayed ACK waited for its 250 ms timer; the bridge now ACKs every segment at once, and 8 of 8 connections had no retransmission (`design.md`, "Immediate ACK (#16)"). Production image `8e1c455`, sha256 of `build/tado-bridge.bin` `b1f40033a7646cf54c38f0bcf679fed09670a933a9a6ea510885d3063294fd5e`, OpenOCD verify OK. The radio ACK timing during a handshake (open question 16) is measured in P5.
 
 ### P5: Radio link to devices
 

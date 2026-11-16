@@ -242,6 +242,10 @@ Code: `src/tls.c` (TLS over lwIP TCP), `src/ws.c` (WebSocket), `src/coap.c` (CoA
 
 **Handshake pacing [V]:** the handshake needs 1.05-1.06 s of CPU in 19-21 steps. The longest step is 364-367 ms (one P-256 operation). Between steps the net task blocks for one tick, so the lower-priority housekeeping task can kick the watchdog. The housekeeping kick window is timed (500 ms by the clock), so the catch-up after a long step cannot produce an empty window. The radio task has the higher priority and is not held up.
 
+**Handshake steps (#16, 2026-11-16) [V]:** 13 connections (boots and a `docker restart tanoclo-ws`), temporary per-step trace, removed afterwards. Three steps carry the CPU: server certificate (chain check, one ECDSA verify) 364-366 ms, ServerKeyExchange (ECDSA verify of the ECDHE parameters) 364-366 ms, ClientKeyExchange (ECDH key pair and shared secret) 316-324 ms; key derivation 7 ms, client Finished 2 ms, every other step under 1 ms. Total 1055-1064 ms CPU, handshake 1070-1083 ms wall time, `session: ready` 1093-1114 ms after the connect started. No small speed-up is left in mbedTLS: `MBEDTLS_ECP_FIXED_POINT_OPTIM` is already on by default (`vendor/mbedtls/include/mbedtls/ecp.h:296`, ROM table at `library/ecp_curves.c:748`). Splitting the P-256 work into short steps would need `MBEDTLS_ECP_RESTARTABLE`; not needed now **[I]**.
+
+**Immediate ACK (#16) [V]:** lwIP delays an ACK (`vendor/lwip/src/core/tcp_in.c:1631`) until its TCP fast timer, every 250 ms (`include/lwip/priv/tcp_priv.h:117`, `core/tcp.c:1497-1499`). The net task runs no lwIP timers inside a 365 ms P-256 step, and tanoclo's Linux TCP retransmitted after 201-209 ms. Before the fix, packet captures on the bench link (`enp196s0f0`, tcpdump in a `--net host` container, kept out of git) showed 2 retransmissions in every connection (5 of 5 boots): the 730-byte first flight (ACKed only 372 ms after it arrived, when the certificate step ended) and the 73-byte `GET time` reply, after which the bridge sends nothing and its delayed ACK came after the server's timeout. WebSocket pongs were ACKed after 202-203 ms, on the edge of the timeout. `on_recv()` now sets `TF_ACK_NOW`, and `tcp_input()` sends the ACK right after the callback (`tcp_in.c:552-553`) (`src/tls.c`). After: 0 retransmissions in 8 of 8 connections, first flight ACKed 3.1 ms after it arrived, pongs within 1 ms. Cost: one 60-byte frame per server message that an answer would otherwise carry, and 24 bytes of flash. The handshake time is unchanged (1070-1073 ms), since the server was never waiting for the ACK. The shrinking advertised window seen in the captures (2920 down to 1450 in 31-byte steps) is lwIP's silly-window avoidance: it went back to 2920 once 1460 bytes had been read, so it is not a leak.
+
 **Certificate check:** `MBEDTLS_SSL_VERIFY_REQUIRED` against one built-in trust anchor, with `mbedtls_ssl_set_hostname(NET_SERVER_HOST)`. For an address literal, mbedTLS matches the IP subjectAltName (`vendor/mbedtls/library/x509_crt.c:2912-2980`). **Validity dates are not checked:** there is no `MBEDTLS_HAVE_TIME`, because the bridge has no clock until the server sends the time over this very connection **[I]**. The bench certificates run to 2046 (`test-bench.md`).
 
 **WebSocket (RFC 6455):** HTTP/1.1 upgrade with `Sec-WebSocket-Protocol: binary`. The client checks `101`, `Upgrade: websocket` and the `Sec-WebSocket-Accept` value (SHA-1 and Base64 from mbedTLS), and rejects any other subprotocol. Every client frame is masked with 4 fresh bytes from the DRBG. Ping is answered with pong. Fragmented messages are reassembled in place, up to 2 KB. The close handshake waits up to 2 s. **Liveness [I]:** tanoclo never pings (uWebSockets `idleTimeout: 0`, `tanoclo/ws-server/server.js:404-408`). So the client pings after 30 s without a frame and gives up when nothing arrives within 10 s after that. Stock timing is unknown (`open-questions.md` row 14).
@@ -261,7 +265,7 @@ Code: `src/tls.c` (TLS over lwIP TCP), `src/ws.c` (WebSocket), `src/coap.c` (CoA
 
 ### RAM estimate (#17) [I]
 
-Estimates, to be measured on a prototype.
+Estimates made before the prototype; measured figures follow in "RAM measured (#16, #17)".
 
 | Item | KB |
 | :--- | --: |
@@ -275,6 +279,58 @@ Estimates, to be measured on a prototype.
 | WebSocket and CoAP buffers | 2 |
 | FreeRTOS and misc | 3 |
 | **Total** | **71 of 128** |
+
+### RAM measured (#16, #17) [V]
+
+2026-11-16, bench bridge on USB, production code plus a temporary probe (removed afterwards) that logged at each phase: heap free and the lowest point since the last phase (sampled after every mbedTLS allocation, the only heap user after the scheduler starts), `uxTaskGetStackHighWaterMark()` of every task, the 4 KB main stack (painted at reset), and lwIP's `MEM_STATS` and `MEMP_STATS`. 6 connections before the immediate-ACK change and 8 after, each set with one `docker restart tanoclo-ws`; the figures were the same in both sets.
+
+**Static RAM** (production image `8e1c455`, `arm-none-eabi-nm -S`): `.data` 136 + `.bss` 56188 = 56324 bytes.
+
+| Item | Bytes |
+| :--- | --: |
+| FreeRTOS heap (`ucHeap`, `configTOTAL_HEAP_SIZE`) | 32768 |
+| lwIP pbuf pool (6 x 1516) | 9199 |
+| lwIP heap (`MEM_SIZE`) | 6163 |
+| lwIP PCBs, segments, timers, ARP, DNS, DHCP | 1242 |
+| WebSocket buffers (receive 2062, send 1280) | 3342 |
+| mbedTLS contexts (ssl, config, trust anchor, DRBG) | 1036 |
+| RTT buffers and control block | 1112 |
+| FreeRTOS kernel lists and state | 269 |
+| Other (drivers, counters, newlib, session) | 1106 |
+| Main stack (MSP, reserved by `cmake/stm32f411ce.ld`) | 4096 |
+| **Reserved in total** | **60420** |
+
+**Heap by phase** (free bytes of 32768; lowest point within the phase):
+
+| Phase | Free | Lowest |
+| :--- | --: | --: |
+| Boot: 4 task stacks, TCBs, 2 mutexes | 21456 | 21456 |
+| DHCP (trust anchor parsed, held: 656) | 20800 | 20192 |
+| TLS handshake | 12824 at the end | 9568 |
+| WebSocket upgrade and auth | 12824 | 12824 |
+| Steady session (2 min, pings) | 12824 | 12824 |
+| Closed by the server | 20800 | 12824 |
+| Reconnect handshake | 12824 | 9568 |
+
+So a connection holds 7976 bytes, the handshake needs 11232 more than the idle baseline, and every close returns the heap to 20800: no leak. The peak, 23200 bytes used, is the same on every handshake.
+
+**Stacks** (peak use; never-used words from `uxTaskGetStackHighWaterMark`): radio 230 of 512 words (920 B), net 608 of 1536 (2432 B, reached in the handshake), housekeeping 172 of 512 (688 B), idle 11 of 128 (44 B), main stack 720 of 4096 B.
+
+**lwIP pools** (highest use seen in any phase, no allocation errors): `MEM_SIZE` heap 468 of 6144 B (during DHCP), pbuf pool 2 of 6, TCP segments 3 of 8, TCP PCBs 1 of 2, UDP PCBs 1 of 3, pbuf ref/rom 0 of 4. The timeout pool is always 6 of 6: lwIP sizes it to its own fixed set of timers (`MEMP_NUM_SYS_TIMEOUT`), and the firmware adds none.
+
+**Against the 71 KB estimate:**
+
+| Item | Estimate KB | Measured KB |
+| :--- | --: | --: |
+| TLS, peak during handshake | 30 | 11.0 heap + 1.0 static |
+| lwIP and packet buffers | 12 | 16.2 static |
+| Task and interrupt stacks | 13 | 14.5 reserved, 4.7 used |
+| WebSocket and CoAP buffers | 2 | 3.3 |
+| FreeRTOS and misc | 3 | 3.0 (TCBs, mutexes, RTT, counters) |
+| Radio side for P5 (frame ring, CSL jobs, 6LoWPAN, anchors) | 11 | not built |
+| **Total** | **71** | **about 46 used at the peak (static 23.0 + heap 22.7 + main stack 0.7), 59 reserved** |
+
+**Headroom for P5 [I]:** 131072 - 60420 = 70652 bytes (69 KB) of RAM are not reserved at all, and at the handshake peak 9568 bytes of the FreeRTOS heap are still free. P5's estimated 11 KB of radio buffers fits about six times over. P5 should put its buffers in static RAM (`.bss`), not the heap, so that the heap margin at the handshake stays as measured. If RAM ever gets short, lwIP is the first place to look: its heap peaked at 468 of 6144 bytes and its pbuf pool at 2 of 6 buffers. Do not shrink them before P5 traffic has been measured.
 
 Freedo's job pool of 128 (`freedo/firmware/cc1101_bridge/cc1101_bridge.ino:203`) is too large to carry over. **Decision (user): support 16 devices for now,** matching freedo's 16 anchors and neighbours (`:191,201`).
 
