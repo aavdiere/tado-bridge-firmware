@@ -5,19 +5,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "txgate.h"
+
 /* TI CC110L register-level access over SPI1 (docs/datasheets/cc110l.txt,
  * SWRS109C). Every SPI access to the radio goes through one header check in
- * cc110l.c, which is the transmit guard: while RADIO_TX_ALLOWED is 0 it
- * refuses (fw_panic) any strobe other than SRES, SCAL, SRX, SIDLE, SFRX and
- * SNOP, any TX FIFO or PATABLE access, and any MCSM1 value whose RXOFF_MODE
- * or TXOFF_MODE could lead into TX or FSTXON. */
+ * cc110l.c, which is the transmit guard. It refuses (fw_panic) every strobe
+ * other than SRES, SCAL, SRX, SIDLE, SFRX and SNOP, every TX FIFO or PATABLE
+ * access, and any MCSM1 value whose RXOFF_MODE or TXOFF_MODE could lead into
+ * TX or FSTXON. STX, SFTX and the TX FIFO open only inside the transmit
+ * functions below, for a frame the transmit gate (src/txgate.h) has
+ * approved against the frequency registers last written to the chip. */
 
-/* P2 is receive only. Transmit code needs a fw-reviewer "safe to flash"
- * verdict first (docs/test-bench.md rule 4, P5). */
+/* Master switch for the transmitter. 0: the image cannot transmit; the
+ * transmit functions refuse, and STX, SFTX and the TX FIFO panic as in the
+ * receive-only images. Set to 1 only with a fw-reviewer "safe to flash"
+ * verdict for the transmit path (docs/test-bench.md rule 4, CLAUDE.md). */
 #define RADIO_TX_ALLOWED 0
-#if RADIO_TX_ALLOWED
-#error "radio transmit is not reviewed: P2 is receive only (docs/test-bench.md rule 4)"
-#endif
 
 /* Configuration registers, cc110l.txt:3274-3373. */
 #define CC_IOCFG2          0x00
@@ -134,9 +137,59 @@ bool cc110l_read_status_stable(uint8_t addr, uint8_t *val);
 /* Burst read of n bytes from the RX FIFO (header 0xFF, cc110l.txt:1491-1494). */
 bool cc110l_read_rxfifo(uint8_t *dst, size_t n);
 
-/* Set when a chip status byte reported TX, FSTXON or TXFIFO_UNDERFLOW. The
- * radio task confirms with MARCSTATE and stops the board if it is real.
- * Cleared by the call. */
+/* Set when a chip status byte reported TX, FSTXON or TXFIFO_UNDERFLOW
+ * outside a transmission of our own (cc110l_tx_expected()). The radio task
+ * confirms with MARCSTATE and stops the board if it is real. Cleared by the
+ * call. */
 bool cc110l_take_tx_state_flag(void);
+
+/* --- Transmit (#17) ---------------------------------------------------------
+ * The only code that can key the transmitter. */
+
+/* Our wire EUI-64, for the transmit gate. Without it nothing is sent. */
+void cc110l_set_identity(const uint8_t own[8]);
+
+/* Reads CHANNR, FSCTRL0, FREQ2-0, MDMCFG1 and MDMCFG0 back from the chip and
+ * compares them with the values last written. On a difference, or without a
+ * full register table written since the last reset, transmitting stays
+ * refused until the radio is configured again. */
+bool cc110l_tx_verify_channel(void);
+
+enum cc110l_tx_result {
+    CC_TX_OK,
+    CC_TX_DISABLED, /* RADIO_TX_ALLOWED is 0 */
+    CC_TX_REFUSED,  /* by the transmit gate: cc110l_tx_verdict() says why */
+    CC_TX_SPI,      /* the chip did not answer */
+};
+enum txgate_verdict cc110l_tx_verdict(void);
+
+/* Task context. Checks the frame (without the radio's CRC) against the
+ * transmit gate, then: SIDLE, SFRX and SFTX in one access (the RX FIFO is
+ * emptied: reset the receive assembler), the length byte and the first
+ * bytes into the TX FIFO, STX. The chip returns to RX by itself after the
+ * frame (MCSM1). flags: TXGATE_*. */
+enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned flags);
+
+/* Tops the TX FIFO up for a frame longer than the FIFO. *left: bytes not
+ * yet written. False on a TX FIFO underflow or an SPI failure; the caller
+ * then re-arms the receiver. */
+bool cc110l_tx_feed(size_t *left);
+
+/* True from a transmission's STX until its airtime plus a margin has
+ * passed: a TX state reported by the chip is then ours. Safe from any
+ * context. */
+bool cc110l_tx_expected(void);
+
+/* Enhanced ACK, in two steps so that it can start well inside 1 ms after
+ * the Data frame (docs/radio.md "ACK prebuild"):
+ * - prepare, task context, while the Data frame is still arriving: the
+ *   transmit gate checks that ack is the exact answer to answered (the
+ *   frame's first 16 bytes), a unicast Data frame addressed to us;
+ * - fire, from the GDO2 interrupt when the chip reports the frame complete
+ *   with a good CRC: SIDLE, SFTX, the prepared bytes into the TX FIFO, STX.
+ * cancel drops a prepared ACK. Each prepared ACK is sent at most once. */
+enum cc110l_tx_result cc110l_ack_prepare(const uint8_t ack[29], const uint8_t answered[16]);
+void                  cc110l_ack_cancel(void);
+bool                  cc110l_ack_fire_from_isr(void);
 
 #endif

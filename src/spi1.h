@@ -22,9 +22,18 @@ void spi1_unlock(void);
 
 /* Chip select. spi1_select panics if the other device is still selected.
  * spi1_deselect waits until the last byte has left the shifter (TXE, then
- * BSY clear, rm0383.txt:31740-31745) before raising CS. */
+ * BSY clear, rm0383.txt:31740-31745) before raising CS. Tasks only, after
+ * the scheduler has started: select enters a critical section that
+ * deselect leaves, so do not block in between (see spi1.c). */
 void spi1_select(enum spi1_dev dev);
 void spi1_deselect(enum spi1_dev dev);
+
+/* The same from the radio's GDO interrupt (priority
+ * configMAX_SYSCALL_INTERRUPT_PRIORITY), without the bus mutex and without a
+ * critical section: the interrupt cannot fall inside a task's access.
+ * False, and nothing selected, if a chip select is low anyway. */
+bool spi1_select_from_isr(enum spi1_dev dev);
+void spi1_deselect_from_isr(enum spi1_dev dev);
 
 /* One full-duplex byte. Panics if SPI1 stops responding (bounded wait). */
 uint8_t spi1_xfer(uint8_t out);

@@ -19,6 +19,7 @@
 
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "task.h"
 
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/rcc.h>
@@ -91,7 +92,7 @@ static void cs_write(enum spi1_dev dev, bool high) {
     }
 }
 
-void spi1_select(enum spi1_dev dev) {
+static void select_checked(enum spi1_dev dev) {
     /* Both devices share MISO: never select one while the other is selected. */
     bool other_high = (dev == SPI1_DEV_RADIO) ? gpio_get(GPIOB, BOARD_FLASH_CS_PIN)
                                               : gpio_get(GPIOA, BOARD_RADIO_CS_PIN);
@@ -99,6 +100,17 @@ void spi1_select(enum spi1_dev dev) {
         fw_panic("SPI1: both chip selects low", __FILE__, __LINE__);
     }
     cs_write(dev, false);
+}
+
+/* From select to deselect the radio's GDO interrupts are held off
+ * (BASEPRI at configMAX_SYSCALL_INTERRUPT_PRIORITY, their priority), because
+ * the Enhanced ACK is sent from that interrupt over this bus (#17,
+ * src/radio.c): it must find the bus between two accesses, never inside
+ * one. An access is a few bytes, at most a 64-byte FIFO burst (about
+ * 0.1 ms at 6 MHz); nothing between select and deselect may block. */
+void spi1_select(enum spi1_dev dev) {
+    taskENTER_CRITICAL();
+    select_checked(dev);
 }
 
 static void spin_until(uint32_t mask, uint32_t want, const char *what) {
@@ -110,10 +122,27 @@ static void spin_until(uint32_t mask, uint32_t want, const char *what) {
     fw_panic(what, __FILE__, __LINE__);
 }
 
-void spi1_deselect(enum spi1_dev dev) {
+static void deselect_drained(enum spi1_dev dev) {
     spin_until(SPI_SR_TXE, SPI_SR_TXE, "SPI1 TXE timeout");
     spin_until(SPI_SR_BSY, 0, "SPI1 BSY timeout");
     cs_write(dev, true);
+}
+
+void spi1_deselect(enum spi1_dev dev) {
+    deselect_drained(dev);
+    taskEXIT_CRITICAL();
+}
+
+bool spi1_select_from_isr(enum spi1_dev dev) {
+    if (!gpio_get(GPIOA, BOARD_RADIO_CS_PIN) || !gpio_get(GPIOB, BOARD_FLASH_CS_PIN)) {
+        return false; /* cannot happen while tasks select inside a critical section */
+    }
+    select_checked(dev);
+    return true;
+}
+
+void spi1_deselect_from_isr(enum spi1_dev dev) {
+    deselect_drained(dev);
 }
 
 uint8_t spi1_xfer(uint8_t out) {
