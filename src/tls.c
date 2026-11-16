@@ -94,7 +94,6 @@ const char *tls_error(int *code) {
 /* --- lwIP callbacks (run inside the net task, from netif input or timers) --- */
 static err_t on_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     (void)arg;
-    (void)tpcb;
     if (p == NULL) {
         peer_fin = true; /* FIN: whatever is queued is still read */
         return ERR_OK;
@@ -103,6 +102,17 @@ static err_t on_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
         pbuf_free(p);
         return ERR_OK;
     }
+    /* ACK every data segment at once, not delayed (#16). lwIP delays the
+     * ACK (tcp_ack(), vendor/lwip/src/core/tcp_in.c:1631) until its TCP fast
+     * timer, every 250 ms (TCP_TMR_INTERVAL, include/lwip/priv/tcp_priv.h:117;
+     * tcp_fasttmr(), core/tcp.c:1497-1499), and the net task runs no timers
+     * during a P-256 handshake step of up to 366 ms. The server retransmits
+     * after about 200 ms: on the bench every connection resent its first
+     * flight and the GET time reply (docs/design.md "TLS and WebSocket").
+     * tcp_input() sends the ACK right after this callback
+     * (core/tcp_in.c:552-553). Costs one 60-byte frame per server message
+     * that an answer would otherwise have carried. */
+    tcp_set_flags(tpcb, TF_ACK_NOW);
     /* Window updates (tcp_recved) only once mbedTLS has taken the bytes, so
      * the queue never exceeds TCP_WND (src/lwipopts.h). */
     if (rxq == NULL) {
