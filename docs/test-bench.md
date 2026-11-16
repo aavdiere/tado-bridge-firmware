@@ -170,6 +170,8 @@ Tested 2026-11-11 without changing anything.
 
 **Duplex [V]/[I]:** the ENC28J60 is 10BASE-T only and does not auto-negotiate, so the laptop falls back to half duplex. The link comes up even with the MCU halted, because the PHY starts on its own. The P3 driver must run the ENC28J60 in half duplex to match, or both sides must be forced to full duplex; a mismatch works but drops packets.
 
+**ST-Link 3V3 supply, revisited (2026-11-16, #35) [V]:** under the owner's temporary exception (`README.md`, "Project decisions") the bench unit ran from the ST-Link 3V3 for entropy checks 2 and 3. VDDA measured 2.666-2.732 V by VREFINT. The ENC28J60 failed on every retry in one boot (ERXST `ffff`) and worked in another (session ready on attempt 2): marginal, not usable for Ethernet. VDDA is below the 2.7 V that x32 flash programming needs, so never flash on it. The exception is finished and the USB-only rule is back in force; the final state is USB, production image c2b9b4d verified.
+
 **Supply with Ethernet connected [V]:** 3.20 V at the ST-Link with the PHY linked and the MCU halted. **Conflict (2026-11-14) [V]:** the board itself measures only 2.74-2.83 V by VREFINT in the same state, so the ST-Link figure is not the board voltage ("Power risk" above). The current draw that matters comes when the bridge transmits (P3). With the owner-changed supply the board reads 3.28-3.29 V with the PHY linked (core halted for the measurement, so not during a transmission; 2026-11-14) **[V]**.
 
 **With Ethernet plugged in, a reset lets the stock firmware reach the tado cloud** through the laptop's NAT, and transmit on channel 26. The stock firmware has been replaced by the P1 image (2026-11-11 **[V]**); keep it that way.

@@ -48,6 +48,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 - Support 16 devices for now.
 - 2026-11-11: test-only code paths (such as the P1 watchdog hang test) are removed once their test passes, not left in behind flags.
 - Power LED (2026-11-14): steady on while the bridge runs normally; on a fault it flashes a fault code (N short flashes, pause). Codes and behaviour: `hardware.md`, "LED roles" (#36).
+- Temporary exception to the USB-only supply (owner, 2026-11-14), used 2026-11-16 and finished: power the bench unit from the ST-Link 3V3 for the PA3 entropy checks 2 and 3 (#35). Conditions: swap order USB out then 3V3 wire in, and 3V3 wire out then USB in; never both supplies at once; never flash on it (VDDA 2.67-2.73 V is below the 2.7 V x32 programming needs); Ethernet failure expected. Results in `design.md`, "Entropy: implementation", and `test-bench.md`. The USB-only rule is back in force.
 - Firmware update images are not signed.
 - Listen before transmit, as the stock bridge does it.
 - Claude may flash and test the bench bridge within `test-bench.md`; power over USB with the ST-Link 3V3 wire disconnected (changed 2026-11-14 from ST-Link 3V3 only, after the rail sagged to 2.67-2.98 V; USB gives 3.29 V, `hardware.md`); never two supplies at once; tanoclo runs in Docker on the laptop; the stock network's channel is found by SDR scan; no test device yet (2026-11-11).

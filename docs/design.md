@@ -156,11 +156,33 @@ Code: `src/pa3_adc.c` (ADC driver), `src/entropy.c` (health tests and conditioni
 
 - Every sabotaged attempt: `rng: PA3 start-up test failed: repetition count test: 61 readings, range 0-0, longest run 61, APT max 61 of 512, 0 read timeouts`, then `rng: no random numbers; network stays off, retrying in 10 s`. The ADC still converts with the pin in input mode, and the pull-down holds the floating pin at exactly 0 **[V]**; that the analog path stays connected in input mode is not documented **[I]**. The RCT fails at its cutoff of 61 (`src/entropy.c:48`).
 - No DHCP while failing: dnsmasq logged no DISCOVER from the bridge's MAC between the boot before the test and the first passing attempt (`journalctl`, `dnsmasq-dhcp`).
-- Power LED code 3: GPIOB ODR bit 1 (PB1), sampled every 20 ms over SWD while running, rose 11 times in 9 s, 3 per 2.5 s cycle (`src/net.c:120`, `hardware.md`, "LED roles"). Not watched by eye.
+- Power LED code 3: GPIOB ODR bit 1 (PB1), sampled every 20 ms over SWD while running, rose 11 times in 9 s, 3 per 2.5 s cycle (`src/net.c:120`, `hardware.md`, "LED roles"). Watched by eye on 2026-11-16, see below.
 - Breakpoint removed, no reset: the next 10 s retry passed (range 852-964, longest run 2, APT max 9), the DRBG seeded in 43 ms, the LED went back to steady on (one rising edge in 15 s, `src/net.c:422`), DHCP lease 10.42.0.43, TLS 1.2 handshake 1073 ms, WebSocket and auth to tanoclo `10.42.0.1:988` ready.
 - `reset run` (twice): start-up test passed (range 851-962 and 851-961, longest run 5 and 3, APT max 9 and 11), DHCP lease, `session: ready` after 1093-1101 ms, `ping` 3 of 3.
 
 So a stuck source keeps the bridge off the network on every retry, and a working source brings it back on the next retry or after a reset.
+
+**LED code 3 by eye (#36, 2026-11-16) [V]:** production image, USB power, 4 sabotaged attempts as above (PB1's ODR rose 12 times in 9 s). The owner watched the power LED: "three pulses indeed, then it recovers after 40s-ish".
+
+**Cold start and low supply (#35 checks 2 and 3, 2026-11-16) [V].** Owner-approved temporary exception: the bench unit was powered from the ST-Link 3V3 (`README.md`, "Project decisions"). Raw captures are in `~/ib01-captures/pa3-35/` (outside git). Check 3 used a temporary capture build (measurement code, never committed) that read 128 blocks of 8192 readings from RAM over SWD at 3 cycles, analysed with `tools/entropy/pa3_noise.py --h 0.5` (skip 64) and a run/APT script; the USB baseline is the same build on USB.
+
+| | USB (VDDA 3.288-3.291 V) | ST-Link 3V3 (VDDA 2.666-2.732 V) |
+| :-- | --: | --: |
+| Mean, sd (LSB) | 911.7, 28.5 | 782.5, 27.8 |
+| Range | 840-963 | 704-938 |
+| Lag-1 autocorrelation | +0.24 | +0.213 |
+| Low-4-bit count max/min | 4.2 | 1.33 |
+| MCV / t-tuple / LRS | 4.47 / 0.85 / 1.00 | 5.87 / 1.11 / 1.28 |
+| MultiMCW / Lag / nearest neighbour | 4.43 / 1.03 / 1.31 | 1.74 / 0.95 / 1.58 |
+| **Minimum estimate (bit per reading)** | **0.85** | **0.95** |
+| Longest run of one value | 7 | 14 |
+| APT maximum of 512 | 37 | 28 |
+| Read timeouts | 0 | 0 |
+
+- **Check 3 result:** at 2.67-2.73 V the minimum estimate is 0.95, no lower than at 3.29 V. The mean drops by 129 LSB (the pin's level scales with VDDA) and the spread is unchanged. The longest run of 14 is far below the RCT cutoff of 61, and the APT maximum of 28 far below 422. The 0.1-bit credit and the H = 0.5 cutoffs (RCT 61, APT 422, `src/entropy.c:40-50`) hold at 2.67-2.73 V.
+- **USB baseline versus #14:** the low-4-bit counts are more uneven (max/min 4.2, against 1.6-2.2 in #14) and lag-1 is +0.24 (against +0.12 to +0.18), but the minimum estimate is nearly unchanged (0.85, against 0.87). The unevenness is not a change in the credited entropy [I].
+- **Cold boots (check 2):** RCC_CSR `0e000000` (POR/PDR, PIN, BOR) on each. Cold boot on the ST-Link supply, capture build: start-up test passed (1024 readings, range 719-830, longest run 1, APT 12), seed 45 ms. Cold boot on USB, capture build: passed (run 5, APT 33), seed 45 ms, session ready on attempt 1 (1092 ms). Cold boot on the ST-Link supply, production image: passed (range 766-940, run 3, APT 3), seed 43 ms. Final cold boot on USB, production c2b9b4d: passed (range 848-962, run 8, APT 20), ping 3 of 3, then after `reset halt` and `verify_image` (131644 bytes) and `reset run`: passed, session ready on attempt 1 (1090 ms).
+- **Settling:** the first ~8 readings after ADC power-on settle upward (446 to 730 on the ST-Link supply, 586 to 928 on USB). The analysis skipped 64 readings per block. The production code also discards them: `source_on()` calls `pa3_adc_on()`, `ht_reset()`, then reads and drops `SETTLE_SAMPLES` = 64 readings through `read_one()` only, without `ht_feed()`, and zeroes `ht.samples` (`src/entropy.c:25,111-121`). The start-up range, RCT and APT therefore never see the settling readings **[I]** (read from the code, not separately tested). The start-up test passed on every boot, which fits that.
 
 ## Software stack (#18, #17, #19)
 
