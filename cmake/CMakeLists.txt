@@ -217,6 +217,8 @@ add_executable(${BINARY}
     ../src/ws.c
     ../src/coap.c
     ../src/session.c
+    ../src/ccm.c
+    ../src/mac.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c

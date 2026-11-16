@@ -11,7 +11,7 @@ LINKER_SCRIPT	:= cmake/$(DEVICE_LC).ld
 DEVICE_STAMP	:= $(BUILD_DIR)/.device-$(DEVICE_LC)-$(BUILD_TYPE)
 OPENCM3_LIB		:= vendor/libopencm3/lib/libopencm3_$(FAMILY).a
 
-.PHONY: all format build cmake clean flash rtt size
+.PHONY: all format build cmake clean flash rtt size test
 
 all: build
 build: $(FIRMWARE)
@@ -47,6 +47,10 @@ $(FAMILY_CMAKE) $(LINKER_SCRIPT):
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# Host-side unit tests of the protocol modules (tests/host, plain gcc).
+test:
+	$(MAKE) -C tests/host --no-print-directory
 
 size: $(FIRMWARE)
 	arm-none-eabi-size $(FIRMWARE)
