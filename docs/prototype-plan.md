@@ -2,17 +2,29 @@
 
 Builds the IB01 firmware in stages. Each stage ends in something testable and settles specific open questions (`open-questions.md`). Design: `design.md`. Pins: `hardware.md`.
 
-**Status: proposal, for review.** Nothing is created or flashed yet.
+**Status (2026-11-16): P0 to P4 and P3.1 are done and verified on the bench. P5 has started (issue #17). P6 to P8 are not started.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
 
 ## Progress tracking on GitHub
 
 Requirement (user, 2026-11-11): progress is tracked in a GitHub repo on the user's account (`aavdiere`, logged in through `gh`).
 
-Proposal:
-- **One repo** holding the firmware and the design docs. Name and visibility still to be decided.
+- **One public repo**, `tado-bridge-firmware`, holding the firmware and the design docs.
 - **Milestones** = the stages below, P0 to P8.
-- **Issues** = the tasks in each stage, plus the open measurements: #7, #16, #17, #19, #26, #28, the pair button, and the #20 size check.
-- **README** shows a status table per stage. Each finished task is a commit or pull request that closes its issue.
+- **Issues** = the tasks in each stage.
+- **README** shows a status table per stage. Each finished task is a commit that closes its issue.
+- **Two number series.** Open questions in `open-questions.md` and GitHub issues both run from 1, and they do not match: open question 16 (ACK turnaround) is issue #18, and issue #16 was the RAM measurement (open question 17). In this file, "#N" always means GitHub issue N, and an open question is written "open question N". Older docs still write "#N" for open questions; read the number against the topic.
+
+| Topic | Open question | Issue |
+| :--- | :--- | :--- |
+| Crystal offset and trim | 7 | #11 |
+| ACK turnaround | 16 | #18 |
+| RAM budget | 17 | #16 (closed) |
+| Radio deadlines against flash work | 19 | #22 |
+| Self-update sizes | 20 | #23 |
+| Listen-before-transmit delivery | 25 | #20 |
+| Entropy | 26 | #14, #35 (closed) |
+| Storage of key and counters | 27 | #37 (network, counters), #21 (identity) |
+| Beacon answer | 28 | #19 |
 - **Never pushed:** firmware dumps (they hold the bridge's secrets), keys, datasheet PDFs and their text extracts (third-party copyright). Enforced by `.gitignore`, `tools/check-no-firmware.sh` as a pre-commit hook, and the `no-firmware` CI scan of the whole history.
 
 ## Base: `stm-template`
@@ -28,7 +40,7 @@ Proposal:
 | Flashing | `st-flash --connect-under-reset` | IB01 test points carry no NRST (`tanoclo/patch_ib_firmware/README.md:151-158`), so use OpenOCD `program ... verify reset exit` with `stlink.cfg` and `stm32f4x.cfg` |
 | Debugger | Cortex-Debug for J-Link or `stutil` | Cortex-Debug with OpenOCD |
 | Logging | J-Link SWO viewer | SEGGER RTT over SWD; installed OpenOCD 0.12 supports `rtt server`. SWO needs PB3, which may not reach a test point |
-| C library | Full newlib; `nano.specs` commented out (`cmake/toolchain-arm-none-eabi.cmake`) | Enable `nano.specs` to save flash for the #20 size check |
+| C library | Full newlib; `nano.specs` commented out (`cmake/toolchain-arm-none-eabi.cmake`) | Enable `nano.specs` to save flash for the size check (open question 20, #23) |
 | Libraries | libopencm3 only | Add FreeRTOS-Kernel, lwIP, mbedTLS as pinned submodules |
 | Build tool | Needs `cmake` | Installed |
 
@@ -90,7 +102,7 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 - LEDs and buttons: power (PB1) and cloud (PB5) blink from the net and radio tasks (P1 test wiring); router (PB0) follows factory reset (PB10), pairing (PB8) follows pair (PC15), observed by the owner. RTT logged clean press and release events for both buttons.
 - Watchdog: factory reset held >5 s gave `HANG TEST: net task stops checking in`, about 5 `watchdog: not kicked, missing check-in mask 2` lines at 500 ms intervals, then a reset with `reset: RCC_CSR 24000000: IWDG PIN`. Both buttons >5 s gave `HANG TEST: radio task spins`, a reset and `IWDG PIN`. RTT via OpenOCD reattached by itself after each reset.
 - The temporary hang path used for the watchdog test was removed from the firmware afterwards (owner decision 2026-11-11, `README.md` "Project decisions"); the lines above are history.
-- RAM at runtime: FreeRTOS heap free 25632 of 32768 bytes (minimum the same); unused stack words radio/net/hk 489/489/352 of 512 (early data point for #17, not a conclusion).
+- RAM at runtime: FreeRTOS heap free 25632 of 32768 bytes (minimum the same); unused stack words radio/net/hk 489/489/352 of 512 (early data point for open question 17, not a conclusion).
 - The owner power-cycled the board afterwards so the CC110L is back at power-on defaults rather than the stock channel-26 configuration.
 - Non-blocking review notes are tracked in the "Follow-ups from the P1 pre-flash review" issue (P2 milestone).
 
@@ -103,8 +115,8 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 - Measure the crystal offset from `FREQEST` on frames from real devices.
 - Find the stock network's channel with the RTL-SDR and set it as the protected channel (`test-bench.md`).
 - Build the SDR demodulator used later for timing measurements.
-- **Done when:** frames from nearby Tado devices arrive with CRC OK, and flash and radio both work on the shared bus. Settles #7.
-- **Status (2026-11-12, [V]):** receive-only run met the frame and shared-bus criteria (1115 of 1119 CRC OK, 30 of 30 flash ID checks; `radio-runtime.md`, `hardware.md`). #7 is not settled: `FREQEST` needs an earlier read (#11).
+- **Done when:** frames from nearby Tado devices arrive with CRC OK, and flash and radio both work on the shared bus. Settles open question 7.
+- **Status (2026-11-12, [V]): done except the crystal offset.** The receive-only run met the frame and shared-bus criteria (1115 of 1119 CRC OK, 30 of 30 flash ID checks; `radio-runtime.md`, `hardware.md`). `FREQEST` is now read inside the packet and is valid for the stock senders. The bridge's own crystal offset and the per-unit trim decision (open question 7, issue #11) need our own transmissions, so #11 moved to P5 (2026-11-16).
 
 ### P3: Ethernet
 
@@ -113,7 +125,7 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 - Bench network: static address on `enp196s0f0`, `dnsmasq`, tanoclo in Docker (`test-bench.md`).
 - lwIP with DHCP, DNS and ping.
 - **Done when:** the bridge gets an address, answers ping and resolves the server name. The router LED shows link and DHCP.
-- **Status 2026-11-14 [V]:** ENC28J60 driver (#12), done: half duplex, link status, frame TX and RX against the laptop (ARP probe answered, 1514-byte frames both ways, 125 of 125 received pings intact), cable pull and full power cycle passed (`hardware.md`, "Result: half duplex, link, frame RX and TX"). lwIP (#13): result below. Open in P3: tanoclo in Docker on the link (#27).
+- **Status 2026-11-14 [V]:** ENC28J60 driver (#12), done: half duplex, link status, frame TX and RX against the laptop (ARP probe answered, 1514-byte frames both ways, 125 of 125 received pings intact), cable pull and full power cycle passed (`hardware.md`, "Result: half duplex, link, frame RX and TX"). lwIP (#13): result below. tanoclo in Docker on the link (#27): done 2026-11-14 (`test-bench.md`). **P3 is done.**
 
 **P3 lwIP result (#13), 2026-11-14 [V].** Bench as in `test-bench.md` (USB supply, `enp196s0f0` shared mode, radio receive-only on channel 26 as in P2). lwIP 2.2.1 in the net task (`build.md`, P3). RTT logs kept outside the repo.
 
@@ -147,14 +159,14 @@ Inserted 2026-11-13 after the first P3 bench runs (`hardware.md`, "SPI2: ENC28J6
 
 **Status 2026-11-14 [V]:** the cause is not CS timing but the supply. With the PHY active, the board rail sags to about 2.7 V, below the ENC28J60's 3.10 V minimum, and the chip stops answering. With the chip in power save (3.1-3.2 V), 1000 of 1000 iterations are correct at 12, 6 and 3 MHz with the existing CS timings (`hardware.md`, "Cause: the supply sags below the ENC28J60's minimum"). Next: the owner decides on the supply (`test-bench.md`, "Power risk"). Then re-run `tools/bench/enc28j60_supply.tcl` and the margin test.
 
-**Result 2026-11-14 [V]: done.** With the owner-changed supply, the board rail reads 3.28-3.29 V. Margin test with the firmware's own CS timings: 12000 of 12000 iterations good at 12 MHz and at 6 MHz. SPI2 stays at 6 MHz for a factor of 2 on timing margin. Bring-up passed at the first attempt on 7 consecutive resets, and a 10-minute run showed no `reinit`, no read-back mismatch and 65 of 65 self-test frames sent (`hardware.md`, "Result: margin test and 10-minute run"). The diagnostic code is removed. Still to try: bring-up after a full power cycle.
+**Result 2026-11-14 [V]: done.** With the owner-changed supply, the board rail reads 3.28-3.29 V. Margin test with the firmware's own CS timings: 12000 of 12000 iterations good at 12 MHz and at 6 MHz. SPI2 stays at 6 MHz for a factor of 2 on timing margin. Bring-up passed at the first attempt on 7 consecutive resets, and a 10-minute run showed no `reinit`, no read-back mismatch and 65 of 65 self-test frames sent (`hardware.md`, "Result: margin test and 10-minute run"). The diagnostic code is removed. Bring-up after a full power cycle passed in the #12 run (P3 status above).
 
 ### P4: TLS and WebSocket to tanoclo
 
-- Entropy pool from PA3 (`design.md`); log the raw readings to measure the noise (#26).
+- Entropy pool from PA3 (`design.md`); log the raw readings to measure the noise (open question 26, issue #14).
 - mbedTLS: TLS 1.2, `ECDHE-ECDSA-AES128-GCM-SHA256`, 4 KB in, 2 KB out (`design.md`).
 - Connect to tanoclo on port 988, path `/hw/v2`; `auth/key`, `auth/token`, `GET time` (`server-api.md`). Seed the bridge serial in tanoclo first (`tanoclo/ws-server/test/ci_seed.sql:39-67`).
-- Measure peak RAM and handshake time (#17).
+- Measure peak RAM and handshake time (open question 17, issue #16).
 - **Done when:** tanoclo shows the bridge connected and authenticated, time is set, and RAM is within budget. The cloud LED shows the connection.
 
 **P4 #15 result (2026-11-14) [V]:**
@@ -164,32 +176,41 @@ Inserted 2026-11-13 after the first P3 bench runs (`hardware.md`, "SPI2: ENC28J6
 - Heap free 12824 bytes while connected, 9568 at the lowest point (handshake); bss 56 KB.
 - Reconnect after a tanoclo restart: about 3 s; backoff to 32 s during a 40 s outage.
 
-Details: `build.md`, P4 TLS. The cloud LED is wired to the session; the owner still has to check it by eye.
+Details: `build.md`, P4 TLS. The cloud LED is wired to the session; the owner still has to check it by eye (not recorded as done by 2026-11-16).
 
-**P4 #16 result (2026-11-16) [V]:** peak RAM 59 KB reserved and about 46 KB used of 128 KB, at the TLS handshake; 69 KB unreserved, against about 11 KB estimated for P5 (`design.md`, "RAM measured (#16, #17)", open question 17). Handshake 1070-1083 ms, 1055-1064 ms CPU, three P-256 steps of 316-366 ms. The server retransmitted its first flight and the `GET time` reply in every connection, because lwIP's delayed ACK waited for its 250 ms timer; the bridge now ACKs every segment at once, and 8 of 8 connections had no retransmission (`design.md`, "Immediate ACK (#16)"). Production image `8e1c455`, sha256 of `build/tado-bridge.bin` `b1f40033a7646cf54c38f0bcf679fed09670a933a9a6ea510885d3063294fd5e`, OpenOCD verify OK. The radio ACK timing during a handshake (open question 16) is measured in P5.
+**P4 #16 result (2026-11-16) [V]:** peak RAM 59 KB reserved and about 46 KB used of 128 KB, at the TLS handshake; 69 KB unreserved, against about 11 KB estimated for P5 (`design.md`, "RAM measured (#16, #17)", open question 17). Handshake 1070-1083 ms, 1055-1064 ms CPU, three P-256 steps of 316-366 ms. The server retransmitted its first flight and the `GET time` reply in every connection, because lwIP's delayed ACK waited for its 250 ms timer; the bridge now ACKs every segment at once, and 8 of 8 connections had no retransmission (`design.md`, "Immediate ACK (#16)"). Production image `8e1c455`, sha256 of `build/tado-bridge.bin` `b1f40033a7646cf54c38f0bcf679fed09670a933a9a6ea510885d3063294fd5e`, OpenOCD verify OK. The radio ACK timing during a handshake (open question 16, issue #18) is measured in P5. **P4 is done.**
 
 ### P5: Radio link to devices
 
-- Port from freedo (`radio-runtime.md`): ACKs, CCM, 6LoWPAN, wake trains, anchors, listen-before-transmit.
-- Pairing: beacon answer, double Router Advertisements, `d/pair` with tag `0x12` (`radio.md`).
-- Relay CoAP in both directions through the WebSocket frame.
-- **Device to test with:** none chosen yet (owner, 2026-11-11); decide before P5. Candidates: tanoclo's ESP32 room-unit emulator (`tanoclo/docs/emulated_devices.md`), so no real valve has to leave the stock network early. Then one real device.
-- **Measure:**
-  - ACK start time after the Data frame ends, idle and during a TLS handshake. Use the pairing LED (PB8) as a marker on a logic analyser or scope (#16).
-  - Beacon answer time (#28).
-  - Delivery rate with listen-before-transmit on (#25 decision).
-- **Done when:** a device pairs, reports through to tanoclo, and takes a setpoint; ACKs land inside 0-1 ms.
+Restructured in the 2026-11-16 review. The steps run in this order, because each one is the safety gate for the next. Nothing transmits before step 3.
+
+1. **Port, tested on the host (#17).** From freedo (`radio-runtime.md`): frame parse and build, Enhanced ACK, CCM, 6LoWPAN, wake trains, anchors, listen-before-transmit, and the CoAP relay in both directions through the WebSocket frame. The protocol logic is hardware-independent and checked on the laptop against vectors from freedo. Radio buffers are static, not on the FreeRTOS heap (`design.md`, "RAM measured (#16, #17)").
+   - Transmit guards at the lowest layer that keys the transmitter: never on channel 26, ACK and answer only frames addressed to our EUI-64, pair only on channel 10 (`test-bench.md`, "The other tado network").
+   - Nothing on the ACK path logs: `log_printf` takes a mutex without a timeout (last open item of #28).
+   - The DRBG gets a lock before the radio task uses it (`design.md:151`; open question 26).
+2. **Review.** `fw-reviewer` gives a "safe to flash" verdict on the transmit code (`test-bench.md`, gate 4).
+3. **First transmissions, no device involved (#11).** Before keying the transmitter: re-check with the SDR that channel 10 is still quiet, and check the regulatory limits of its sub-band (duty cycle against 1 s wake trains, listen-before-transmit); `test-bench.md:98` records that this was not done. Then send test frames on channel 10 and confirm with the SDR: right frequency, deviation and CRC, and no emission on channel 26 (`burstscan.py`). Measure the bench unit's crystal offset with `demod.py` and decide on the per-unit trim. Settles open question 7.
+4. **Network and counter records (#37, moved from P6).** Owner decision, 2026-11-16: the network key and frame counters are stored in external flash already in P5, so a paired device stays paired across resets and flashes. Layout as in `design.md`, "Slotted records" and "Counter log". This is a storage-format change, so `fw-driver` writes it and `fw-reviewer` reviews it before it is flashed. A fresh network key comes from the DRBG; it never leaves the bridge or enters git.
+5. **Pairing (#19).** Beacon answer, double Router Advertisements, `d/pair` with tag `0x12` (`radio.md`), on channel 10 only, in a short window, for one device named by its EUI-64.
+6. **Measurements.**
+   - ACK start after the Data frame ends, idle and during a TLS handshake (open question 16, #18). Measured on air with `demod.py`, which timestamps to under 1 µs (`test-bench.md`, "Demodulator"). The pairing LED (PB8) as a marker on a logic analyser is only the fallback if a late ACK has to be traced inside the firmware.
+   - Beacon answer time (open question 28, #19).
+   - Delivery rate with listen-before-transmit on (open question 25, #20).
+
+- **Device to test with: one spare real tado device** that is not part of the stock network (owner decision, 2026-11-16; replaces "none chosen yet" of 2026-11-11). The owner names it by its EUI-64, which goes into the gitignored `config/local.cmake`, never into git. tanoclo's ESP32 emulator is not used for now: it sends plain MAC ACKs and no channel scan, and its config defaults to channel 26, the protected channel (`tanoclo/esphome/tado_emulator/tado_emulator.yaml:47`), so it must never be powered up with that default near the stock network.
+- **Owner hand work in P5:** put the spare device into pairing mode when step 5 is ready, and again after a factory reset test. With step 4 done, flashing does not unpair it.
+- **Done when:** the spare device pairs, reports through to tanoclo and takes a setpoint; it stays paired across a reset and a reflash; ACKs start within 0-1 ms of the end of the Data frame (project decision 2026-11-11, stricter than the stock bridge's measured 1.5-2.0 ms), also during a TLS handshake.
 
 ### P6: Storage
 
-- Identity, network and counter records in external flash (`design.md`).
-- Provision serial and EUI-64 from P0.
-- Erase and program while radio traffic runs (#19).
-- **Done when:** the network survives power cycles, a factory reset re-pairs cleanly, and no ACK is missed during flash work.
+- Identity record in external flash (`design.md`); provision the serial and EUI-64 from P0 into it instead of the build-time `config/local.cmake` (#21). The network and counter records moved to P5 (#37).
+- Erase and program while radio traffic runs (open question 19, #22).
+- Factory reset (PB10): erases the network and counter records, keeps the identity.
+- **Done when:** identity and network survive power cycles, a factory reset re-pairs cleanly, and no ACK is missed during flash work.
 
 ### P7: Size check, bootloader and self-update
 
-- **First the size check (#20):** measure the release application size and estimate the bootloader size. Confirm the layout fits, or adjust it.
+- **First the size check (open question 20, #23):** measure the release application size and estimate the bootloader size. Confirm the layout fits, or adjust it. Data point at P4: the application is 131.7 KB of the 448 KB planned for it (`make` size report, 2026-11-16) **[V]**.
 - Bootloader at `0x08000000`, application at `0x08010000`, update and rollback as in `design.md`.
 - Uploader through tanoclo (`POST /api/send-raw` or one added handler).
 - **Done when:** an update installs, a broken image rolls back, and a power cut during install recovers.
@@ -209,6 +230,27 @@ Owner request, 2026-11-14 (`docs/README.md`, "Project decisions"). Runs after P7
 ## Equipment
 
 - ST-Link V2 and access to the SWD test points.
-- Logic analyser or scope, for ACK and beacon timing.
-- A tanoclo server on the LAN.
-- An ESP32 with SX1276 for the emulator (TTGO LoRa32, `tanoclo/docs/emulated_devices.md`), then one spare real device.
+- RTL-SDR, for checking our transmissions and for ACK and beacon timing. A logic analyser or scope is optional (fallback in P5, step 6).
+- A tanoclo server on the bench link (Docker on the laptop, `test-bench.md`).
+- One spare real tado device, not part of the stock network (P5).
+
+## Plan review (2026-11-16)
+
+Changes made in this review, with the reason for each.
+
+| Change | Reason |
+| :--- | :--- |
+| P5 split into six ordered steps, with first transmissions before any device is involved | The old list had no order. The transmit guards, the review and the SDR check of our own emissions must come before pairing, to protect channel 26 |
+| Test device: one spare real device (owner, 2026-11-16) | The plan said "decide before P5". The emulator also defaults to channel 26 and does not behave like a real device at the MAC |
+| Network and counter records moved from P6 to P5 as #37 (owner, 2026-11-16) | Without them the bridge loses its network key at every reset, and a real device would need the owner's hands after every flash |
+| ACK and beacon timing measured with the SDR; logic analyser only as fallback | `demod.py` already timestamps frames to under 1 µs on air, with no probing by the owner |
+| Regulatory check and a fresh channel-10 scan added before the first transmit | `test-bench.md:98` records both as not done |
+| #11 (crystal offset) and the last item of #28 moved to P5; milestones P2, P3, P3.1, P4 closed | Both need transmit code. Nothing else was open in those stages |
+| "#N" now always means a GitHub issue; open questions are named as such, with a mapping table | The two number series overlap (issue #16 is open question 17), which already caused one wrong reference (`fed0467`) |
+| Stale statements removed: "proposal, nothing flashed yet", P3 "open: #27", P3.1 "still to try" | They contradicted the results recorded below them |
+
+Not changed, but worth knowing:
+
+- **No stage covers daily use.** The plan ends at P8. A soak run of several days, the production server address and CA in place of the bench values, and moving the stock network's devices over are not planned (owner, 2026-11-16: not now).
+- **The ACK target of 1 ms is stricter than stock.** `test-bench.md` notes that matching the stock 1.5-2.0 ms would be enough **[I]**; the project decision of 2026-11-11 keeps 1 ms. If P5 measures more than 1 ms but under 2 ms during a TLS handshake, that is a decision for the owner, not a failure of the port.
+- **Open questions 10-14** (stock behaviour seen through tanoclo's proxy mode) stay optional. The firmware matches tanoclo, not the stock cloud.

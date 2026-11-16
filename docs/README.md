@@ -53,6 +53,9 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 - Listen before transmit, as the stock bridge does it.
 - Claude may flash and test the bench bridge within `test-bench.md`; power over USB with the ST-Link 3V3 wire disconnected (changed 2026-11-14 from ST-Link 3V3 only, after the rail sagged to 2.67-2.98 V; USB gives 3.29 V, `hardware.md`); never two supplies at once; tanoclo runs in Docker on the laptop; the stock network's channel is found by SDR scan; no test device yet (2026-11-11).
 - Stock network found on channel 26 (868.3237 MHz) by SDR scan: protected channel (2026-11-11). Test channel 10 (865.1245 MHz), owner decision 2026-11-11. Pair only a device named by EUI-64.
+- Test device for P5 (owner, 2026-11-16): one spare real tado device that is not part of the stock network, named by its EUI-64. tanoclo's ESP32 emulator is not used for now. Replaces "no test device yet" (2026-11-11).
+- Network and counter records move from P6 to P5 (owner, 2026-11-16, issue #37), so a paired device stays paired across resets and flashes. The identity record stays in P6 (#21).
+- No stage for soak testing, production configuration or migrating the stock network's devices for now (owner, 2026-11-16); the plan ends at P8.
 - Work is delegated to subagents with a fixed model and effort per task type (`CLAUDE.md`, `.claude/agents/`), 2026-11-11.
 - Progress is tracked in this repo: milestones P0-P8 and issues, see [`prototype-plan.md`](prototype-plan.md).
 - Code format (owner, 2026-11-12, applied 2026-11-13): all of `src/` follows `.clang-format` (LLVM-based, `AlignConsecutiveMacros` on), formatted with clang-format 23.1.4. The pre-commit hook formats staged `src/` files; a different clang-format version may reformat, so reformat in a commit of its own if the version changes.

@@ -45,7 +45,7 @@ Rules:
 5. **Pairing windows only on the test channel,** and keep them short. Stock devices only join while in pairing mode, but our Router Advertisements under the pairing key must not reach the stock channel.
    **Pair only a device named by its EUI-64.** A tado device nearby scans channels with Beacon Requests (scan below) and could otherwise join the test network. Freedo's pairing flow already supports naming the target (`freedo/docs/PROTOCOL.md:699-705`).
 6. **Fresh network key** for the test network, generated as in `design.md`. Never try to obtain the stock network's key.
-7. **No test device yet** (owner, 2026-11-11). Up to P4 no device is needed. Decide before P5, without taking devices from the stock network unless the owner chooses to.
+7. **Test device: one spare real tado device** that is not part of the stock network (owner, 2026-11-16; until then "no test device yet", 2026-11-11). Its EUI-64 stays out of git. Never power up tanoclo's ESP32 emulator with its default configuration: it transmits on channel 26 (`tanoclo/esphome/tado_emulator/tado_emulator.yaml:47`) **[D]**.
 8. **Listen-before-transmit stays on,** which also helps coexistence (`radio-runtime.md`).
 
 ## The bench unit's own stock configuration [V]

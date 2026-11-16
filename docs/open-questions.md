@@ -15,7 +15,7 @@ Enough is known to start building. What remains is gathered during the build:
 
 - [x] Found the pair button pin over SWD (2026-11-11): PC15, active high.
 - [ ] ~~Firmware stage: find the pair button pin.~~ Build a small diagnostic firmware that watches all free input pins and reports which one changes; the user presses the pair button and we read the result. Quicker alternative needing no new firmware: with the stock firmware running and powered from the ST-Link, read the input registers over SWD before and while the button is held: `mdw 0x40020010` (GPIOA_IDR), `mdw 0x40020410` (GPIOB_IDR), `mdw 0x40020810` (GPIOC_IDR) (`datasheets/rm0383.txt:1730-1732,8179-8180`). Read-only. Candidate pins: 7 (NRST), 2, 4, 12, 29, 30-33, 38, 39, 40, 42, 43. The button switches 3V3 through a diode, so expect a bit to go to 1.
-- [ ] Make a full backup before any flash (user): `read.sh` twice, compare, and store the dumps privately. See "Full backup" in `hardware.md`. Needs an ST-Link V2 and access to the test points.
+- [x] Done 2026-11-11 (P0). Make a full backup before any flash (user): `read.sh` twice, compare, and store the dumps privately. See "Full backup" in `hardware.md`. Needs an ST-Link V2 and access to the test points.
 - [x] Probed the PCB (2026-11-11): ENC28J60 INT on PB2, Ethernet SPI wiring, RESET on PC14 and all four LEDs confirmed. See `hardware.md`.
 
 ## A. Answerable at the desk
