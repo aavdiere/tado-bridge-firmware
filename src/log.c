@@ -69,7 +69,7 @@ static void panic_wait_ms(uint32_t ms, bool kick) {
     }
 }
 
-static void panic_flash(unsigned code) {
+__attribute__((noreturn)) static void panic_flash(unsigned code) {
     board_power_led_force();
     for (unsigned cycle = 0;; cycle++) {
         bool kick = cycle < PANIC_KICK_CYCLES;
