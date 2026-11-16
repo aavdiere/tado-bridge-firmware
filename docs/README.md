@@ -47,6 +47,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 - Stay strictly compatible with tanoclo's frame format and auth flow, so tanoclo is the server and test harness.
 - Support 16 devices for now.
 - 2026-11-11: test-only code paths (such as the P1 watchdog hang test) are removed once their test passes, not left in behind flags.
+- Power LED (2026-11-14): steady on while the bridge runs normally; on a fault it flashes a fault code (N short flashes, pause). Codes and behaviour: `hardware.md`, "LED roles" (#36).
 - Firmware update images are not signed.
 - Listen before transmit, as the stock bridge does it.
 - Claude may flash and test the bench bridge within `test-bench.md`; power over USB with the ST-Link 3V3 wire disconnected (changed 2026-11-14 from ST-Link 3V3 only, after the rail sagged to 2.67-2.98 V; USB gives 3.29 V, `hardware.md`); never two supplies at once; tanoclo runs in Docker on the laptop; the stock network's channel is found by SDR scan; no test device yet (2026-11-11).

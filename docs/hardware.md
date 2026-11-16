@@ -63,7 +63,17 @@ The earlier guess of PA8 for the cloud LED was wrong; PA8 is not accounted for.
 
 **Bench I/O check (2026-11-11) [V]:** all four LEDs lit in the expected order when their pins were driven high; factory reset PB10 gave two clean 1-0-1 presses with the internal pull-up. At rest PB2 (ENC28J60 INT) reads 1, idle for an active-low interrupt, and PB6 and PB7 read 1 despite internal pull-downs, which suggests external I2C pull-ups for the HomeKit chip **[I]**.
 
-**Firmware use (#8)** [I]: router LED mirrors the reset button, pairing LED mirrors the pair button, power LED is the heartbeat and the cloud LED a placeholder blink; these roles are P1 test wiring, not the final LED behaviour. Since P4 (#15) the router LED shows Ethernet link and DHCP, and the cloud LED the server session (`design.md`, "TLS and WebSocket (#15)"). The firmware sets the debug freeze bit for the IWDG (`build.md`, P1) and touches no other pin.
+**LED roles (#8, #15, #36)**. Router LED: off without Ethernet link, blinking with link but no address, on with a DHCP lease; cloud LED: server session (`design.md`, "TLS and WebSocket (#15)"); pairing LED mirrors the pair button (P1 test wiring) **[I]**. **Power LED (PB1, not PA1: PA1 is the radio's GDO2, `src/board.h`): steady on from `board_init()` while the bridge runs normally, and it changes only on a fault** (owner decision, 2026-11-14, `README.md`, "Project decisions"). On a fault it goes dark between N short flashes (150 ms on, 250 ms off), then pauses, repeating every 2.5 s:
+
+| Flashes | Fault | Where | Behaviour |
+| :--- | :--- | :--- | :--- |
+| 1 | `fw_panic`: failed assert, heap exhausted, stack overflow, `dhcp_start` failed, `vTaskStartScheduler` returned, `rng_bytes` without random numbers | `src/log.c` | Interrupts off, no scheduler: busy-wait on the TIM2 1 MHz counter. The IWDG is kicked for 4 flash cycles (up to 10 s) so the code can be read, then no longer: the IWDG resets the board 2-5.6 s later (reset cause `IWDG` in the next boot log) |
+| 2 | CPU fault: HardFault, MemManage, BusFault, UsageFault | `src/log.c`, `src/faults.c` | As for 1 |
+| 3 | Entropy fail-closed: no seeded CTR_DRBG, PA3 start-up or health test failed (#14); the network stays off | `src/net.c` | Task level: the scheduler runs, the net task keeps checking in and retries every 10 s; the LED returns to steady on when the retry passes |
+
+Why a bounded kick **[I]**: the old panic path spun without kicking, so the board reset 2-6 s after the panic, too soon to count flashes reliably. Kicking forever would leave a panicked board hung with the LED flashing; the bounded kick shows the code and then recovers by itself. A panic before `timebase_init()` (TIM2 not running) cannot flash, as before it cannot reset either (IWDG starts just before the scheduler). Runtime entropy failure after seeding is not flashed: it surfaces as a failed TLS step or, in `rng_bytes`, as panic code 1. Visual check on the bench is pending (#36, #35).
+
+**Firmware use (#8)** [I]: P1 test wiring was router LED = reset button, pairing LED = pair button; see "LED roles" above. The firmware sets the debug freeze bit for the IWDG (`build.md`, P1) and touches no other pin.
 
 **Pin map complete.** Every pin the firmware needs is known.
 

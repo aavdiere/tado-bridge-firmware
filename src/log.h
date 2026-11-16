@@ -11,11 +11,17 @@ void log_init(void);
 void log_lock_init(void);
 void log_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-/* Fatal error: interrupts off, log over RTT without locking, then spin until
- * the watchdog resets the board. Never returns. */
+/* Fault codes: number of short flashes of the power LED (docs/hardware.md,
+ * "LED roles"). */
+enum fault_code { FAULT_PANIC = 1, FAULT_CPU = 2, FAULT_ENTROPY = 3 };
+
+/* Fatal error: interrupts off, log over RTT without locking, flash the power
+ * LED FAULT_PANIC (log.c, panic_flash), then reset through the watchdog.
+ * Never returns. */
 __attribute__((noreturn)) void fw_panic(const char *what, const char *file, int line);
 
-/* Fault report: log stacked PC/LR/xPSR and the fault status registers, then spin. */
+/* Fault report: log stacked PC/LR/xPSR and the fault status registers, then flash FAULT_CPU and
+ * reset as fw_panic. */
 __attribute__((noreturn, used, externally_visible)) void fw_fault_report(const char     *name,
                                                                          const uint32_t *frame);
 

@@ -90,6 +90,9 @@ void board_init(void) {
         gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, led_pin[i]);
         gpio_set_output_options(GPIOB, GPIO_OTYPE_PP, GPIO_OSPEED_2MHZ, led_pin[i]);
     }
+    /* Power LED: steady on while the bridge runs normally; it only changes on
+     * a fault (docs/hardware.md, "LED roles"). */
+    board_led(LED_POWER, true);
     gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, RESET_BTN_PIN);
     gpio_mode_setup(GPIOC, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, PAIR_BTN_PIN);
 
@@ -109,6 +112,14 @@ void board_init(void) {
     gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, BOARD_ENC_INT_PIN);
     gpio_set_output_options(GPIOC, GPIO_OTYPE_PP, GPIO_OSPEED_2MHZ, BOARD_ENC_RESET_PIN);
     gpio_mode_setup(GPIOC, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, BOARD_ENC_RESET_PIN);
+}
+
+void board_power_led_force(void) {
+    RCC_AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
+    (void)RCC_AHB1ENR;
+    GPIO_BSRR(GPIOB) = (uint32_t)led_pin[LED_POWER] << 16; /* off */
+    GPIO_OTYPER(GPIOB) &= ~(uint32_t)led_pin[LED_POWER];
+    GPIO_MODER(GPIOB) = (GPIO_MODER(GPIOB) & ~(3u << 2u)) | (1u << 2u); /* PB1 output */
 }
 
 void board_led(enum led led, bool on) {

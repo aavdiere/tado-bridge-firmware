@@ -1,7 +1,7 @@
 /* Net task (#12, #13, #15): ENC28J60 bring-up and service, lwIP (IPv4, DHCP,
  * DNS, ICMP echo), link and address on the router LED, the server session
- * (TLS, WebSocket, auth: src/session.c), per-minute counters, power LED
- * heartbeat, watchdog check-in.
+ * (TLS, WebSocket, auth: src/session.c), per-minute counters,
+ * watchdog check-in, and the entropy fault code on the power LED.
  * Design: docs/design.md "Tasks" (the net task owns SPI2 and runs lwIP);
  * driver: src/enc28j60.c; lwIP options: src/lwipopts.h (NO_SYS: this task is
  * the only lwIP context). */
@@ -45,7 +45,6 @@
 #define NOTE_STORM (1u << 1)
 
 #define POLL_MS         50u  /* service pass at least this often, also without INT */
-#define HEARTBEAT_MS    500u /* power LED toggles: 1 Hz blink, as in P1 */
 #define ROUTER_BLINK_MS 250u /* router LED with link but no address: 2 Hz blink */
 #define RETRY_PERIOD_MS 10000u
 #define STATS_PERIOD_MS 60000u
@@ -83,24 +82,19 @@ static struct counters minute, total;
 static struct netif eth;
 static bool         link_up;
 static bool         have_addr;
-static bool         power_on, router_blink;
-static TickType_t   next_beat, next_blink;
+static bool         router_blink;
+static TickType_t   next_blink;
 
 /* Server name lookup, once per lease; retried every RETRY_PERIOD_MS. */
 static enum { DNS_IDLE, DNS_PENDING, DNS_DONE } dns_state;
 static ip_addr_t  server_ip;
 static TickType_t dns_t0, dns_retry_at;
 
-/* Power LED heartbeat; router LED: off without link, blinking with link but
+/* Router LED: off without link, blinking with link but
  * no address, on with a DHCP lease (prototype-plan.md P3: "the router LED
  * shows link and DHCP"). */
 static void leds(void) {
     TickType_t now = xTaskGetTickCount();
-    if ((int32_t)(now - next_beat) >= 0) {
-        next_beat = now + pdMS_TO_TICKS(HEARTBEAT_MS);
-        power_on  = !power_on;
-        board_led(LED_POWER, power_on);
-    }
     if ((int32_t)(now - next_blink) >= 0) {
         next_blink   = now + pdMS_TO_TICKS(ROUTER_BLINK_MS);
         router_blink = !router_blink;
@@ -108,12 +102,31 @@ static void leds(void) {
     board_led(LED_ROUTER, link_up && (have_addr || router_blink));
 }
 
-/* Wait without starving the watchdog or the heartbeat. */
+/* Wait without starving the watchdog. */
 static void idle_ms(uint32_t ms) {
     for (uint32_t t = 0; t < ms; t += POLL_MS) {
         watchdog_checkin(WDG_NET);
         leds();
         vTaskDelay(pdMS_TO_TICKS(POLL_MS));
+    }
+}
+
+/* Latched fault with the scheduler running: the power LED shows `code` short
+ * flashes and a pause, repeating for ms (docs/hardware.md, "LED roles"). The
+ * LED is off between the flashes, so the code stands out from steady on. */
+#define FLASH_ON_MS    150u
+#define FLASH_OFF_MS   250u
+#define FLASH_CYCLE_MS 2500u
+static void fault_flash_ms(unsigned code, uint32_t ms) {
+    for (uint32_t t = 0; t < ms; t += FLASH_CYCLE_MS) {
+        for (unsigned i = 0; i < code; i++) {
+            board_led(LED_POWER, true);
+            vTaskDelay(pdMS_TO_TICKS(FLASH_ON_MS));
+            board_led(LED_POWER, false);
+            watchdog_checkin(WDG_NET);
+            vTaskDelay(pdMS_TO_TICKS(FLASH_OFF_MS));
+        }
+        idle_ms(FLASH_CYCLE_MS - code * (FLASH_ON_MS + FLASH_OFF_MS));
     }
 }
 
@@ -395,8 +408,7 @@ static void log_minute(void) {
 
 void net_task_run(void) {
     TaskHandle_t self = xTaskGetCurrentTaskHandle();
-    next_beat         = xTaskGetTickCount();
-    next_blink        = next_beat;
+    next_blink        = xTaskGetTickCount();
     enc28j60_setup(self, NOTE_INT, NOTE_STORM);
     LOG("eth: SPI2 SCK %lu Hz, mode 0", (unsigned long)enc28j60_sck_hz());
 
@@ -405,8 +417,9 @@ void net_task_run(void) {
      * the bridge stays off the network (#14, docs/design.md "Entropy"). */
     while (!rng_init()) {
         LOG("rng: no random numbers; network stays off, retrying in %u s", RETRY_PERIOD_MS / 1000u);
-        idle_ms(RETRY_PERIOD_MS);
+        fault_flash_ms(FAULT_ENTROPY, RETRY_PERIOD_MS);
     }
+    board_led(LED_POWER, true); /* back to steady on */
 
     lwip_init();
     netif_add(&eth, IP4_ADDR_ANY4, IP4_ADDR_ANY4, IP4_ADDR_ANY4, NULL, eth_netif_init, netif_input);
@@ -423,7 +436,7 @@ void net_task_run(void) {
     bool       more = false, session_busy = false;
     for (;;) {
         uint32_t bits = 0;
-        /* Never block forever: the watchdog check-in, the heartbeat, lwIP's
+        /* Never block forever: the watchdog check-in, lwIP's
          * timers and the EPKTCNT poll (errata #6, enc28j60.c) keep coming
          * without INT. lwIP's shortest timer is TCP's 250 ms (TCP_TMR_INTERVAL),
          * so POLL_MS keeps every timer within 50 ms of its time. While the TLS

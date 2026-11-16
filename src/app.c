@@ -30,7 +30,7 @@ static void radio_task(void *arg) {
 
 static void net_task(void *arg) {
     (void)arg;
-    net_task_run(); /* src/net.c; owns SPI2, power LED heartbeat, watchdog check-in */
+    net_task_run(); /* src/net.c; owns SPI2, watchdog check-in */
 }
 
 struct button {

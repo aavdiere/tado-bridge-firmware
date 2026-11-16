@@ -5,8 +5,8 @@
  * "Tasks"). Brings the chip up (retrying every 10 s), runs lwIP with DHCP and
  * resolves the server host (NET_SERVER_HOST) once per lease, shows link and
  * address on the router LED (off: no link, blinking: link without address,
- * on: DHCP lease), logs counters every 60 s, keeps the power LED heartbeat
- * and the watchdog check-in. Never returns. */
+ * on: DHCP lease), logs counters every 60 s, flashes the entropy fault code on the power LED when
+ * random numbers fail, and the watchdog check-in. Never returns. */
 void net_task_run(void);
 
 #endif

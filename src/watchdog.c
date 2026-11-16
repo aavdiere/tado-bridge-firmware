@@ -61,11 +61,15 @@ void watchdog_checkin(enum wdg_task who) {
     __atomic_fetch_or(&alive, (uint32_t)who, __ATOMIC_RELAXED);
 }
 
+void watchdog_kick(void) {
+    IWDG_KR = IWDG_KR_RESET;
+}
+
 uint32_t watchdog_kick_if_alive(void) {
     uint32_t seen    = __atomic_exchange_n(&alive, 0, __ATOMIC_RELAXED);
     uint32_t missing = WDG_ALL & ~seen;
     if (missing == 0) {
-        IWDG_KR = IWDG_KR_RESET;
+        watchdog_kick();
     }
     return missing;
 }

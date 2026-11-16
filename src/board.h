@@ -40,6 +40,11 @@ void board_cs_early(void);
  * touched; never PA13/PA14 (SWD) or PB6/PB7 (HomeKit I2C). */
 void board_init(void);
 
+/* Panic path: makes the power LED pin (PB1) a push-pull output, off, with
+ * register writes only, in case board_init() has not run. Touches no other
+ * pin. */
+void board_power_led_force(void);
+
 /* Atomic (BSRR); safe from any task. */
 void board_led(enum led led, bool on);
 

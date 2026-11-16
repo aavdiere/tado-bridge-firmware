@@ -24,6 +24,10 @@ void watchdog_start(void);
 /* Atomic; any task. */
 void watchdog_checkin(enum wdg_task who);
 
+/* Reload the IWDG unconditionally. Only for housekeeping (through
+ * watchdog_kick_if_alive) and the panic flasher in log.c. */
+void watchdog_kick(void);
+
 /* Housekeeping only: kick the IWDG if every task in WDG_ALL checked in since
  * the last call, then clear the flags. Returns the missing bits (0 = kicked). */
 uint32_t watchdog_kick_if_alive(void);
