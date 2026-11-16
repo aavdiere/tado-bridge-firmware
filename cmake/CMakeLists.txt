@@ -224,6 +224,7 @@ add_executable(${BINARY}
     ../src/csl.c
     ../src/msgq.c
     ../src/relay.c
+    ../src/link.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c

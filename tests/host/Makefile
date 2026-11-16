@@ -18,7 +18,7 @@ MBEDTLS_CFLAGS := -std=c11 -O1 -g -fsanitize=address,undefined -I. -I$(MBEDTLS)/
 
 AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o
 
-TESTS := test_mac test_lowpan test_txgate test_csl test_relay
+TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -26,6 +26,7 @@ test_lowpan_SRCS := lowpan.c mac.c ccm.c
 test_txgate_SRCS := txgate.c mac.c ccm.c
 test_csl_SRCS := csl.c txgate.c mac.c ccm.c
 test_relay_SRCS := relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
+test_link_SRCS := link.c relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
 
 .PHONY: all run
 all: run

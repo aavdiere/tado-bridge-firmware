@@ -1,0 +1,285 @@
+/* Radio link layer (#17). See link.h. */
+#include "link.h"
+
+#include "csl.h"
+#include "lowpan.h"
+#include "msgq.h"
+#include "relay.h"
+
+#include <string.h>
+
+/* Queues between the radio task and the net task, in static RAM
+ * (docs/design.md "RAM measured (#16, #17)"). Each holds three of the
+ * largest messages (28 + 1232 bytes) or about 40 typical ones. */
+#define QUEUE_BYTES 4096u
+_Static_assert(QUEUE_BYTES > 3u * (RELAY_MSG_MAX + 2u), "three full-size messages");
+
+static uint8_t     up_store[QUEUE_BYTES], down_store[QUEUE_BYTES];
+static struct msgq up_q, down_q;
+
+static struct relay   relay;
+static struct ccm_key net_key;
+static uint8_t        own[MAC_EUI_LEN];
+static bool           have_own;
+
+/* A downlink that found the job pool full waits at the head of its queue,
+ * but not for ever: a device that never answers must not hold up the
+ * messages for the others behind it. */
+#define DOWN_WAIT_MS 30000u
+static bool     down_waiting;
+static uint32_t down_wait_ms;
+
+static struct link_stats stats;
+
+/* Scratch for one frame's plaintext and for one message from the server.
+ * Radio task only; static because its stack is 2 KB. */
+static uint8_t plain[MAC_FRAME_MAX];
+static uint8_t down_msg[RELAY_MSG_MAX];
+
+/* Router Advertisements: every 200-600 s (freedo docs/PROTOCOL.md:
+ * 1378-1383; a device stops reporting after about 20 minutes without one),
+ * and soon after a Router Solicitation. Only while a device has been heard
+ * in the last 30 minutes: with nobody listening the 1 s train is wasted
+ * airtime [I]. */
+#define RA_MIN_MS       200000u
+#define RA_SPAN_MS      400000u
+#define RA_SOLICITED_MS 1000u
+#define RA_HOLDOFF_MS   10000u
+#define RA_LISTENER_MS  1800000u
+static volatile uint32_t router_gw, router_dns; /* written by the net task */
+static uint32_t          ra_due_ms, ra_last_ms, heard_ms;
+static bool              ra_armed, ra_sent_once, heard;
+
+void link_init(const uint8_t own_wire[MAC_EUI_LEN]) {
+    msgq_init(&up_q, up_store, sizeof up_store);
+    msgq_init(&down_q, down_store, sizeof down_store);
+    have_own = own_wire != NULL;
+    if (have_own) {
+        memcpy(own, own_wire, MAC_EUI_LEN);
+    }
+    relay_init(&relay, own);
+    link_clear_key();
+}
+
+static void csl_restart(uint32_t counter) {
+    struct csl_config cfg = {.key = {&net_key, NULL}, .counter = counter};
+    memcpy(cfg.own, own, MAC_EUI_LEN);
+    csl_init(&cfg);
+}
+
+void link_set_key(const uint8_t key[CCM_KEY_LEN], uint32_t first_counter) {
+    ccm_set_key(&net_key, key);
+    csl_restart(first_counter);
+    ra_armed = false;
+}
+
+void link_clear_key(void) {
+    ccm_clear_key(&net_key);
+    csl_restart(0);
+    ra_armed = false;
+}
+
+uint32_t link_counter(void) {
+    return csl_counter();
+}
+
+bool link_ready(void) {
+    return have_own && net_key.set;
+}
+
+const uint8_t *link_own(void) {
+    return have_own ? own : NULL;
+}
+
+bool link_uplink_room(void) {
+    return msgq_room(&up_q) >= RELAY_MSG_MAX;
+}
+
+const struct link_stats *link_stats(void) {
+    return &stats;
+}
+
+/* --- Receive ---------------------------------------------------------------- */
+/* An ICMPv6 Router Solicitation inside a compressed packet. */
+static bool is_router_solicitation(const uint8_t *pkt, size_t len) {
+    struct lowpan_iphc h;
+    return lowpan_parse_iphc(pkt, len, &h) && !h.nh_compressed && h.next_header == LOWPAN_NH_ICMPV6
+           && h.len < len && pkt[h.len] == 133u;
+}
+
+static void solicit(uint32_t now_ms) {
+    stats.rs_seen++;
+    uint32_t due = now_ms + RA_SOLICITED_MS;
+    if (ra_sent_once && (uint32_t)(now_ms - ra_last_ms) < RA_HOLDOFF_MS) {
+        due = ra_last_ms + RA_HOLDOFF_MS;
+    }
+    if (!ra_armed || (int32_t)(due - ra_due_ms) < 0) {
+        ra_due_ms = due;
+        ra_armed  = true;
+    }
+}
+
+static enum link_rx on_data(const uint8_t *frame, size_t len, uint32_t now_ms) {
+    if (len < MAC_HDR_LEN || memcmp(frame + 3, own, MAC_EUI_LEN) != 0) {
+        return LINK_RX_NOT_FOR_US;
+    }
+    if (!net_key.set) {
+        return LINK_RX_NO_KEY;
+    }
+    struct mac_data d;
+    if (mac_open_data(&net_key, frame, len, plain, sizeof plain, &d) != MAC_OPEN_OK) {
+        return LINK_RX_MIC_FAIL; /* a joiner under the pairing key is #19 */
+    }
+    heard    = true;
+    heard_ms = now_ms;
+
+    struct relay_uplink up;
+    switch (relay_uplink(&relay, &d, now_ms, &up)) {
+        case RELAY_UP_FORWARD: {
+            uint8_t hdr[RELAY_HDR_LEN];
+            relay_frame_header(hdr, up.ipv6, up.port, up.coap_len);
+            return msgq_put(&up_q, hdr, sizeof hdr, up.coap, up.coap_len) ? LINK_RX_FORWARDED
+                                                                          : LINK_RX_DROPPED;
+        }
+        case RELAY_UP_HELD:
+            return LINK_RX_HELD;
+        case RELAY_UP_DUPLICATE:
+            return LINK_RX_DUPLICATE;
+        case RELAY_UP_NOT_UDP:
+            if (is_router_solicitation(d.dgram, d.dgram_len)) {
+                solicit(now_ms);
+            }
+            return LINK_RX_NOT_RELAYED;
+        default:
+            return LINK_RX_NOT_RELAYED;
+    }
+}
+
+static enum link_rx on_broadcast(const uint8_t *frame, size_t len, uint32_t now_ms) {
+    if (!net_key.set) {
+        return LINK_RX_NO_KEY;
+    }
+    size_t n = 0;
+    if (mac_open(&net_key, frame, len, plain, sizeof plain, &n) != MAC_OPEN_OK || n < 2u) {
+        return LINK_RX_MIC_FAIL;
+    }
+    heard    = true;
+    heard_ms = now_ms;
+    if (is_router_solicitation(plain + 2, n - 2u)) {
+        solicit(now_ms);
+    }
+    return LINK_RX_BROADCAST;
+}
+
+enum link_rx
+link_on_frame(const uint8_t *frame, size_t len, bool crc_ok, uint64_t end_us, uint32_t now_ms) {
+    enum link_rx r = LINK_RX_OTHER;
+    /* The coordinator sees every frame while it waits for an Enhanced ACK:
+     * a bad CRC there may be the ACK, damaged. */
+    bool taken = csl_on_frame(frame, len, crc_ok, end_us);
+    if (!crc_ok) {
+        r = LINK_RX_BAD_CRC;
+    } else if (taken) {
+        r = LINK_RX_ACK_TAKEN;
+    } else if (have_own) {
+        switch (mac_classify(frame, len)) {
+            case MAC_DATA:
+            case MAC_DATA_PENDING:
+                r = on_data(frame, len, now_ms);
+                break;
+            case MAC_BROADCAST:
+                r = on_broadcast(frame, len, now_ms);
+                break;
+            case MAC_ENH_ACK:
+                r = LINK_RX_ACK_OTHER;
+                break;
+            case MAC_BEACON_REQUEST:
+                r = LINK_RX_BEACON_REQ;
+                break;
+            default:
+                break;
+        }
+    }
+    stats.rx[r]++;
+    return r;
+}
+
+/* --- Downlink and Router Advertisements --------------------------------------- */
+void link_set_router(uint32_t gateway, uint32_t dns) {
+    router_gw  = gateway;
+    router_dns = dns;
+}
+
+static void router_advertisement(uint32_t now_ms, uint32_t rnd) {
+    if (!ra_armed) {
+        /* First one soon after the key is set, then every 200-600 s. */
+        ra_due_ms = now_ms + RA_SOLICITED_MS;
+        ra_armed  = true;
+    }
+    if ((int32_t)(now_ms - ra_due_ms) < 0) {
+        return;
+    }
+    ra_due_ms = now_ms + RA_MIN_MS + rnd % RA_SPAN_MS;
+    if (!heard || (uint32_t)(now_ms - heard_ms) > RA_LISTENER_MS) {
+        return; /* nobody to hear it */
+    }
+    uint8_t  pkt[LOWPAN_RA_LEN];
+    uint32_t gw = router_gw, dns = router_dns;
+    if (lowpan_build_ra(pkt, sizeof pkt, own, (const uint8_t *)&gw, (const uint8_t *)&dns)
+        && csl_enqueue_broadcast(pkt, sizeof pkt, 0xFFFFu, 0, CSL_KEY_NETWORK)) {
+        stats.ra_queued++;
+        ra_last_ms   = now_ms;
+        ra_sent_once = true;
+    } else {
+        ra_due_ms = now_ms + RA_SOLICITED_MS; /* the one before is still queued: try again */
+    }
+}
+
+void link_poll(uint32_t now_ms, uint32_t rnd) {
+    size_t n;
+    while ((n = msgq_peek(&down_q, down_msg, sizeof down_msg)) != 0) {
+        if (!link_ready()) {
+            stats.down_refused++;
+        } else {
+            switch (relay_downlink(&relay, down_msg, n)) {
+                case RELAY_DOWN_QUEUED:
+                    stats.down_queued++;
+                    break;
+                case RELAY_DOWN_QUEUE_FULL:
+                    /* Keep it for a later pass, when jobs have finished. Its
+                     * turn comes before any later message, so the order of
+                     * the server's messages holds. */
+                    if (!down_waiting) {
+                        down_waiting = true;
+                        down_wait_ms = now_ms;
+                    }
+                    if ((uint32_t)(now_ms - down_wait_ms) < DOWN_WAIT_MS) {
+                        goto advertise;
+                    }
+                    stats.down_full++;
+                    break;
+                default:
+                    stats.down_refused++;
+                    break;
+            }
+        }
+        down_waiting = false;
+        msgq_pop(&down_q);
+    }
+advertise:
+    if (link_ready()) {
+        router_advertisement(now_ms, rnd);
+    }
+}
+
+bool link_downlink_put(const uint8_t *msg, size_t len) {
+    return msgq_put(&down_q, msg, len, NULL, 0);
+}
+
+size_t link_uplink_peek(uint8_t *out, size_t cap) {
+    return msgq_peek(&up_q, out, cap);
+}
+
+void link_uplink_pop(void) {
+    msgq_pop(&up_q);
+}

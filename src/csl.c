@@ -30,8 +30,9 @@
 
 #include <string.h>
 
-#define JOB_NONE 0xFFu
-_Static_assert(CSL_JOB_POOL < JOB_NONE, "job index fits");
+#define JOB_NONE   0xFFu
+#define POOL_SLOTS (CSL_JOB_POOL + 1u)
+_Static_assert(POOL_SLOTS < JOB_NONE, "job index fits");
 _Static_assert(CSL_BODY_MAX >= MAC_DATA_MAX_DGRAM, "a job holds a full datagram");
 
 enum { KIND_DATA, KIND_BROADCAST };
@@ -70,7 +71,7 @@ static struct {
     uint32_t          counter;
     uint8_t           seq;
 
-    struct job      jobs[CSL_JOB_POOL];
+    struct job      jobs[CSL_JOB_POOL + 1u]; /* one more, kept for a broadcast */
     uint8_t         free_head, free_count;
     struct neighbor nb[CSL_NEIGHBORS];
     uint8_t         cursor;
@@ -178,11 +179,11 @@ static uint64_t anchor_next_sample(const struct anchor *a, uint64_t from, uint32
 
 /* --- Job pool and queues (freedo :1124-1212) -------------------------------- */
 static void pool_init(void) {
-    for (unsigned i = 0; i < CSL_JOB_POOL; i++) {
-        g.jobs[i].next = i + 1u < CSL_JOB_POOL ? (uint8_t)(i + 1u) : JOB_NONE;
+    for (unsigned i = 0; i < POOL_SLOTS; i++) {
+        g.jobs[i].next = i + 1u < POOL_SLOTS ? (uint8_t)(i + 1u) : JOB_NONE;
     }
     g.free_head  = 0;
-    g.free_count = CSL_JOB_POOL;
+    g.free_count = POOL_SLOTS;
     for (unsigned i = 0; i < CSL_NEIGHBORS; i++) {
         g.nb[i].used  = false;
         g.nb[i].head  = JOB_NONE;
@@ -209,8 +210,15 @@ uint32_t csl_counter(void) {
     return g.counter;
 }
 
+/* One slot stays free for a broadcast while none is queued, so that Data
+ * frames for a device that does not answer cannot keep a Router
+ * Advertisement out. Broadcasts use queue 0 (nb_find). */
+static unsigned reserved(void) {
+    return g.nb[0].count == 0 ? 1u : 0u;
+}
+
 unsigned csl_free_jobs(void) {
-    return g.free_count;
+    return g.free_count > reserved() ? g.free_count - reserved() : 0u;
 }
 
 /* The queue of dst. Slot 0 is kept for broadcasts, so that 16 devices
@@ -248,7 +256,8 @@ static bool enqueue(const uint8_t  dst[MAC_EUI_LEN],
                     uint16_t       id,
                     unsigned       flags,
                     enum csl_key   key) {
-    if (len == 0 || len > max || key >= CSL_KEY_COUNT || g.free_head == JOB_NONE) {
+    if (len == 0 || len > max || key >= CSL_KEY_COUNT || g.free_head == JOB_NONE
+        || (kind == KIND_DATA && csl_free_jobs() == 0)) {
         return false;
     }
     struct neighbor *n = nb_find(dst, true);
