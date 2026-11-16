@@ -222,6 +222,8 @@ add_executable(${BINARY}
     ../src/lowpan.c
     ../src/txgate.c
     ../src/csl.c
+    ../src/msgq.c
+    ../src/relay.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c
