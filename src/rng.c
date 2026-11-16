@@ -1,9 +1,16 @@
 /* CTR_DRBG seeded from the PA3 entropy pool (#14, docs/design.md "Entropy"). */
+/* The reseed counter is read to keep a reseed out of the radio task
+ * (rng_try_bytes); mbedTLS has no accessor for it. */
+#define MBEDTLS_ALLOW_PRIVATE_ACCESS
+
 #include "rng.h"
 
 #include "entropy.h"
 #include "log.h"
 #include "timebase.h"
+
+#include "FreeRTOS.h"
+#include "semphr.h"
 
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/platform_util.h"
@@ -16,9 +23,19 @@
 #define UID_BASE 0x1FFF7A10u
 
 static mbedtls_ctr_drbg_context drbg;
-static bool                     ready;
+/* Set last in rng_init(), after the lock exists; read by other tasks. */
+static volatile bool ready;
+/* The DRBG has one state: every request holds this (#17, the radio task
+ * draws from it too). A request can include a reseed, about 45 ms of ADC
+ * readings in the caller's task (docs/design.md "Entropy: implementation"),
+ * so the lock can be held that long. */
+static SemaphoreHandle_t lock;
 
 bool rng_init(void) {
+    if (!lock) { /* once, also when the start-up test fails and is retried */
+        lock = xSemaphoreCreateMutex();
+        configASSERT(lock);
+    }
     struct entropy_report r;
     bool                  ok = entropy_startup(&r);
     LOG("rng: PA3 start-up test %s: %lu readings, range %u-%u, longest run %u, APT max %u of 512, "
@@ -61,16 +78,29 @@ int rng_random(void *ctx, unsigned char *out, size_t len) {
     if (!ready) {
         return -1;
     }
-    while (len > 0u) {
-        size_t n   = len < MBEDTLS_CTR_DRBG_MAX_REQUEST ? len : MBEDTLS_CTR_DRBG_MAX_REQUEST;
-        int    ret = mbedtls_ctr_drbg_random(&drbg, out, n);
-        if (ret != 0) {
-            return ret; /* a reseed failed: entropy_get() latched the failure */
-        }
+    int ret = 0;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    while (len > 0u && ret == 0) {
+        size_t n = len < MBEDTLS_CTR_DRBG_MAX_REQUEST ? len : MBEDTLS_CTR_DRBG_MAX_REQUEST;
+        ret      = mbedtls_ctr_drbg_random(&drbg, out, n); /* non-zero: a reseed failed, latched */
         out += n;
         len -= n;
     }
-    return 0;
+    xSemaphoreGive(lock);
+    return ret;
+}
+
+bool rng_try_bytes(void *out, size_t len) {
+    if (!ready || len > MBEDTLS_CTR_DRBG_MAX_REQUEST || xSemaphoreTake(lock, 0) != pdTRUE) {
+        return false;
+    }
+    /* mbedTLS reseeds inside a request once the counter has passed the
+     * interval (vendor/mbedtls/library/ctr_drbg.c, mbedtls_ctr_drbg_random_
+     * with_add). Leave that request to the net task, which owns the ADC. */
+    bool ok =
+        drbg.reseed_counter < drbg.reseed_interval && mbedtls_ctr_drbg_random(&drbg, out, len) == 0;
+    xSemaphoreGive(lock);
+    return ok;
 }
 
 void rng_bytes(void *out, size_t len) {
