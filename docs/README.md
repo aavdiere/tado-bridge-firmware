@@ -64,3 +64,4 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 - Duty cycle (owner, 2026-11-17): 1 % in 865-868 MHz is correct under the EU rules; the firmware keeps a rolling 30 s per hour airtime budget (`src/airtime.h`, `docs/open-questions.md` row 32).
 - Airtime after a reset (owner, 2026-11-17): the window restarts from 0 at boot; no record is kept over a reset (`docs/radio-runtime.md`).
 - Network slots (owner, 2026-11-17): they stay at `0x102000`/`0x103000`; overwriting the stock configuration there is accepted, the backup in `~/ib01-backups/` is enough (`docs/design.md`, "Layout (external flash)").
+- Remote pairing (owner, 2026-11-17): tanoclo may open a pairing window remotely; the button remains. Built later (`docs/open-questions.md` row 28a).
