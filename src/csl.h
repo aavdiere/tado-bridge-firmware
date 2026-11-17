@@ -79,6 +79,10 @@ uint32_t csl_counter_limit(void);
 /* --- Queue ---------------------------------------------------------------- */
 #define CSL_JOB_MORE    0x01u /* more fragments of the same datagram follow */
 #define CSL_JOB_PAIRING 0x02u /* part of pairing: passed to the transmit gate (#19) */
+/* A broadcast with Frame Pending set (59 e8): the first copy of a Router
+ * Advertisement in a pairing window, which another copy under the pairing
+ * key follows (freedo docs/PROTOCOL.md:668-672, #19). */
+#define CSL_JOB_PENDING 0x04u
 
 /* Free job slots; a fragmented datagram is queued only if all of its
  * fragments fit. */
@@ -100,8 +104,22 @@ bool csl_enqueue_data(const uint8_t  dst[MAC_EUI_LEN],
 bool csl_enqueue_broadcast(
     const uint8_t *pkt, size_t len, uint16_t id, unsigned flags, enum csl_key key);
 
+/* Broadcasts queued (including one in flight), and whether n more fit the
+ * pool now (#19: the two copies of a pairing-window Router Advertisement
+ * are queued together or not at all). */
+unsigned csl_broadcasts_queued(void);
+bool     csl_room_for_broadcasts(unsigned n);
+
 /* Drop everything queued and the transaction in flight (radio re-init). */
 void csl_flush(void);
+
+/* The next MAC sequence number and frame counter, for a frame sent outside
+ * the coordinator: the Enhanced Beacon that answers a Beacon Request takes
+ * the bridge's next ones (freedo docs/PROTOCOL.md:651-656, #19). False, and
+ * nothing taken, if the counter is at the reservation limit. A transaction
+ * in flight that ends without sending keeps its counter used, so no counter
+ * goes on the air twice. */
+bool csl_take_seq_counter(uint8_t *seq, uint32_t *counter);
 
 /* --- State machine -------------------------------------------------------- */
 /* Run the state machine once. Returns the time in microseconds until it

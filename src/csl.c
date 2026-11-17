@@ -23,7 +23,11 @@
  * - Anchors are keyed by the full address, not the 16-bit short one.
  * - The wake-up frame cap is a runaway limit only (freedo: 253), so a train
  *   has no gap before its last frame however short the radio's turnaround
- *   is. */
+ *   is.
+ * - Pairing (#19): a broadcast may carry Frame Pending (CSL_JOB_PENDING),
+ *   and the body of a pairing job (a d/pair carries the network key in the
+ *   clear) and the frame sealed from it are wiped as soon as they are no
+ *   longer needed. */
 #include "csl.h"
 
 #include "txgate.h"
@@ -178,8 +182,16 @@ static uint64_t anchor_next_sample(const struct anchor *a, uint64_t from, uint32
 }
 
 /* --- Job pool and queues (freedo :1124-1212) -------------------------------- */
+static void wipe(void *p, size_t n) {
+    volatile uint8_t *v = p;
+    while (n--) {
+        *v++ = 0;
+    }
+}
+
 static void pool_init(void) {
     for (unsigned i = 0; i < POOL_SLOTS; i++) {
+        wipe(g.jobs[i].body, sizeof g.jobs[i].body);
         g.jobs[i].next = i + 1u < POOL_SLOTS ? (uint8_t)(i + 1u) : JOB_NONE;
     }
     g.free_head  = 0;
@@ -316,6 +328,28 @@ bool csl_enqueue_broadcast(
     return enqueue(bcast_dst, KIND_BROADCAST, pkt, len, MAC_BCAST_MAX_PKT, id, flags, key);
 }
 
+unsigned csl_broadcasts_queued(void) {
+    return g.nb[0].used ? g.nb[0].count : 0u;
+}
+
+bool csl_room_for_broadcasts(unsigned n) {
+    return g.free_count >= n;
+}
+
+bool csl_take_seq_counter(uint8_t *seq, uint32_t *counter) {
+    if (g.counter >= g.counter_limit) {
+        return false;
+    }
+    *seq     = g.seq++;
+    *counter = g.counter++;
+    if (g.state != ST_IDLE) {
+        /* finish(CSL_BUSY) puts the counter back to counter_before; from
+         * now on that would hand out this one again. */
+        g.counter_before = g.counter;
+    }
+    return true;
+}
+
 /* Remove the head job of a queue. */
 static void nb_pop(struct neighbor *n) {
     uint8_t idx = n->head;
@@ -326,6 +360,9 @@ static void nb_pop(struct neighbor *n) {
     n->count--;
     if (n->count == 0) {
         n->used = false;
+    }
+    if (g.jobs[idx].flags & CSL_JOB_PAIRING) {
+        wipe(g.jobs[idx].body, sizeof g.jobs[idx].body);
     }
     g.jobs[idx].next = g.free_head;
     g.free_head      = idx;
@@ -366,6 +403,9 @@ static void finish(enum csl_outcome outcome) {
     struct job      *j   = &g.jobs[n->head];
     uint64_t         now = csl_port_now();
     g.state              = ST_IDLE;
+    if (j->flags & CSL_JOB_PAIRING) {
+        wipe(g.frame, sizeof g.frame); /* a retry seals it again */
+    }
     if (outcome == CSL_DELIVERED) {
         report(n, j, outcome, true);
         nb_pop(n);
@@ -402,8 +442,15 @@ static bool build_frame(struct neighbor *n, struct job *j) {
     uint32_t counter = g.counter++;
     size_t   len;
     if (j->kind == KIND_BROADCAST) {
-        len = mac_build_broadcast(
-            k, g.frame, sizeof g.frame, false, j->seq, g.cfg.own, counter, j->body, j->len);
+        len = mac_build_broadcast(k,
+                                  g.frame,
+                                  sizeof g.frame,
+                                  (j->flags & CSL_JOB_PENDING) != 0,
+                                  j->seq,
+                                  g.cfg.own,
+                                  counter,
+                                  j->body,
+                                  j->len);
     } else {
         /* Frame Pending: more fragments follow, or another frame for this
          * device waits behind this one (freedo docs/PROTOCOL.md:1326-1330). */

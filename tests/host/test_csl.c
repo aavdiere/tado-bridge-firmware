@@ -699,6 +699,98 @@ static void test_counter_limit(void) {
     CHECK_EQ(csl_counter(), 1002);
 }
 
+/* #19: the pairing-window Router Advertisement pair: the network-key copy
+ * with Frame Pending (59 e8), then the pairing-key copy (49 e8), with
+ * consecutive seq and counter (freedo docs/PROTOCOL.md:668-672). */
+static void test_ra_pair(void) {
+    reset();
+    static struct ccm_key pair;
+    ccm_set_key(&pair, v_key2.p);
+    struct csl_config cfg = {.key = {&key, &pair}, .counter = 70, .counter_limit = UINT32_MAX, .seq = 9};
+    memcpy(cfg.own, own, 8);
+    csl_init(&cfg);
+    uint8_t pkt[84] = {0x7B, 0x3B, 58, 1, 134};
+    CHECK_EQ(csl_broadcasts_queued(), 0);
+    CHECK(csl_room_for_broadcasts(2));
+    CHECK(csl_enqueue_broadcast(
+        pkt, sizeof pkt, 0xFFFF, CSL_JOB_PAIRING | CSL_JOB_PENDING, CSL_KEY_NETWORK));
+    CHECK(csl_enqueue_broadcast(pkt, sizeof pkt, 0xFFFF, CSL_JOB_PAIRING, CSL_KEY_PAIRING));
+    CHECK_EQ(csl_broadcasts_queued(), 2);
+    run_until(now_us + 2600000);
+    CHECK_EQ(csl_broadcasts_queued(), 0);
+    CHECK_EQ(n_reports, 2);
+    const struct sent *b[2] = {NULL, NULL};
+    unsigned           nb = 0;
+    for (unsigned i = 0; i < n_sent; i++) {
+        if (mac_classify(sent[i].frame, sent[i].len) == MAC_BROADCAST && nb < 2) {
+            b[nb++] = &sent[i];
+        }
+    }
+    CHECK_EQ(nb, 2);
+    if (nb == 2) {
+        CHECK_EQ(b[0]->frame[0], 0x59);
+        CHECK_EQ(b[1]->frame[0], 0x49);
+        CHECK_EQ(b[1]->frame[2], (uint8_t)(b[0]->frame[2] + 1));
+        uint8_t out[MAC_FRAME_MAX];
+        size_t  n = 0, n2 = 0;
+        CHECK_EQ(mac_open(&key, b[0]->frame, b[0]->len, out, sizeof out, &n), MAC_OPEN_OK);
+        uint16_t c0 = (uint16_t)(b[0]->frame[14] | b[0]->frame[15] << 8);
+        CHECK_EQ(mac_open(&pair, b[1]->frame, b[1]->len, out, sizeof out, &n2), MAC_OPEN_OK);
+        uint16_t c1 = (uint16_t)(b[1]->frame[14] | b[1]->frame[15] << 8);
+        CHECK_EQ(c0, 70);
+        CHECK_EQ(c1, 71);
+        CHECK_EQ(n, n2);
+        CHECK_MEM(out + 2, pkt, sizeof pkt);
+        CHECK_EQ(b[0]->flags, TXGATE_PAIRING);
+        CHECK_EQ(b[1]->flags, TXGATE_PAIRING);
+    }
+    /* Not enough room for two: the caller queues neither. */
+    reset();
+    uint8_t dst[8] = {0, 1, 2, 3, 4, 0xC5, 0x1B, 0x00};
+    while (csl_enqueue_data(dst, body, sizeof body, 1, 0, CSL_KEY_NETWORK)) {
+    }
+    CHECK(!csl_room_for_broadcasts(2));
+    CHECK(csl_room_for_broadcasts(1));
+}
+
+/* #19: the beacon takes the next seq and counter; a transaction that then
+ * finds the channel busy does not hand that counter out again, and nothing
+ * is taken at the reservation limit. */
+static void test_take_seq_counter(void) {
+    reset();
+    struct csl_config cfg = {.key = {&key, NULL}, .counter = 300, .counter_limit = 303, .seq = 0x20};
+    memcpy(cfg.own, own, 8);
+    csl_init(&cfg);
+    uint8_t  seq = 0;
+    uint32_t ctr = 0;
+    CHECK(csl_take_seq_counter(&seq, &ctr));
+    CHECK_EQ(seq, 0x20);
+    CHECK_EQ(ctr, 300);
+    CHECK_EQ(csl_counter(), 301);
+
+    /* A broadcast seals with 301, the beacon takes 302 during its listen,
+     * the listen finds the channel busy: the retry must not reuse 302. */
+    uint8_t pkt[20] = {0x7B, 0x3B, 58, 1, 134};
+    CHECK(csl_enqueue_broadcast(pkt, sizeof pkt, 9, 0, CSL_KEY_NETWORK));
+    channel_busy = true;
+    CHECK_EQ(csl_step(), CSL_LBT_LISTEN_US); /* sealed with 301, listening now */
+    CHECK(csl_take_seq_counter(&seq, &ctr));
+    CHECK_EQ(seq, 0x22);
+    CHECK_EQ(ctr, 302);
+    run_until(now_us + 30000); /* listen, busy */
+    CHECK(n_reports >= 1);
+    CHECK_EQ(reports[0].outcome, CSL_BUSY);
+    CHECK_EQ(csl_counter(), 303);
+    CHECK(!csl_take_seq_counter(&seq, &ctr)); /* at the limit */
+    CHECK_EQ(csl_counter(), 303);
+    channel_busy = false;
+    csl_set_counter_limit(400);
+    run_until(now_us + 1500000);
+    const struct sent *b = &sent[n_sent - 1];
+    CHECK_EQ(mac_classify(b->frame, b->len), MAC_BROADCAST);
+    CHECK_EQ(b->frame[14] | b->frame[15] << 8, 303);
+}
+
 int main(void) {
     ccm_set_key(&key, v_key.p);
     test_bootstrap_then_anchored();
@@ -714,5 +806,7 @@ int main(void) {
     test_drift();
     test_pairing_flag();
     test_counter_limit();
+    test_ra_pair();
+    test_take_seq_counter();
     return TEST_REPORT("test_csl");
 }
