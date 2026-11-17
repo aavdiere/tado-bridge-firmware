@@ -118,6 +118,8 @@ Follow freedo and tanoclo (project decision).
 7. Use tag `0x12` (network key, length 16). Tag `0x07` needs the cloud-only per-device key (`:630-633`).
 8. Device answers 2.04 under the new network key within 30 ms, then `auth/token`, RS, `time`, config, and starts reporting (`:635-637`, `tanoclo/docs/pairing.md:102-112`).
 
+**Implemented (#19, 2026-11-17), host-tested only, not on air:** `src/pair.c` and its use in `src/link.c` and `src/radio.c`; the window is opened by the pair button for one device named at build time, never by the server yet. Beacon answer timing (preamble about 3.9-4.0 ms after the request, designed) and the guards: `radio-runtime.md`, "Pairing (#19)".
+
 **Exposure:** the network key crosses the air under a key every valve shares, so keep windows short and the band quiet (`freedo/docs/PROTOCOL.md:737-738`).
 
 **Validation limits:** freedo's firmware responder path during pairing is "not validated on air" (`:732`). The pairing frames themselves are rebuilt byte for byte from captures (`:644-645`).

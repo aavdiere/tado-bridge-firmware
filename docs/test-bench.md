@@ -179,6 +179,17 @@ First over-the-air transmission of the bridge (#11, P5). Captures stay in `~/ib0
 
 **Duty cycle.** 8311 us per frame; the 1 % basis in 865-868 MHz (30 s per hour budget) is still **[I]**, awaiting owner acceptance.
 
+## Pairing test (#19), plan [I]
+
+Not run yet. The code is in `radio-runtime.md`, "Pairing (#19)". Gates before the image goes onto the bench bridge: a `fw-reviewer` "safe to flash" verdict on the pairing code (rule 4), then a local image that is never committed:
+
+1. `config/local.cmake` (gitignored): `PAIR_TARGET_EUI64` = the spare device's EUI-64, in the order of `BRIDGE_EUI64` (`00 1b c5` first; the source address of its Beacon Requests in `~/ib01-captures/spare/`, read backwards). CMake refuses any other prefix and the bridge's own EUI-64.
+2. `RADIO_TX_ALLOWED` 1 in `src/cc110l.h`, locally only, as for the first transmit test.
+3. SDR before arming (`rf-bench`): channel 10 quiet, channel 26 baseline; during the test `hopcap.py` on channels 3-13 and 19-29.
+4. Owner: put the spare device into pairing mode, then hold the bridge's pair button for 1 s. The pairing LED (PB8) lights for the 120 s window. The first network is created at that moment if the flash holds none (this erases the stock configuration sector at `0x102000`, owner decision 2026-11-17).
+5. Read: RTT `pair:` lines (beacon STX time, window closed, `PAIRED`), the minute counters; SDR: request-to-beacon gap (2.4-7.4 ms), the advertisement pairs (`59 e8` then `49 e8`), `d/pair` and the device's 2.04, nothing on channel 26.
+6. Optional, scope: PB8 against GDO0 (`radio-runtime.md`, "Measuring it").
+
 ## Bench network
 
 Tested 2026-11-11 without changing anything.

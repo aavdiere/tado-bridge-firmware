@@ -133,7 +133,7 @@ The CC110L has no automatic acknowledgement and no wake-on-radio (`datasheets/cc
 
 ## P5 link implementation (#17) [I]
 
-Host-tested, built; the TX-off image was reviewed (`fw-reviewer`, "safe to flash"), flashed and verified (2026-11-17); the first test frames went out with a temporary sender, since reverted (`test-bench.md`, "First transmit test" [V]). The committed image cannot transmit: `RADIO_TX_ALLOWED` is 0 (`src/cc110l.h`), and no network key is ever set (`link_set_key()` has no caller until #37 and #19), so no ACK is prepared and nothing is queued for the air. Since #37 the key is set at boot from a valid network record in flash (`design.md`, "Implementation: network and counter records (#37)"); no network is created until pairing (#19), so on the bench there is still no key.
+Host-tested, built; the TX-off image was reviewed (`fw-reviewer`, "safe to flash"), flashed and verified (2026-11-17); the first test frames went out with a temporary sender, since reverted (`test-bench.md`, "First transmit test" [V]). The committed image cannot transmit: `RADIO_TX_ALLOWED` is 0 (`src/cc110l.h`), and no network key is ever set (`link_set_key()` has no caller until #37 and #19), so no ACK is prepared and nothing is queued for the air. Since #37 the key is set at boot from a valid network record in flash (`design.md`, "Implementation: network and counter records (#37)"); no network is created until the owner opens the first pairing window (#19, "Pairing (#19)" below), so on the bench there is still no key.
 
 **Modules.** Hardware-independent and tested on the host: `src/mac.c`, `src/ccm.c`, `src/lowpan.c`, `src/txgate.c`, `src/csl.c`, `src/relay.c`, `src/msgq.c`, `src/link.c`. Hardware side: `src/radio.c` (task, interrupts, the coordinator's `csl_port_*` functions) and `src/cc110l.c` (the only code that can key the transmitter). Net task side: `src/session.c` moves frames between the server and the two static 4 KB queues of `src/link.c`.
 
@@ -176,3 +176,70 @@ Latency, estimate only, nothing measured yet: interrupt entry a few µs; about 3
 - **Radio task stack:** 640 words. Deepest paths by `-fstack-usage` are about 1.0-1.2 KB (a log line from the coordinator) **[I]**; measure the unused words on the bench.
 - **ACK interrupt failures (after the first review).** If the second access (the `STX`) cannot be opened after the first access made the chip IDLE, the interrupt opens a third: `SIDLE`, `SFTX`, `SRX`, keeping the RX FIFO, and has the radio task confirm RX with `MARCSTATE` (a status byte cannot, since IDLE is also reported for transitional states, `datasheets/cc110l.txt:1381-1385`). If that access fails too, or the chip is not in RX, the task aborts and re-arms at once (`cc110l_tx_abort()`, then `SIDLE`, `SFRX`, `SRX`), and re-initialises if that fails; the frame is dropped and its device repeats it. Counted as "acks failed" and "re-armed" in the minute log. A status byte that wrongly shows a transmit state at the `SIDLE` costs only that ACK: the interrupt strobes `SRX` and the frame is still taken.
 - **Own-frame window (fixed after the first review).** `cc110l_tx_expected()` compared an end time as a signed difference and cleared its flag only when called; in a quiet network nothing calls it after the last ACK, and from 35.8 to 71.6 minutes later it read "on the air" again, so the TX-state watch would have taken a stray TX state for ours. It now keeps start and length and compares an unsigned elapsed time; the task calls it every loop pass; and the task clears the flag only while no ACK is prepared, so the interrupt cannot set it between the task's check and its store.
+
+## Pairing (#19) [I]
+
+Built and host-tested 2026-11-17; not reviewed, not flashed, nothing measured on air. The committed image cannot pair: `RADIO_TX_ALLOWED` is 0 (`src/cc110l.h:24`), and without a target named at build time the pair button opens no window. Flow and frames follow freedo (`radio.md`, "Link security and pairing"; `freedo/docs/PROTOCOL.md:623-739`).
+
+**Modules.** `src/pair.c` (hardware independent, ported from freedo `tado/beacon.go`, `BuildPairCoAP` in `tado/build_resources.go:453-485`, `tado/pair_window.go` and `pairAnswer` in `firmware/cc1101_bridge/cc1101_bridge.ino:923-974`, Apache-2.0 notice in the file): the window, the Beacon Request check, the Enhanced Beacon, the `d/pair` message, the limits. `src/link.c` runs it in the radio task; `src/radio.c` owns the trigger and the beacon's timing; `src/network.c` creates the network or reads its key back.
+
+**Trigger and arming.** A window opens only when all of these hold (`pairing_trigger()`, `src/radio.c:1671`):
+
+| Gate | Where |
+| :--- | :--- |
+| The owner holds the pair button (PC15) for 1 s; holding it again closes an open window | `src/app.c:73-83`, `NOTE_PAIR` |
+| A target device is named at build time: `PAIR_TARGET_EUI64` in the gitignored `config/local.cmake` (EUI-64 in the order of `BRIDGE_EUI64`, `00 1b c5` first; CMake refuses another prefix or the bridge's own EUI-64) | `cmake/CMakeLists.txt:57-77`, `config/local.cmake.example` |
+| The transmitter is built in (`RADIO_TX_ALLOWED` 1, set only in a local bench image after a `fw-reviewer` verdict) | `src/cc110l.h:24` |
+| The flash was read at boot (`flash_boot()`), the bridge has an identity, the GDO interrupts are on and the PLL locked | `src/radio.c:1671-1697` |
+| A network: the active one, its key read back from its record by seq (`network_key()`, `src/network.c:87`); or, only if the boot found no network record at all, a new one created **before** the window opens (`network_create()`, which now refuses unless `network_absent()`, `src/network.c:32,98`; any failure blocks a second attempt until the next boot) | fw-reviewer items 1-3 (issue #19) |
+
+The trigger runs at a quiet moment of the radio task (no packet arriving, no coordinator transaction), never while a window is open: creating a network blocks the task for up to about 0.8 s (DRBG reseed, sector erases), so it cannot overlap a window or a transaction. The key and random bytes the trigger used are wiped right after the window opens (item 4).
+
+"No network record at all" (`store_net_probe()`, `src/store.c:212`): neither slot starts with the record's magic. The magic is the commit mark, programmed last (`design.md`, "Slotted record, as built"), so a first write cut by a power failure leaves none, and a damaged or refused record (for example one for channel 26) keeps its magic: the bridge then refuses to create a network over it, because devices may still be paired to it. Host test: the probe after a cut at every step of a first write (`tests/host/test_store.c`).
+
+**The window** (`src/pair.h`). 120 s, closed earlier by the target's 2.04, by the button, by a new key (`link_set_key()`) or by no key. While open it holds the pairing key's schedule and a copy of the network key; closing wipes both. Per window at most 16 beacons, 3 Router Advertisement pairs and 3 `d/pair` datagrams (each with the coordinator's 3 attempts). Only the target is answered: a Beacon Request from any other address is dropped before it is decrypted; a Data frame or broadcast that fails the network key is tried under the pairing key only if its source is the target (`src/link.c:163-232`).
+
+**Exchange.**
+1. Window opens: the first Router Advertisement pair is due 1 s later, before any frame of the joiner, as on the commercial bridge (`freedo/docs/PROTOCOL.md:673-675`).
+2. The target's Enhanced Beacon Request (27 bytes, sealed under the pairing key, MAC command `07`) gets an Enhanced Beacon (32 bytes) with the bridge's next seq and frame counter (`csl_take_seq_counter()`, `src/csl.c:339`, which also keeps a busy transaction from handing that counter out again), built while the request is taken (`on_beacon_request()`, `src/link.c:241`). Host test: freedo's request and beacon byte for byte (`tests/host/test_pair.c`, vectors from `freedo/tado/beacon_test.go:62,90`).
+3. Every Router Advertisement of the window goes twice: under the network key with Frame Pending (`59 e8`), then under the pairing key (`49 e8`), consecutive seq and counter, each behind its own 1 s train (`src/link.c:313`, `CSL_JOB_PENDING`; `freedo/docs/PROTOCOL.md:667-672`). The target's Router Solicitation under the pairing key asks for one (10 s hold-off between advertisements as before).
+4. `d/pair` goes `PAIR_DPAIR_DELAY_MS` (3 s) after the target's first pairing-key frame that is not a Beacon Request (its Router Solicitation comes 1.5-2.8 s after the beacon, `freedo/docs/PROTOCOL.md:664-665`), so that the advertisement pair it asked for goes first; 12 s after the first beacon if nothing else comes. It is a Data frame under the pairing key from UDP 5683 to 5683: `40 02 mid | b1 'd' | 04 'pair' | 11 2a | e8 06 e7 session(8) | ff 12 10 key(16)`, 43 bytes, MID from `0x4000-0x5FFF` (below the server's `0x7000-0xFFFF`, `tanoclo/ws-server/lib/coap-transport.js:39-44`), a new 8-byte session value per datagram from the DRBG. Host test: freedo's bytes (`freedo/tado/build_resources_test.go:196-203`). If its attempts fail, the target's next pairing-key frame brings another, up to 3.
+5. The target's 2.04 ACK to that MID under the network key closes the window and is not relayed to the server (`src/link.c:189`); from then on its frames go to the server as any device's.
+
+**Key exposure.** The network key crosses the air under the public pairing key (`radio.md`, "Exposure"). In RAM it is held, besides the link's AES schedule, only while needed: the window's copy (wiped on close), the `d/pair` job body and the frame sealed from it (wiped when the job ends or the pool is reset, `src/csl.c`), the driver's frame copy (wiped once the frame has left the chip or was abandoned, `tx_wipe()`, `src/cc110l.c:690`), and the builder's stack buffers (wiped after queuing). A `d/pair` already on the air when the window closes is not recalled: its transaction ends normally, at most about 1 s later.
+
+**Transmit gate.** The beacon rule compared all 8 bytes of our address at offset 13, but a beacon is sealed from byte 16 on (`freedo/tado/beacon.go:17-23`), so every real beacon was refused. It now checks the 3 clear bytes, PAN `cd ab`, that the answered request went to `ff ff` / `ff ff`, that the beacon's destination is the requester and not us, the pairing flag and channel 10 (`src/txgate.c:149`). The driver passes the request's header to the gate through `cc110l_tx_answer()` (`src/cc110l.c:782`); `cc110l_tx_start()` has none, so a beacon cannot go out on the frame path.
+
+### Beacon answer timing (open question 28)
+
+Target: the beacon's preamble starts 2.4-7.4 ms after the request ends (`freedo/docs/PROTOCOL.md:657-658`). Path (`beacon_answer()`, `src/radio.c:1600`):
+
+| Step | Time after the request's end | Source |
+| :--- | :--- | :--- |
+| GDO0 falls at the end of the request; EXTI0 stamps `gdo0_fall_us` | 0, later by at most one SPI1 critical section (about 0.1 ms) | `src/radio.c` interrupts |
+| Radio task (highest priority) woken by the edge: last FIFO bytes, `link_on_frame()`: CCM* check of the request (6 AES blocks), beacon built and sealed (6 AES blocks) | well under 0.5 ms **[I]** | |
+| Check: exactly one GDO0 edge since the request's length byte was read (`rx.edges_at_len`, `src/radio.c:933`), so the stamp is the request's own end | | `src/radio.c:796` |
+| Spin to `PAIR_BEACON_TX_AT_US` = 3.7 ms; any GDO0 edge, GDO0 high, a frame of ours on the air or a coordinator transaction makes it busy: no beacon; RSSI at or above -85 dBm at the end: busy | 3.7 ms | `src/pair.h:88` |
+| Later than `PAIR_BEACON_TX_LATEST_US` = 6.5 ms (task blocked, e.g. a 10 ms flash program): no beacon | | `src/pair.h:89` |
+| `cc110l_tx_answer()`: RSSI read, register read-back, gate, airtime, SIDLE/SFRX/SFTX, 33 FIFO bytes at 6 MHz, STX | +0.1-0.15 ms **[I]** | |
+| IDLE to TX, no calibration | +75.2 µs | `datasheets/cc110l.txt:2542` |
+| **Preamble starts** | **about 3.9-4.0 ms** | |
+
+Margins: 1.5 ms after the earliest and 3.4 ms before the latest start the device accepts; the commercial bridge listens 3.968 ms before its beacon (`freedo/firmware/cc1101_bridge/cc1101_bridge.ino:228-230`). A beacon not sent (end not seen live, busy, late, refused) costs one request: the device asks again 8 s later (`freedo/docs/PROTOCOL.md:662`). Nothing is logged before the beacon is on the air; then `pair: beacon seq NN to the target sent: STX N us after the request ended`. The minute log counts beacons sent and not sent by reason.
+
+Effect on the Enhanced ACK (#18): none on its path. The spin checks for a sync edge every 100 µs and gives up at once, so a Data frame arriving meanwhile is pumped and its ACK prepared as before; during the beacon itself the radio is in TX.
+
+**Measuring it.**
+1. SDR, primary (`rf-bench`): `tools/sdr/demod.py --channels 10 --summary` reports the request-to-beacon gap (`test-bench.md`, "Demodulator"); expect 3.8-4.1 ms, accept 2.4-7.4 ms. With `hopcap.py`, nothing on channel 26.
+2. RTT: the `pair: beacon ... STX N us` line; expect about 3.8 ms. It uses the bridge's own clock and the GDO0 stamp, so it misses the interrupt latency and the 75 µs to the air.
+3. Scope, fallback: PB8 (pairing LED, on while the window is open) falls right after the beacon's STX strobe (`send_frame()`, `src/radio.c:1420`). A second probe on GDO0 (CC110L pin, MCU PA0): it falls at the end of the request and, in TX, rises when the beacon's sync word has gone out (`IOCFG0 = 06`). Gap request end to STX = PB8 fall minus GDO0 fall; preamble start = PB8 fall + 75 µs; cross-check: the beacon's GDO0 rise comes 75 µs + 8 bytes x 160 µs = about 1.36 ms after PB8 falls.
+
+**Airtime.** A window costs up to about 2 s per advertisement pair and 1 s per `d/pair` attempt without an anchor: at most about 15 s with every limit reached, half the 30 s per hour budget (`src/airtime.h`). A second window in the same hour can run into the budget; refused frames are counted in the minute log (`tx_duty`).
+
+**Sizes** (2026-11-17, `make size`): committed build (transmitter off, no target) text 150964, bss 80412 bytes, against 147348 and 79864 before #19. Bench variant with a dummy target and `RADIO_TX_ALLOWED` 1 (built outside the tree, not committed): text 157236, bss 80432. Host tests: `make test` 3116202 checks in 11 programs, 0 failed **[V]** on the host.
+
+**Open, for the review and the bench.**
+- **Not measured:** the beacon's timing on air and freedo's own "not validated on air" for the firmware responder (`freedo/docs/PROTOCOL.md:732`); whether the spare device takes the beacon, the advertisement pair and `d/pair` from this bridge.
+- **`d/pair` order [I]:** the delay after the target's Router Solicitation stands in for freedo's operator, who sends `d/pair` by hand after seeing the joiner. The commercial bridge sent its `d/pair` on a 21-frame train on the joiner's anchor (`freedo/docs/PROTOCOL.md:688-690`); ours uses the 1 s train unless the joiner's Enhanced ACK gave an anchor.
+- **No server trigger:** tanoclo opens pairing with `POST d/I/IB0000FT0100<digits>/pair` (`server-api.md`, "Bridge handles itself"); the bridge does not handle it, and does not report the joiner to the server (`...found`). Only the button opens a window. Whether the server may open one is an owner decision.
+- **tanoclo and the new device:** its `auth/token` and reports are relayed; whether tanoclo accepts a device it has no row for is untested.
