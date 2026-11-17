@@ -27,11 +27,15 @@
  * P-256 step). Two contexts:
  *   1. This task, the highest-priority one, while the Data frame is still
  *      arriving: once its first 16 bytes are out of the FIFO, ack_consider()
- *      builds the ACK and hands it to the driver, which checks it against
- *      the transmit gate. The shortest Data frame leaves 3.6 ms for this
- *      after its header.
+ *      builds the ACK, has the chip's frequency registers read back, and
+ *      hands the ACK to the driver, which checks it against the transmit
+ *      gate. The hand-over is tied to this frame: it happens with the GDO
+ *      interrupts masked and only if no GDO0 edge has come since the frame
+ *      was seen arriving. The shortest Data frame (one datagram byte, 31
+ *      bytes) leaves 17 bytes, 2.7 ms, for this after its header [I].
  *   2. The GDO2 interrupt, at the frame's CRC-OK edge: three strobes and 30
- *      FIFO bytes. It preempts every task and is masked only by critical
+ *      FIFO bytes, about 70 us to the STX strobe, then 75 us IDLE to TX in
+ *      the chip [I]. It preempts every task and is masked only by critical
  *      sections (one SPI1 access at most, about 0.1 ms).
  * Nothing between the sync edge and the ACK logs: LOG() takes a mutex. The
  * frame's own log line is written when the frame is complete, after the
@@ -665,26 +669,43 @@ static bool rx_flush_and_arm(void) {
  *   - the uplink queue has room: an uplink that cannot be stored gets no
  *     ACK, so the device sends it again (freedo .ino:1235-1248);
  *   - the chip's frequency registers still read back as written;
- *   - the frame is still arriving (GDO0 high), so the next CRC-OK edge is
- *     this frame's.
+ *   - the GDO interrupts are on (the storm guard has not tripped);
+ *   - this frame is still the packet on the air, so the next CRC-OK edge is
+ *     this frame's and no other's.
+ * The last point is what keeps an ACK from answering a frame that is not
+ * addressed to us, so it does not rest on how fast this task runs:
+ *   - arriving: the RXBYTES read that brought the header in showed the frame
+ *     not complete in the chip, so at that moment it was on the air;
+ *   - edges: the GDO0 edge count taken before that read. With the GDO
+ *     interrupts masked, the ACK is handed to the driver only if no edge
+ *     has come since and GDO0 is still high. Then the frame has not ended,
+ *     and the only edges that can follow are its own end, with the CRC-OK
+ *     edge that sends the ACK, or without one; in that case the next sync
+ *     edge (exti0_isr) or frame_done() drops the ACK.
+ * A frame that ends inside the critical section (about 10 us [I]) is
+ * answered that much later. One that ended before it gets no ACK; the
+ * device sends it again.
  * The CSL phase is 0, freedo's default: "safe while our receiver listens
  * continuously" (freedo internal/daemon/daemon.go:4258). */
 #define ACK_CSL_PHASE 0u
 
-static void ack_consider(const uint8_t *hdr, bool arriving) {
+static void ack_consider(const uint8_t *hdr, uint32_t edges, bool arriving) {
     uint8_t        ack[MAC_ACK_LEN];
     const uint8_t *own = link_own();
-    if (!RADIO_TX_ALLOWED || !arriving || !own || !link_ready() || !csl_may_ack()
+    if (!RADIO_TX_ALLOWED || !arriving || !gdo_irq_on || !own || !link_ready() || !csl_may_ack()
         || !link_uplink_room() || !mac_ack_for_data(ack, hdr, own, ACK_CSL_PHASE)
-        || !cc110l_tx_verify_channel() || cc110l_ack_prepare(ack, hdr) != CC_TX_OK) {
+        || !cc110l_tx_verify_channel()) {
         return;
     }
-    if (!gpio_get(GPIOA, BOARD_GDO0_PIN)) {
-        /* The frame ended while we prepared. If the interrupt has not taken
-         * the ACK, it is too late for it. */
-        cc110l_ack_cancel();
+    taskENTER_CRITICAL();
+    bool same     = gdo0_edges == edges && gpio_get(GPIOA, BOARD_GDO0_PIN);
+    bool prepared = same && cc110l_ack_prepare(ack, hdr) == CC_TX_OK;
+    taskEXIT_CRITICAL();
+    if (prepared) {
+        COUNT(ack_prepared);
+    } else if (!same) {
+        COUNT(ack_late);
     }
-    COUNT(ack_prepared);
 }
 
 static const char *const link_rx_name[LINK_RX_COUNT] = {
@@ -807,7 +828,8 @@ static void rx_pump(void) {
         rx.in_packet = false; /* a sync edge without a frame (length-filtered, or our own TX) */
     }
     for (int guard = 0; guard < 16; guard++) {
-        uint8_t rb;
+        uint32_t edges = gdo0_edges; /* before RXBYTES: see ack_consider() */
+        uint8_t  rb;
         if (!cc110l_read_status_stable(CC_RXBYTES, &rb)) {
             COUNT(spi_err);
             return;
@@ -862,7 +884,7 @@ static void rx_pump(void) {
              * now, the chip had not received the whole frame yet, so the
              * packet on the air is this one. */
             rx.ack_considered = true;
-            ack_consider(rx.buf + 1, n < remaining);
+            ack_consider(rx.buf + 1, edges, n < remaining);
         }
         if (rx.got >= rx.total) {
             rx.assembling = false;
@@ -1117,13 +1139,16 @@ static void log_minute(void) {
         (unsigned long)minute.fe_stale,
         (unsigned long)minute.fe_rssi_diff);
     const struct link_stats *ls = link_stats();
-    LOG("link: 60 s: acks prepared %lu sent %lu, tx frames %lu fail %lu refused %lu; totals: to "
-        "server %lu, dup %lu, mic fail %lu, dropped %lu, downlinks %lu refused %lu, RA %lu",
+    /* Two lines: one log line holds 191 characters (src/log.c). */
+    LOG("link: 60 s: acks prepared %lu sent %lu too late %lu, tx frames %lu fail %lu refused %lu",
         (unsigned long)minute.ack_prepared,
         (unsigned long)minute.ack_sent,
+        (unsigned long)minute.ack_late,
         (unsigned long)minute.tx_frames,
         (unsigned long)minute.tx_fail,
-        (unsigned long)minute.tx_refused,
+        (unsigned long)minute.tx_refused);
+    LOG("link: totals: to server %lu, dup %lu, mic fail %lu, dropped %lu, downlinks %lu refused "
+        "%lu, RA %lu",
         (unsigned long)ls->rx[LINK_RX_FORWARDED],
         (unsigned long)ls->rx[LINK_RX_DUPLICATE],
         (unsigned long)ls->rx[LINK_RX_MIC_FAIL],
