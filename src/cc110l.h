@@ -149,25 +149,32 @@ bool cc110l_take_tx_state_flag(void);
 /* Our wire EUI-64, for the transmit gate. Without it nothing is sent. */
 void cc110l_set_identity(const uint8_t own[8]);
 
-/* Reads CHANNR, FSCTRL0, FREQ2-0, MDMCFG1 and MDMCFG0 back from the chip and
- * compares them with the values last written. On a difference, or without a
- * full register table written since the last reset, transmitting stays
- * refused until the radio is configured again. */
+/* Reads CHANNR, FSCTRL1, FSCTRL0, FREQ2-0, MDMCFG1 and MDMCFG0 back from the
+ * chip and compares them with the values last written. On a difference, or
+ * without a full register table written since the last reset, transmitting
+ * stays refused until the radio is configured again. Task context.
+ * cc110l_tx_start() calls it for every frame. For an Enhanced ACK the
+ * caller calls it before each cc110l_ack_prepare(): one read-back covers
+ * one ACK, and the interrupt refuses to send on one older than 50 ms. */
 bool cc110l_tx_verify_channel(void);
 
 enum cc110l_tx_result {
     CC_TX_OK,
     CC_TX_DISABLED, /* RADIO_TX_ALLOWED is 0 */
     CC_TX_REFUSED,  /* by the transmit gate: cc110l_tx_verdict() says why */
-    CC_TX_SPI,      /* the chip did not answer */
+    CC_TX_BUSY,     /* another frame of ours is still on the air; nothing was touched */
+    CC_TX_STATE,    /* the chip was found in a transmit state; abort and re-arm */
+    CC_TX_SPI,      /* the chip did not answer; abort and re-arm */
 };
 enum txgate_verdict cc110l_tx_verdict(void);
 
-/* Task context. Checks the frame (without the radio's CRC) against the
- * transmit gate, then: SIDLE, SFRX and SFTX in one access (the RX FIFO is
- * emptied: reset the receive assembler), the length byte and the first
- * bytes into the TX FIFO, STX. The chip returns to RX by itself after the
- * frame (MCSM1). flags: TXGATE_*. */
+/* Task context. Drops a prepared Enhanced ACK, refuses while another frame
+ * of ours is on the air, reads the frequency registers back, checks the
+ * frame (without the radio's CRC) against the transmit gate, then: SIDLE,
+ * SFRX and SFTX in one access (the RX FIFO is emptied: reset the receive
+ * assembler), the length byte and the first bytes into the TX FIFO, STX.
+ * The chip returns to RX by itself after the frame (MCSM1). flags:
+ * TXGATE_*. */
 enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned flags);
 
 /* Tops the TX FIFO up for a frame longer than the FIFO. *left: bytes not
@@ -175,20 +182,29 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
  * then re-arms the receiver. */
 bool cc110l_tx_feed(size_t *left);
 
-/* Stops a transmission that went wrong: SIDLE and SFTX. The chip is left in
- * IDLE; the caller re-arms the receiver. */
+/* Stops a transmission that went wrong and empties the TX FIFO. The chip
+ * is left in IDLE; the caller re-arms the receiver. */
 void cc110l_tx_abort(void);
 
-/* True from a transmission's STX until its airtime plus a margin has
- * passed: a TX state reported by the chip is then ours. Safe from any
- * context. */
+/* The caller has seen the frame started with cc110l_tx_start() leave the
+ * chip (MARCSTATE out of TX and TX_END, TX FIFO empty): the next frame may
+ * start, and a TX state the chip reports from now on is not ours. */
+void cc110l_tx_done(void);
+
+/* True from a transmission's STX until cc110l_tx_done(), or until its
+ * airtime plus a 2 ms margin has passed: a TX state reported by the chip
+ * is then ours. Safe from any context. */
 bool cc110l_tx_expected(void);
 
 /* Enhanced ACK, in two steps so that it can start well inside 1 ms after
  * the Data frame (docs/radio.md "ACK prebuild"):
- * - prepare, task context, while the Data frame is still arriving: the
- *   transmit gate checks that ack is the exact answer to answered (the
- *   frame's first 16 bytes), a unicast Data frame addressed to us;
+ * - prepare, while the Data frame is still arriving: the transmit gate
+ *   checks that ack is the exact answer to answered (the frame's first 16
+ *   bytes), a unicast Data frame addressed to us. No SPI access and no
+ *   waiting, so the caller can run it with the GDO interrupts masked, in
+ *   the same critical section in which it checks that this frame is still
+ *   the one on the air. Refused without a read-back of the frequency
+ *   registers (cc110l_tx_verify_channel()) since the last frame or ACK;
  * - fire, from the GDO2 interrupt when the chip reports the frame complete
  *   with a good CRC: SIDLE, SFTX, the prepared bytes into the TX FIFO, STX.
  * cancel drops a prepared ACK. Each prepared ACK is sent at most once. */

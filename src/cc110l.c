@@ -26,13 +26,20 @@
  * (docs/datasheets/cc110l-vs-cc1101.md), so with these refused it cannot
  * transmit.
  *
- * tx_permit is set in exactly two places, cc110l_tx_start()/cc110l_tx_feed()
- * and cc110l_ack_fire_from_isr(), and only when RADIO_TX_ALLOWED is 1, the
- * whole register table has been written since the last reset, and the
- * transmit gate (src/txgate.c) has approved the frame against the frequency
- * registers in that table: off the protected channel, on the test channel,
- * our own source address, an ACK only as the answer to a frame addressed to
- * us. The bytes that go into the TX FIFO are the driver's own copy of the
+ * tx_permit is set only in the transmit functions at the end of this file
+ * (cc110l_tx_start(), cc110l_tx_feed(), cc110l_tx_abort() for its SFTX, and
+ * cc110l_ack_fire_from_isr()), and only when RADIO_TX_ALLOWED is 1. STX is
+ * strobed in two places, cc110l_tx_start() and cc110l_ack_fire_from_isr(),
+ * and only when all of this holds:
+ *   - the whole register table has been written since the last reset;
+ *   - the chip's own frequency registers have been read back and equal that
+ *     table: before every frame the task sends, and at most
+ *     ACK_VERIFY_MAX_US before an Enhanced ACK;
+ *   - the transmit gate (src/txgate.c) has approved the frame against those
+ *     registers: off the protected channel, on the test channel, our own
+ *     source address, an ACK only as the answer to a frame addressed to us;
+ *   - no other transmission of ours is on the air.
+ * The bytes that go into the TX FIFO are the driver's own copy of the
  * approved frame. */
 #include "cc110l.h"
 
@@ -62,6 +69,17 @@ static volatile bool tx_permit;
  * from the chip since). The transmit gate judges the carrier from these. */
 static uint8_t shadow[CC_NUM_CONFIG_REGS];
 static bool    shadow_full;
+
+/* A read-back of the chip's frequency registers that equalled the shadow
+ * (cc110l_tx_verify_channel()), and when. Each one covers one frame: the
+ * frame cc110l_tx_start() sends right after it, or the Enhanced ACK
+ * prepared next. The GDO2 interrupt sends that ACK only while the read-back
+ * is from the reception of the frame it answers: the ACK is prepared after
+ * that frame's 16 header bytes, so at most 113 bytes (18 ms) before it
+ * ends. */
+#define ACK_VERIFY_MAX_US 50000u
+static bool     verified;
+static uint32_t verified_us;
 
 static bool strobe_allowed(uint8_t addr) {
     switch (addr) {
@@ -186,10 +204,22 @@ static struct {
  * GDO2 interrupt: the task writes buf only while it is false. */
 static struct {
     uint8_t       buf[1u + MAC_ACK_LEN];
+    uint32_t      verified_us; /* the read-back this ACK was prepared on */
     volatile bool prepared;
 } ack;
 
 static enum txgate_verdict last_verdict = TXGATE_NO_IDENTITY;
+
+/* The chip status byte that came back with an SIDLE header shows the state
+ * the strobe found. From TX the chip needs a quarter bit to reach IDLE,
+ * and it never leaves TXFIFO_UNDERFLOW by SIDLE; in both cases the SFTX
+ * that would follow in the same access is dropped (cc110l.txt:1449-1451),
+ * and a frame written now would go out behind what the TX FIFO still
+ * holds. */
+static bool state_blocks_flush(uint8_t status) {
+    uint8_t st = CC_STATE(status);
+    return st == CC_STATE_TX || st == CC_STATE_FSTXON || st == CC_STATE_TXFIFO_UNF;
+}
 
 /* Lock the bus, select the radio, wait for CHIP_RDYn (cc110l.txt:1297-1299),
  * then send the checked header. Returns false (bus released) if SO stayed high. */
@@ -218,8 +248,10 @@ static void end(void) {
 bool cc110l_reset(void) {
     guard_header(CC_SRES);
     shadow_full  = false; /* the chip is back at its reset values */
+    verified     = false;
     ack.prepared = false;
     tx_active    = false;
+    tx.idx       = tx.total; /* nothing left to feed */
     spi1_lock();
     /* CSn low, then high for at least 40 us (cc110l.txt:2403-2404). SCLK
      * idles low here (mode 0), not high as in the datasheet's power-up
@@ -365,6 +397,7 @@ static struct txgate_radio shadow_radio(void) {
 
 bool cc110l_tx_verify_channel(void) {
     uint8_t a[CC_FREQ0 - CC_CHANNR + 1u], b[2];
+    verified = false;
     if (!shadow_full) {
         return false;
     }
@@ -376,6 +409,8 @@ bool cc110l_tx_verify_channel(void) {
         shadow_full = false; /* the chip no longer holds what was written */
         return false;
     }
+    verified_us = timebase_us();
+    verified    = true;
     return true;
 }
 _Static_assert(CC_CHANNR + 2u == CC_FSCTRL0 && CC_FSCTRL0 + 1u == CC_FREQ2
@@ -413,11 +448,27 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
     if (!RADIO_TX_ALLOWED) {
         return CC_TX_DISABLED;
     }
+    /* From here the interrupt sends nothing. If it has just sent an Enhanced
+     * ACK, or an earlier frame has not been reported done, that frame is
+     * still on the air: SIDLE would cut it, and SFTX is dropped until the
+     * chip is IDLE (cc110l.txt:1449-1451; TX to IDLE takes a quarter bit,
+     * Table 5-11), so its unsent bytes would lead this frame. */
+    cc110l_ack_cancel();
+    if (cc110l_tx_expected()) {
+        return CC_TX_BUSY;
+    }
+    /* The gate judges the registers last written; the chip must still hold
+     * them now (it may have reset since). Two short burst reads, about
+     * 30 us at 6 MHz [I]. */
+    if (!cc110l_tx_verify_channel()) {
+        last_verdict = TXGATE_OFF_PLAN;
+        return CC_TX_REFUSED;
+    }
+    verified     = false; /* used for this frame */
     last_verdict = judge(frame, len, NULL, flags);
     if (last_verdict != TXGATE_OK) {
         return CC_TX_REFUSED;
     }
-    cc110l_ack_cancel();
     tx.buf[0] = (uint8_t)len;
     memcpy(tx.buf + 1, frame, len);
     tx.total     = (uint16_t)(len + 1u);
@@ -429,8 +480,16 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
      * returns to RX straight after this frame: flush both FIFOs now, in one
      * access (freedo cc1101_bridge.ino:645-649). SFRX and SFTX need IDLE,
      * which SIDLE reaches in 0.1 us (cc110l.txt:1449-1451, Table 5-11). */
-    bool ok = begin(CC_SIDLE, NULL);
-    if (ok) {
+    uint8_t status = 0;
+    bool    ok     = begin(CC_SIDLE, &status);
+    bool    stuck  = ok && state_blocks_flush(status);
+    if (stuck) {
+        /* A transmit state nobody expected (cc110l_tx_expected() was false
+         * above). Nothing more goes to the chip here; the caller aborts and
+         * re-arms as for any failed transmission. */
+        end();
+        ok = false;
+    } else if (ok) {
         (void)more(CC_SFRX);
         (void)more(CC_SFTX);
         end();
@@ -446,7 +505,8 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
     tx_permit = false;
     if (!ok) {
         tx_active = false;
-        return CC_TX_SPI;
+        tx.idx    = tx.total; /* nothing to feed */
+        return stuck ? CC_TX_STATE : CC_TX_SPI;
     }
     tx.idx = (uint16_t)first;
     return CC_TX_OK;
@@ -459,7 +519,7 @@ bool cc110l_tx_feed(size_t *left) {
     }
     uint8_t tb;
     if (!cc110l_read_status_stable(CC_TXBYTES, &tb) || (tb & 0x80u)) {
-        return false; /* underflow: only SFTX from IDLE gets out of it (cc110l.txt:4553-4557) */
+        return false; /* underflow: only SFTX gets out of it (cc110l.txt:1944-1945) */
     }
     size_t used = tb & 0x7Fu;
     if (used >= CC_FIFO_SIZE) {
@@ -476,13 +536,34 @@ bool cc110l_tx_feed(size_t *left) {
     return ok;
 }
 
+void cc110l_tx_done(void) {
+    tx_active = false;
+}
+
+/* SFTX works in IDLE and in TXFIFO_UNDERFLOW only (cc110l.txt:3255-3257).
+ * Out of an underflow it is the only way (cc110l.txt:1944-1945), and an
+ * SIDLE first would have it dropped: SIDLE clears every strobe that follows
+ * until IDLE is reached (cc110l.txt:1449-1451), which an underflow never
+ * does by itself. From every other state: SIDLE, then SFTX once the chip is
+ * IDLE. TX to IDLE takes a quarter bit, 5 us at 50 kBaud (Table 5-11), more
+ * than the 1.3 us to the next header byte in the same access, so the two
+ * strobes are separate accesses with a wait in between (freedo
+ * cc1101_bridge.ino:659-660 and :665: the same two cases, each strobe an
+ * SPI transaction of its own). */
+#define TX_TO_IDLE_US 20u
 void cc110l_tx_abort(void) {
     if (!RADIO_TX_ALLOWED) {
         return;
     }
+    uint8_t m = 0;
+    bool    underflow =
+        cc110l_read_status_stable(CC_MARCSTATE, &m) && (m & 0x1Fu) == CC_MARC_TXFIFO_UNF;
+    if (!underflow) {
+        (void)radio_strobe(CC_SIDLE, NULL);
+        delay_us(TX_TO_IDLE_US);
+    }
     tx_permit = true;
-    if (begin(CC_SIDLE, NULL)) {
-        (void)more(CC_SFTX);
+    if (begin(CC_SFTX, NULL)) {
         end();
     }
     tx_permit = false;
@@ -496,12 +577,21 @@ enum cc110l_tx_result cc110l_ack_prepare(const uint8_t a[MAC_ACK_LEN],
         return CC_TX_DISABLED;
     }
     ack.prepared = false;
+    if (!verified) {
+        last_verdict = TXGATE_OFF_PLAN;
+        return CC_TX_REFUSED;
+    }
+    verified     = false; /* used for this ACK */
     last_verdict = judge(a, MAC_ACK_LEN, answered, 0);
     if (last_verdict != TXGATE_OK) {
         return CC_TX_REFUSED;
     }
     ack.buf[0] = MAC_ACK_LEN;
     memcpy(ack.buf + 1, a, MAC_ACK_LEN);
+    ack.verified_us = verified_us;
+    /* The interrupt reads buf and verified_us once it sees prepared: they
+     * must be in memory before that store, not merely earlier in the source. */
+    __asm volatile("" ::: "memory");
     ack.prepared = true;
     return CC_TX_OK;
 }
@@ -526,7 +616,12 @@ bool cc110l_ack_fire_from_isr(void) {
     }
     ack.prepared          = false; /* at most once */
     struct txgate_radio r = shadow_radio();
-    if (!shadow_full || txgate_check_channel(&r) != TXGATE_OK) {
+    /* Not over a frame of ours that is still on the air: the chip cannot
+     * report a received packet then, so that edge is not a packet's, and
+     * the SFTX below would be dropped (see cc110l_tx_start()). */
+    if (!shadow_full || cc110l_tx_expected()
+        || (uint32_t)(timebase_us() - ack.verified_us) > ACK_VERIFY_MAX_US
+        || txgate_check_channel(&r) != TXGATE_OK) {
         return false;
     }
     if (!spi1_select_from_isr(SPI1_DEV_RADIO)) {
@@ -538,7 +633,9 @@ bool cc110l_ack_fire_from_isr(void) {
      * 1297-1299), which it never does here. */
     bool ok = wait_so_low(100);
     if (ok) {
-        (void)more(CC_SIDLE);
+        ok = !state_blocks_flush(more(CC_SIDLE));
+    }
+    if (ok) {
         (void)more(CC_SFTX);
         (void)more(0x3F | HDR_BURST);
         for (size_t i = 0; i < sizeof ack.buf; i++) {

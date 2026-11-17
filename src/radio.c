@@ -1178,15 +1178,23 @@ static void tx_wait_tick(void) {
 }
 
 bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
+    if (!gdo_irq_on) {
+        /* The storm guard tripped or a re-init failed: the chip may have
+         * reset and is not known to hold our configuration. Nothing goes
+         * out until the bring-up has passed again. */
+        COUNT(tx_refused);
+        return false;
+    }
     /* An Enhanced ACK of ours may still be on the air (it was sent before
-     * the coordinator stopped the receiver's ACKs). */
+     * the coordinator stopped the receiver's ACKs): at most its airtime and
+     * margin, 8.5 ms. The driver refuses while one is. */
     for (unsigned i = 0; i < 16 && cc110l_tx_expected(); i++) {
         tx_wait_tick();
     }
     enum cc110l_tx_result r = cc110l_tx_start(frame, len, flags);
-    if (r == CC_TX_DISABLED || r == CC_TX_REFUSED) {
+    if (r == CC_TX_DISABLED || r == CC_TX_REFUSED || r == CC_TX_BUSY) {
         COUNT(tx_refused);
-        return false;
+        return false; /* the chip was not touched: still receiving */
     }
     /* cc110l_tx_start() emptied the RX FIFO. */
     rx.assembling   = false;
@@ -1222,7 +1230,18 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
         }
         tx_wait_tick();
     }
+    /* The frame is out and the chip is on its way back to RX. Without this
+     * the next frame of a train would wait out the margin of this one, and
+     * its rendezvous count would be 2 ms old when it goes out. */
+    cc110l_tx_done();
     COUNT(tx_frames);
+    if (gpio_get(GPIOA, BOARD_GDO0_PIN)) {
+        /* A sync word already: its edge went to tx_wait_tick(), which
+         * drops the edges of our own frame. Pump every tick as for any
+         * other packet. */
+        rx.in_packet = true;
+        rx.sync_us   = timebase_us();
+    }
     return true;
 }
 
