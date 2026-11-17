@@ -19,7 +19,7 @@ MBEDTLS_CFLAGS := -std=c11 -O1 -g -fsanitize=address,undefined -I. -I$(MBEDTLS)/
 AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o
 
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
-         test_airtime test_cc110l test_cc110l_off
+         test_airtime test_cc110l test_cc110l_off test_store
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -28,6 +28,8 @@ test_txgate_SRCS := txgate.c mac.c ccm.c
 test_csl_SRCS := csl.c txgate.c mac.c ccm.c
 test_relay_SRCS := relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
 test_link_SRCS := link.c relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
+# Network record and counter log against a flash model with power cuts (#37).
+test_store_SRCS := store.c
 # The radio driver's transmit functions against a simulated chip
 # (cc110l_model.h). Both programs include src/cc110l.c themselves: one with
 # the transmitter switched on for that translation unit only, one as the
