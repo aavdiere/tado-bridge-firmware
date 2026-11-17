@@ -686,10 +686,14 @@ bool csl_may_ack(void) {
     return g.state != ST_WAKE && g.state != ST_ACK;
 }
 
-bool csl_busy(void) {
+bool csl_quiet_for(uint32_t us) {
     if (g.state == ST_IDLE) {
-        return false;
+        return true;
     }
+    return g.state == ST_WAIT && until(g.listen_us, csl_port_now()) >= us;
+}
+
+bool csl_busy(void) {
     /* Waiting for a sample that is still far away leaves the bus free. */
-    return g.state != ST_WAIT || until(g.listen_us, csl_port_now()) < 10000u;
+    return !csl_quiet_for(10000u);
 }

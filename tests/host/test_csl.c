@@ -791,6 +791,59 @@ static void test_take_seq_counter(void) {
     CHECK_EQ(b->frame[14] | b->frame[15] << 8, 303);
 }
 
+/* csl_quiet_for(), the beacon's gate (#19 review L2): quiet only while no
+ * transaction holds the air and the waiting one's listen is far enough
+ * away; csl_busy() is the same at 10 ms. */
+static void test_quiet_for(void) {
+    reset();
+    struct device d;
+    add_device(&d, 0xA0, 300000, 0);
+    CHECK(csl_quiet_for(UINT32_MAX)); /* idle, nothing queued */
+    CHECK(csl_enqueue_data(d.eui, body, sizeof body, 1, 0, CSL_KEY_NETWORK));
+    CHECK(csl_quiet_for(UINT32_MAX)); /* idle: no listen is set up before csl_step() */
+    run_until(now_us + 1500000);      /* bootstrap; the ACK gives an anchor */
+    CHECK(csl_anchor_known(d.eui));
+    CHECK(csl_quiet_for(UINT32_MAX));
+
+    /* The next job waits for the device's sample, its listen far ahead. */
+    CHECK(csl_enqueue_data(d.eui, body, sizeof body, 2, 0, CSL_KEY_NETWORK));
+    uint32_t to_listen = csl_step();
+    CHECK(to_listen > 100000u && to_listen < CSL_PERIOD_US);
+    CHECK(csl_quiet_for(to_listen));
+    CHECK(!csl_quiet_for(to_listen + 1u));
+    CHECK(!csl_busy());
+    now_us += to_listen - 15000u; /* the listen 15 ms away: still quiet for the beacon */
+    CHECK(csl_quiet_for(15000u));
+    CHECK(!csl_busy());
+    now_us += 1; /* 14.999 ms: a beacon now could shorten it */
+    CHECK(!csl_quiet_for(15000u));
+    CHECK(!csl_busy());
+    now_us += 5000u; /* under 10 ms: the bus is reserved as well */
+    CHECK(!csl_quiet_for(15000u));
+    CHECK(csl_busy());
+
+    /* Listening, then sending the train: never quiet. */
+    unsigned before = listens;
+    CHECK_EQ(csl_step(), 9999u); /* still waiting for the listen */
+    now_us += 9999u;
+    (void)csl_step();
+    CHECK_EQ(listens, before + 1u);
+    CHECK(!csl_quiet_for(0));
+    CHECK(csl_busy());
+    run_until(now_us + 200000);
+    CHECK_EQ(d.heard, 2);
+    CHECK(csl_quiet_for(UINT32_MAX));
+    CHECK(!csl_busy());
+
+    /* A broadcast listens within the backoff, at most 3.84 ms away. */
+    next_random = 6;
+    uint8_t pkt[20] = {0x7B, 0x3B, 58, 1, 134};
+    CHECK(csl_enqueue_broadcast(pkt, sizeof pkt, 9, 0, CSL_KEY_NETWORK));
+    CHECK_EQ(csl_step(), 6u * CSL_LBT_SLOT_US);
+    CHECK(!csl_quiet_for(15000u));
+    CHECK(csl_quiet_for(6u * CSL_LBT_SLOT_US));
+}
+
 int main(void) {
     ccm_set_key(&key, v_key.p);
     test_bootstrap_then_anchored();
@@ -808,5 +861,6 @@ int main(void) {
     test_counter_limit();
     test_ra_pair();
     test_take_seq_counter();
+    test_quiet_for();
     return TEST_REPORT("test_csl");
 }

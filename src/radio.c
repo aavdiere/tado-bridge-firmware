@@ -1582,9 +1582,11 @@ bool csl_port_listen_busy(void) {
  *      3.7 ms minus the time this task needed to get here: the pump, the
  *      CCM check of the request and building the beacon, well under
  *      0.5 ms [I]). Any GDO0 edge (a sync word), GDO0 high, a frame of ours
- *      on the air, a coordinator transaction holding the air, or an RSSI at
- *      or above LBT_RSSI_BUSY_DBM at the end makes the channel busy: no
- *      beacon. The commercial bridge listens 3.968 ms here (freedo
+ *      on the air, a coordinator transaction holding the air or starting
+ *      its listen less than PAIR_BEACON_QUIET_US (15 ms) from the decision
+ *      (the beacon must not shorten that listen), or an RSSI at or above
+ *      LBT_RSSI_BUSY_DBM at the end makes the channel busy: no beacon. The
+ *      commercial bridge listens 3.968 ms here (freedo
  *      cc1101_bridge.ino:228-230).
  *   3. Too late (past PAIR_BEACON_TX_LATEST_US, e.g. this task was blocked
  *      by a flash program): no beacon.
@@ -1609,7 +1611,7 @@ static void beacon_answer(uint32_t fall_us, bool own_end) {
     bool     busy  = false;
     while (own_end && el < PAIR_BEACON_TX_AT_US) {
         if (gdo0_edges != edges || gpio_get(GPIOA, BOARD_GDO0_PIN) || cc110l_tx_expected()
-            || csl_busy()) {
+            || !csl_quiet_for(PAIR_BEACON_QUIET_US)) {
             busy = true;
             break;
         }
@@ -1619,10 +1621,10 @@ static void beacon_answer(uint32_t fall_us, bool own_end) {
     }
     if (own_end && !busy) {
         uint8_t raw = 0;
-        busy        = gdo0_edges != edges || gpio_get(GPIOA, BOARD_GDO0_PIN)
-                      || !cc110l_read_status_stable(CC_RSSI, &raw)
-                      || rssi_x2(raw) >= 2 * LBT_RSSI_BUSY_DBM;
-        el          = timebase_us() - fall_us;
+        busy = gdo0_edges != edges || gpio_get(GPIOA, BOARD_GDO0_PIN)
+               || !csl_quiet_for(PAIR_BEACON_QUIET_US) || !cc110l_read_status_stable(CC_RSSI, &raw)
+               || rssi_x2(raw) >= 2 * LBT_RSSI_BUSY_DBM;
+        el   = timebase_us() - fall_us;
     }
     uint32_t stx = 0;
     bool     ok  = false;

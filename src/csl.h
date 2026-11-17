@@ -138,8 +138,17 @@ bool csl_may_ack(void);
 
 /* True while a transaction has reserved the air: from the start of its
  * listen to its end. Flash access on the shared bus has to wait
- * (docs/design.md "Sharing SPI1 with the radio"). */
+ * (docs/design.md "Sharing SPI1 with the radio"). Same as
+ * !csl_quiet_for(10000). */
 bool csl_busy(void);
+
+/* No transaction holds the air now, and the one waiting (if any) starts
+ * its listen at least us microseconds from now. A frame sent outside the
+ * coordinator that ends within us then cannot shorten that listen (#19:
+ * the Enhanced Beacon). Idle with jobs queued counts as quiet: a new
+ * transaction is set up only by csl_step(), and its listen starts after
+ * that call. */
+bool csl_quiet_for(uint32_t us);
 
 /* --- Anchors -------------------------------------------------------------- */
 /* An Enhanced ACK from dev, with its CSL phase, ended at end_us. */

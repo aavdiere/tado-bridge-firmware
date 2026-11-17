@@ -183,14 +183,14 @@ Built and host-tested 2026-11-17; not reviewed, not flashed, nothing measured on
 
 **Modules.** `src/pair.c` (hardware independent, ported from freedo `tado/beacon.go`, `BuildPairCoAP` in `tado/build_resources.go:453-485`, `tado/pair_window.go` and `pairAnswer` in `firmware/cc1101_bridge/cc1101_bridge.ino:923-974`, Apache-2.0 notice in the file): the window, the Beacon Request check, the Enhanced Beacon, the `d/pair` message, the limits. `src/link.c` runs it in the radio task; `src/radio.c` owns the trigger and the beacon's timing; `src/network.c` creates the network or reads its key back.
 
-**Trigger and arming.** A window opens only when all of these hold (`pairing_trigger()`, `src/radio.c:1671`):
+**Trigger and arming.** A window opens only when all of these hold (`pairing_trigger()`, `src/radio.c:1674`):
 
 | Gate | Where |
 | :--- | :--- |
 | The owner holds the pair button (PC15) for 1 s; holding it again closes an open window | `src/app.c:73-83`, `NOTE_PAIR` |
 | A target device is named at build time: `PAIR_TARGET_EUI64` in the gitignored `config/local.cmake` (EUI-64 in the order of `BRIDGE_EUI64`, `00 1b c5` first; CMake refuses another prefix or the bridge's own EUI-64) | `cmake/CMakeLists.txt:57-77`, `config/local.cmake.example` |
 | The transmitter is built in (`RADIO_TX_ALLOWED` 1, set only in a local bench image after a `fw-reviewer` verdict) | `src/cc110l.h:24` |
-| The flash was read at boot (`flash_boot()`), the bridge has an identity, the GDO interrupts are on and the PLL locked | `src/radio.c:1671-1697` |
+| The flash was read at boot (`flash_boot()`), the bridge has an identity, the GDO interrupts are on and the PLL locked | `src/radio.c:1674-1700` |
 | A network: the active one, its key read back from its record by seq (`network_key()`, `src/network.c:87`); or, only if the boot found no network record at all, a new one created **before** the window opens (`network_create()`, which now refuses unless `network_absent()`, `src/network.c:32,98`; any failure blocks a second attempt until the next boot) | fw-reviewer items 1-3 (issue #19) |
 
 The trigger runs at a quiet moment of the radio task (no packet arriving, no coordinator transaction), never while a window is open: creating a network blocks the task for up to about 0.8 s (DRBG reseed, sector erases), so it cannot overlap a window or a transaction. The key and random bytes the trigger used are wiped right after the window opens (item 4).
@@ -212,20 +212,22 @@ The trigger runs at a quiet moment of the radio task (no packet arriving, no coo
 
 ### Beacon answer timing (open question 28)
 
-Target: the beacon's preamble starts 2.4-7.4 ms after the request ends (`freedo/docs/PROTOCOL.md:657-658`). Path (`beacon_answer()`, `src/radio.c:1600`):
+Target: the beacon's preamble starts 2.4-7.4 ms after the request ends (`freedo/docs/PROTOCOL.md:657-658`). Path (`beacon_answer()`, `src/radio.c:1602`):
 
 | Step | Time after the request's end | Source |
 | :--- | :--- | :--- |
 | GDO0 falls at the end of the request; EXTI0 stamps `gdo0_fall_us` | 0, later by at most one SPI1 critical section (about 0.1 ms) | `src/radio.c` interrupts |
 | Radio task (highest priority) woken by the edge: last FIFO bytes, `link_on_frame()`: CCM* check of the request (6 AES blocks), beacon built and sealed (6 AES blocks) | well under 0.5 ms **[I]** | |
 | Check: exactly one GDO0 edge since the request's length byte was read (`rx.edges_at_len`, `src/radio.c:933`), so the stamp is the request's own end | | `src/radio.c:796` |
-| Spin to `PAIR_BEACON_TX_AT_US` = 3.7 ms; any GDO0 edge, GDO0 high, a frame of ours on the air or a coordinator transaction makes it busy: no beacon; RSSI at or above -85 dBm at the end: busy | 3.7 ms | `src/pair.h:88` |
+| Spin to `PAIR_BEACON_TX_AT_US` = 3.7 ms; any GDO0 edge, GDO0 high, a frame of ours on the air, a coordinator transaction holding the air, or the coordinator's next listen starting less than `PAIR_BEACON_QUIET_US` = 15 ms after the check makes it busy: no beacon; RSSI at or above -85 dBm at the end: busy | 3.7 ms | `src/pair.h:88,96`, `csl_quiet_for()` `src/csl.c:689` |
 | Later than `PAIR_BEACON_TX_LATEST_US` = 6.5 ms (task blocked, e.g. a 10 ms flash program): no beacon | | `src/pair.h:89` |
 | `cc110l_tx_answer()`: RSSI read, register read-back, gate, airtime, SIDLE/SFRX/SFTX, 33 FIFO bytes at 6 MHz, STX | +0.1-0.15 ms **[I]** | |
 | IDLE to TX, no calibration | +75.2 µs | `datasheets/cc110l.txt:2542` |
 | **Preamble starts** | **about 3.9-4.0 ms** | |
 
 Margins: 1.5 ms after the earliest and 3.4 ms before the latest start the device accepts; the commercial bridge listens 3.968 ms before its beacon (`freedo/firmware/cc1101_bridge/cc1101_bridge.ino:228-230`). A beacon not sent (end not seen live, busy, late, refused) costs one request: the device asks again 8 s later (`freedo/docs/PROTOCOL.md:662`). Nothing is logged before the beacon is on the air; then `pair: beacon seq NN to the target sent: STX N us after the request ended`. The minute log counts beacons sent and not sent by reason.
+
+Effect on listen before transmit: none. The beacon is over within about 7.3 ms of the decision to send it (0.15 ms to STX, 75 µs, 43 bytes on air), so the 15 ms gate keeps it, and the log line after it, clear of the coordinator's next 3.968 ms listen; before the #19 review the gate was `csl_busy()`, which allows a listen 10 ms away, so a beacon could overlap and shorten it. The coordinator sets up no new transaction while the beacon is prepared and sent (only `csl_step()` does, in the same task), so an idle coordinator counts as quiet. Host test: `test_quiet_for()` in `tests/host/test_csl.c`.
 
 Effect on the Enhanced ACK (#18): none on its path. The spin checks for a sync edge every 100 µs and gives up at once, so a Data frame arriving meanwhile is pumped and its ACK prepared as before; during the beacon itself the radio is in TX.
 

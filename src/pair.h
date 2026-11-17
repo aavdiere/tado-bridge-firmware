@@ -87,6 +87,13 @@
  * 8 s later. */
 #define PAIR_BEACON_TX_AT_US     3700u
 #define PAIR_BEACON_TX_LATEST_US 6500u
+/* The beacon goes only if the coordinator's next listen before transmit
+ * starts at least this long after the decision to send (csl_quiet_for()),
+ * so that the beacon never shortens that listen: from the decision about
+ * 0.15 ms to STX, 75 us to the air, and 32 + 11 bytes at 160 us (7.0 ms
+ * charged by the airtime budget), so the beacon is over within about
+ * 7.3 ms, and the log line after it follows [I]. */
+#define PAIR_BEACON_QUIET_US     15000u
 #define PAIR_BEACON_START_MIN_US 2400u
 #define PAIR_BEACON_START_MAX_US 7400u
 
