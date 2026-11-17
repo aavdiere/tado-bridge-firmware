@@ -476,6 +476,20 @@ bool cc110l_tx_feed(size_t *left) {
     return ok;
 }
 
+void cc110l_tx_abort(void) {
+    if (!RADIO_TX_ALLOWED) {
+        return;
+    }
+    tx_permit = true;
+    if (begin(CC_SIDLE, NULL)) {
+        (void)more(CC_SFTX);
+        end();
+    }
+    tx_permit = false;
+    tx_active = false;
+    tx.idx    = tx.total;
+}
+
 enum cc110l_tx_result cc110l_ack_prepare(const uint8_t a[MAC_ACK_LEN],
                                          const uint8_t answered[MAC_HDR_LEN]) {
     if (!RADIO_TX_ALLOWED) {

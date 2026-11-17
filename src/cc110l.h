@@ -175,6 +175,10 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
  * then re-arms the receiver. */
 bool cc110l_tx_feed(size_t *left);
 
+/* Stops a transmission that went wrong: SIDLE and SFTX. The chip is left in
+ * IDLE; the caller re-arms the receiver. */
+void cc110l_tx_abort(void);
+
 /* True from a transmission's STX until its airtime plus a margin has
  * passed: a TX state reported by the chip is then ours. Safe from any
  * context. */

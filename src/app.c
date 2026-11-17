@@ -18,8 +18,11 @@
 #define PRIO_NET          (tskIDLE_PRIORITY + 2)
 #define PRIO_RADIO        (tskIDLE_PRIORITY + 3)
 
-#define STACK_WORDS     512  /* 2 KB each; LOG() needs about 1 KB of it */
-#define NET_STACK_WORDS 1536 /* 6 KB: lwIP input down to the driver (#13), then TLS (#15) */
+#define STACK_WORDS 512 /* 2 KB each; LOG() needs about 1 KB of it */
+/* 2.5 KB: the coordinator logs from four calls deep, and sealing a frame
+ * takes about 0.5 KB (#17). To be measured on the bench ("alive:" line). */
+#define RADIO_STACK_WORDS 640
+#define NET_STACK_WORDS   1536 /* 6 KB: lwIP input down to the driver (#13), then TLS (#15) */
 
 static TaskHandle_t h_radio, h_net, h_hk;
 
@@ -96,7 +99,7 @@ static void housekeeping_task(void *arg) {
 }
 
 void app_create_tasks(void) {
-    BaseType_t ok = xTaskCreate(radio_task, "radio", STACK_WORDS, NULL, PRIO_RADIO, &h_radio);
+    BaseType_t ok = xTaskCreate(radio_task, "radio", RADIO_STACK_WORDS, NULL, PRIO_RADIO, &h_radio);
     ok &= xTaskCreate(net_task, "net", NET_STACK_WORDS, NULL, PRIO_NET, &h_net);
     ok &= xTaskCreate(housekeeping_task, "housekeep", STACK_WORDS, NULL, PRIO_HOUSEKEEPING, &h_hk);
     configASSERT(ok == pdPASS);
