@@ -59,14 +59,22 @@ struct csl_config {
     /* Keys by enum csl_key; a NULL or unset key fails the jobs that need
      * it. The pairing key is for #19. */
     const struct ccm_key *key[CSL_KEY_COUNT];
-    uint32_t              counter; /* first frame counter to use */
-    uint8_t               seq;     /* first MAC sequence number */
+    uint32_t              counter;       /* first frame counter to use */
+    uint32_t              counter_limit; /* first counter not reserved (#37) */
+    uint8_t               seq;           /* first MAC sequence number */
 };
 
 void csl_init(const struct csl_config *cfg);
 
-/* The next frame counter that would be used (for the counter log, P6). */
+/* The next frame counter that would be used (for the counter log, #37). */
 uint32_t csl_counter(void);
+
+/* Counter reservation (#37, docs/design.md "Counter log"): no transaction
+ * starts while the next counter is at or above the limit, so no counter at
+ * or above the value persisted in flash ever goes on the air. Jobs wait in
+ * their queues until the limit moves up. The limit only moves up. */
+void     csl_set_counter_limit(uint32_t limit);
+uint32_t csl_counter_limit(void);
 
 /* --- Queue ---------------------------------------------------------------- */
 #define CSL_JOB_MORE    0x01u /* more fragments of the same datagram follow */

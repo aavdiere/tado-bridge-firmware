@@ -68,7 +68,7 @@ static const uint8_t bcast_dst[MAC_EUI_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF
 
 static struct {
     struct csl_config cfg;
-    uint32_t          counter;
+    uint32_t          counter, counter_limit;
     uint8_t           seq;
 
     struct job      jobs[CSL_JOB_POOL + 1u]; /* one more, kept for a broadcast */
@@ -196,9 +196,10 @@ static void pool_init(void) {
 
 void csl_init(const struct csl_config *cfg) {
     memset(&g, 0, sizeof g);
-    g.cfg     = *cfg;
-    g.counter = cfg->counter;
-    g.seq     = cfg->seq;
+    g.cfg           = *cfg;
+    g.counter       = cfg->counter;
+    g.counter_limit = cfg->counter_limit;
+    g.seq           = cfg->seq;
     pool_init();
 }
 
@@ -208,6 +209,16 @@ void csl_flush(void) {
 
 uint32_t csl_counter(void) {
     return g.counter;
+}
+
+void csl_set_counter_limit(uint32_t limit) {
+    if (limit > g.counter_limit) {
+        g.counter_limit = limit;
+    }
+}
+
+uint32_t csl_counter_limit(void) {
+    return g.counter_limit;
 }
 
 /* One slot stays free for a broadcast while none is queued, so that Data
@@ -449,7 +460,15 @@ static void start(unsigned i, uint64_t now) {
 /* Pick the neighbour whose train starts first, round-robin on a tie
  * (freedo cslScheduleNext). Returns the wait until a queue becomes ready
  * when none is. */
+/* Wait between checks while the counter reservation is used up. */
+#define COUNTER_WAIT_US 100000u
+
 static uint32_t schedule(uint64_t now) {
+    /* Each start() takes one counter (build_frame), so this check covers
+     * every attempt (#37). */
+    if (g.counter >= g.counter_limit) {
+        return COUNTER_WAIT_US;
+    }
     int      best       = -1;
     uint64_t best_start = 0, soonest = UINT64_MAX;
     for (unsigned step = 0; step < CSL_NEIGHBORS; step++) {

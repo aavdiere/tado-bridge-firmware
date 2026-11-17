@@ -20,12 +20,15 @@
 /* own: our wire EUI-64, or NULL if the bridge has no identity. */
 void link_init(const uint8_t own[MAC_EUI_LEN]);
 
-/* Radio task. Sets the network key and the first frame counter to use, and
- * restarts the coordinator (queued downlinks are dropped). The caller owns
- * the counter reservation scheme (docs/design.md "Counter log"):
- * link_counter() is the next counter that would be used. */
-void     link_set_key(const uint8_t key[CCM_KEY_LEN], uint32_t first_counter);
-void     link_clear_key(void);
+/* Radio task. Sets the network key, the first frame counter to use and the
+ * first counter not reserved in flash, and restarts the coordinator (queued
+ * downlinks are dropped). The caller owns the counter reservation scheme
+ * (docs/design.md "Counter log", src/network.c): link_counter() is the next
+ * counter that would be used, and nothing is sent at or above the limit
+ * until link_set_counter_limit() moves it up. */
+void link_set_key(const uint8_t key[CCM_KEY_LEN], uint32_t first_counter, uint32_t counter_limit);
+void link_set_counter_limit(uint32_t counter_limit);
+void link_clear_key(void);
 uint32_t link_counter(void);
 
 /* Identity and key are there: frames can be taken, acknowledged and sent. */

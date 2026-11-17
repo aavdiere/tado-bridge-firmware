@@ -185,7 +185,7 @@ static void run_until(uint64_t until_us) {
 }
 
 static void reset(void) {
-    struct csl_config cfg = {.key = {&key, NULL}, .counter = 1000, .seq = 0x40};
+    struct csl_config cfg = {.key = {&key, NULL}, .counter = 1000, .counter_limit = UINT32_MAX, .seq = 0x40};
     memcpy(cfg.own, own, 8);
     csl_init(&cfg);
     now_us       = 5000000;
@@ -646,7 +646,7 @@ static void test_pairing_flag(void) {
     add_device(&d, 0xA0, 250000, 0);
     static struct ccm_key pair;
     ccm_set_key(&pair, v_key2.p);
-    struct csl_config cfg = {.key = {&key, &pair}, .counter = 5, .seq = 1};
+    struct csl_config cfg = {.key = {&key, &pair}, .counter = 5, .counter_limit = UINT32_MAX, .seq = 1};
     memcpy(cfg.own, own, 8);
     csl_init(&cfg);
     CHECK(csl_enqueue_broadcast(body, sizeof body, 1, CSL_JOB_PAIRING, CSL_KEY_PAIRING));
@@ -663,6 +663,42 @@ static void test_pairing_flag(void) {
              MAC_OPEN_MIC);
 }
 
+/* #37: nothing starts at or above the counter reservation, and the limit
+ * only moves up. */
+static void test_counter_limit(void) {
+    reset();
+    struct csl_config cfg = {.key = {&key, NULL}, .counter = 1000, .counter_limit = 1000, .seq = 1};
+    memcpy(cfg.own, own, 8);
+    csl_init(&cfg);
+    uint8_t pkt[20] = {0x7B, 0x3B, 58, 1, 134};
+    CHECK(csl_enqueue_broadcast(pkt, sizeof pkt, 9, 0, CSL_KEY_NETWORK));
+    run_until(now_us + 3000000);
+    CHECK_EQ(n_sent, 0);
+    CHECK_EQ(n_reports, 0);
+    CHECK_EQ(csl_counter(), 1000);
+
+    csl_set_counter_limit(1001);
+    CHECK_EQ(csl_counter_limit(), 1001);
+    run_until(now_us + 1500000);
+    CHECK(n_sent > 0);
+    CHECK_EQ(n_reports, 1);
+    CHECK_EQ(reports[0].outcome, CSL_DELIVERED);
+    CHECK_EQ(csl_counter(), 1001);
+
+    /* Used up again: the next one waits; a lower limit changes nothing. */
+    unsigned before = n_sent;
+    CHECK(csl_enqueue_broadcast(pkt, sizeof pkt, 9, 0, CSL_KEY_NETWORK));
+    csl_set_counter_limit(500);
+    CHECK_EQ(csl_counter_limit(), 1001);
+    run_until(now_us + 3000000);
+    CHECK_EQ(n_sent, before);
+    CHECK_EQ(csl_counter(), 1001);
+    csl_set_counter_limit(1002);
+    run_until(now_us + 1500000);
+    CHECK(n_sent > before);
+    CHECK_EQ(csl_counter(), 1002);
+}
+
 int main(void) {
     ccm_set_key(&key, v_key.p);
     test_bootstrap_then_anchored();
@@ -677,5 +713,6 @@ int main(void) {
     test_two_devices();
     test_drift();
     test_pairing_flag();
+    test_counter_limit();
     return TEST_REPORT("test_csl");
 }

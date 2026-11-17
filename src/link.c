@@ -61,21 +61,25 @@ void link_init(const uint8_t own_wire[MAC_EUI_LEN]) {
     link_clear_key();
 }
 
-static void csl_restart(uint32_t counter) {
-    struct csl_config cfg = {.key = {&net_key, NULL}, .counter = counter};
+static void csl_restart(uint32_t counter, uint32_t limit) {
+    struct csl_config cfg = {.key = {&net_key, NULL}, .counter = counter, .counter_limit = limit};
     memcpy(cfg.own, own, MAC_EUI_LEN);
     csl_init(&cfg);
 }
 
-void link_set_key(const uint8_t key[CCM_KEY_LEN], uint32_t first_counter) {
+void link_set_key(const uint8_t key[CCM_KEY_LEN], uint32_t first_counter, uint32_t counter_limit) {
     ccm_set_key(&net_key, key);
-    csl_restart(first_counter);
+    csl_restart(first_counter, counter_limit);
     ra_armed = false;
+}
+
+void link_set_counter_limit(uint32_t counter_limit) {
+    csl_set_counter_limit(counter_limit);
 }
 
 void link_clear_key(void) {
     ccm_clear_key(&net_key);
-    csl_restart(0);
+    csl_restart(0, 0);
     ra_armed = false;
 }
 

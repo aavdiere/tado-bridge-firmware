@@ -76,7 +76,7 @@ static void drain(void) {
 }
 
 static void reset(const uint8_t *me) {
-    struct csl_config cfg = {.key = {&key, NULL}, .counter = 1, .seq = 1};
+    struct csl_config cfg = {.key = {&key, NULL}, .counter = 1, .counter_limit = UINT32_MAX, .seq = 1};
     memcpy(cfg.own, me, 8);
     csl_init(&cfg);
     relay_init(&relay, me);

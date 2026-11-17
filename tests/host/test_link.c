@@ -107,7 +107,7 @@ int main(void) {
     CHECK_EQ(n_wake + n_data + n_bcast, 0);
 
     /* With the key: the uplink is queued for the server with its header. */
-    link_set_key(v_key.p, 500);
+    link_set_key(v_key.p, 500, UINT32_MAX);
     CHECK(link_ready());
     CHECK_EQ(link_counter(), 500);
     CHECK(link_uplink_room());
@@ -181,7 +181,7 @@ int main(void) {
 
     /* Router Advertisement: after a Router Solicitation, with the gateway
      * and DNS addresses the net task gave. A new key drops what was queued. */
-    link_set_key(v_key.p, 900);
+    link_set_key(v_key.p, 900, UINT32_MAX);
     CHECK_EQ(csl_free_jobs(), CSL_JOB_POOL);
     n_bcast = 0;
     link_set_router(0x0101A8C0u, 0x0101A8C0u); /* 192.168.1.1 as stored in memory */
