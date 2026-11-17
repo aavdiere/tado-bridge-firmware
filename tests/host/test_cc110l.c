@@ -68,6 +68,12 @@ static void check_chip(void) {
     }
     CHECK_EQ(chip.forbidden, 0);
     CHECK_EQ(chip.misuse, 0);
+}
+
+/* The same, and no strobe was lost behind an SIDLE: the scripted tests
+ * never leave the chip in a state where the driver has to give one up. */
+static void check_clean(void) {
+    check_chip();
     CHECK_EQ(chip.dropped, 0);
 }
 
@@ -130,7 +136,7 @@ static void test_preconditions(void) {
     CHECK(cc110l_write_burst(CC_CHANNR, table + CC_CHANNR, 6));
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
     CHECK_EQ(chip.stx_count, 0);
-    check_chip();
+    check_clean();
 }
 
 /* --- One frame, as approved ----------------------------------------------------- */
@@ -156,7 +162,7 @@ static void test_send(void) {
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
     finish_frame();
     sent_is(1, f, n);
-    check_chip();
+    check_clean();
 }
 
 /* --- One transmission at a time -------------------------------------------------- */
@@ -196,7 +202,7 @@ static void test_busy(void) {
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
     finish_frame();
     CHECK_EQ(chip.frames_cut, 0);
-    check_chip();
+    check_clean();
 }
 
 /* --- Channels -------------------------------------------------------------------- */
@@ -234,7 +240,7 @@ static void test_channels(void) {
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
     CHECK_EQ(cc110l_tx_verdict(), TXGATE_PROTECTED);
     CHECK_EQ(chip.stx_count, 1);
-    check_chip();
+    check_clean();
 }
 
 /* --- The chip no longer holds what was written ------------------------------------ */
@@ -288,7 +294,7 @@ static void test_chip_changed(void) {
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_REFUSED);
     CHECK(!cc110l_ack_fire_from_isr());
     CHECK_EQ(chip.stx_count, before);
-    check_chip();
+    check_clean();
 }
 
 /* --- Frame rules, at the driver --------------------------------------------------- */
@@ -317,7 +323,7 @@ static void test_frames(void) {
     CHECK_EQ(chip.stx_count, 0);
     CHECK_EQ(chip.tx_fifo_writes, 0);
     CHECK_EQ(chip.st, M_RX);
-    check_chip();
+    check_clean();
 }
 
 /* --- Enhanced ACK ------------------------------------------------------------------ */
@@ -435,13 +441,29 @@ static void test_ack(void) {
     CHECK_MEM(chip.stx[4].air + 1, ackf, sizeof ackf);
     delay_us(10000);
 
+    /* A status byte that wrongly reports a transmit state at the
+     * interrupt's SIDLE: no ACK, nothing in the TX FIFO, and the chip is
+     * receiving again with what it had received. */
+    CHECK(cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
+    unsigned fifo = chip.tx_fifo_writes;
+    chip.rxn      = 3;
+    chip.lie_once = true;
+    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(chip.st, M_RX);
+    CHECK_EQ(chip.rxn, 3);
+    CHECK_EQ(chip.tx_fifo_writes, fifo);
+    CHECK_EQ(chip.stx_count, 5);
+    CHECK(!cc110l_tx_expected());
+    chip.rxn = 0;
+
     /* A reset by the driver, a re-configuration: the prepared ACK is gone. */
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
     bring_up(TXGATE_TEST_CHANNEL);
     CHECK(!cc110l_ack_fire_from_isr());
     CHECK_EQ(chip.stx_count, 5);
-    check_chip();
+    check_clean();
 }
 
 /* --- A frame longer than the FIFO, underflow, abort --------------------------------- */
@@ -522,7 +544,7 @@ static void test_long_and_abort(void) {
     finish_frame();
     CHECK_EQ(chip.stx[5].air_n, sizeof w + 1u);
     CHECK_MEM(chip.stx[5].air + 1, w, sizeof w);
-    check_chip();
+    check_clean();
 }
 
 /* --- The guard below the transmit functions ----------------------------------------- */
@@ -579,7 +601,7 @@ static void test_guard(void) {
     CHECK(cc110l_read_status(CC_RXBYTES, &v));
     CHECK(!cc110l_take_tx_state_flag());
     finish_frame();
-    check_chip();
+    check_clean();
 }
 
 /* --- Random use: whatever the caller does, the chip only sends on channel 10 -------- */

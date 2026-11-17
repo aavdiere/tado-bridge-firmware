@@ -60,6 +60,7 @@ static struct {
 
     uint32_t strobes_dropped_until; /* after SIDLE */
     bool     dropping;
+    bool     lie_once; /* the next status byte reports TX, whatever the state */
 
     /* What the tests look at. */
     struct model_stx stx[MODEL_MAX_STX];
@@ -200,6 +201,10 @@ static void model_strobe(uint8_t s) {
 
 static uint8_t model_status_byte(void) {
     static const uint8_t state[] = {[M_IDLE] = 0, [M_RX] = 1, [M_TX] = 2, [M_UNDERFLOW] = 7};
+    if (chip.lie_once) {
+        chip.lie_once = false;
+        return (uint8_t)(state[M_TX] << 4);
+    }
     return (uint8_t)(state[chip.st] << 4);
 }
 

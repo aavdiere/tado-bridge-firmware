@@ -632,8 +632,14 @@ bool cc110l_ack_fire_from_isr(void) {
     /* CHIP_RDYn: SO is low at once unless the chip sleeps (cc110l.txt:
      * 1297-1299), which it never does here. */
     bool ok = wait_so_low(100);
-    if (ok) {
-        ok = !state_blocks_flush(more(CC_SIDLE));
+    if (ok && state_blocks_flush(more(CC_SIDLE))) {
+        /* No ACK. If the status byte was wrong about the state (it can
+         * read corrupt, cc110l.txt:1994-1996) the chip was receiving and is
+         * IDLE now: SRX puts it back, with the frame still in the RX FIFO.
+         * From a real transmit state the SRX is dropped, and the TX-state
+         * watch of the radio task deals with it. */
+        (void)more(CC_SRX);
+        ok = false;
     }
     if (ok) {
         (void)more(CC_SFTX);

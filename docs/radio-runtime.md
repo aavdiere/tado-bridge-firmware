@@ -163,7 +163,7 @@ Latency, estimate only, nothing measured yet: interrupt entry a few µs; about 3
 - One transmission at a time: a new frame is refused while one of ours is on the air, and the interrupt sends no ACK then.
 - `src/radio.c` sends nothing while the GDO interrupts are off (storm guard or failed bring-up), and the TX-state watch of P2 now stops the board only for a TX state outside the airtime of a frame we started.
 
-**Host tests of the driver.** `tests/host/test_cc110l.c` compiles `src/cc110l.c` with the switch set for that one translation unit and runs it against a simulated chip (`tests/host/cc110l_model.h`) that logs every `STX` with the carrier its own registers give. `tests/host/test_cc110l_off.c` runs the driver as built. `make test`: 877294 checks in 8 programs, 0 failed (2026-11-17) **[V]** on the host.
+**Host tests of the driver.** `tests/host/test_cc110l.c` compiles `src/cc110l.c` with the switch set for that one translation unit and runs it against a simulated chip (`tests/host/cc110l_model.h`) that logs every `STX` with the carrier its own registers give. `tests/host/test_cc110l_off.c` runs the driver as built. `make test`: 877202 checks in 8 programs, 0 failed (2026-11-17) **[V]** on the host.
 
 **Open, for the review and the bench.**
 
@@ -172,4 +172,4 @@ Latency, estimate only, nothing measured yet: interrupt entry a few µs; about 3
 - **Listen before transmit looks for sync words only** (GDO0 edges during the 3.968 ms listen), not for carrier or RSSI. Other users of the band are not detected. What the stock coordinator listens for is not known (#20).
 - **No recalibration after bring-up.** `MCSM0 = 08` (no automatic calibration) and one `SCAL` at bring-up, as in P2. Whether a transmitter needs it repeated with temperature is to be decided with the first transmissions (#11).
 - **Radio task stack:** 640 words. Deepest paths by `-fstack-usage` are about 1.0-1.2 KB (a log line from the coordinator) **[I]**; measure the unused words on the bench.
-- If the interrupt's SPI access fails after its `SIDLE`, the chip stays in IDLE until the 10 s health check re-arms it.
+- If the chip does not answer the interrupt's second SPI access (the `STX`) after its `SIDLE`, it stays in IDLE until the 10 s health check re-arms it. A status byte that wrongly shows a transmit state at the `SIDLE` costs only that ACK: the interrupt strobes `SRX` and the frame is still taken.
