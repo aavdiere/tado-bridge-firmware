@@ -20,9 +20,17 @@ _Static_assert(RADIO_CHANNEL == TXGATE_TEST_CHANNEL, "the record holds the test 
 
 static bool     active, failing;
 static uint32_t limit, retry_ms;
+static uint32_t active_seq; /* seq of the record whose key is set */
+
+/* What the boot found (#19): network_create() runs only on NET_NONE. */
+static enum { NET_UNKNOWN, NET_NONE, NET_RECORD } found = NET_UNKNOWN;
 
 bool network_active(void) {
     return active;
+}
+
+bool network_absent(void) {
+    return found == NET_NONE && !active;
 }
 
 /* Reserve counters and set the key of a network read back from flash. */
@@ -40,9 +48,10 @@ static bool activate(const struct store_net *n, uint32_t seq) {
         return false;
     }
     link_set_key(n->key, first, lim);
-    limit   = lim;
-    active  = true;
-    failing = false;
+    limit      = lim;
+    active     = true;
+    active_seq = seq;
+    failing    = false;
     LOG("network: record seq %lu, channel %u: key set, frame counter %lu, reserved below %lu",
         (unsigned long)seq,
         n->channel,
@@ -53,18 +62,37 @@ static bool activate(const struct store_net *n, uint32_t seq) {
 
 void network_boot(void) {
     active = false;
+    found  = NET_UNKNOWN;
     if (!link_own()) {
         LOG("network: no identity: network record not read");
         return;
     }
     struct store_net n;
     uint32_t         seq = 0;
+    bool             any = true;
     if (store_net_load(&n, &seq)) {
+        found = NET_RECORD;
         (void)activate(&n, seq);
+    } else if (store_net_probe(&any) && !any) {
+        found = NET_NONE;
+        LOG("network: no network record: no key, nothing sent");
     } else {
-        LOG("network: no valid network record: no key, nothing sent");
+        found = NET_RECORD;
+        LOG("network: a network record that is damaged or not for this channel, or unreadable: "
+            "no key, nothing sent, and no new network over it");
     }
     mbedtls_platform_zeroize(&n, sizeof n);
+}
+
+bool network_key(uint8_t key_out[CCM_KEY_LEN]) {
+    struct store_net n;
+    uint32_t         seq = 0;
+    bool ok = active && store_net_load(&n, &seq) && seq == active_seq && n.channel == RADIO_CHANNEL;
+    if (ok) {
+        memcpy(key_out, n.key, CCM_KEY_LEN);
+    }
+    mbedtls_platform_zeroize(&n, sizeof n);
+    return ok;
 }
 
 bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]) {
@@ -78,6 +106,13 @@ bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]) {
         LOG("network: create refused: no identity");
         return false;
     }
+    if (!network_absent()) {
+        LOG("network: create refused: a network record exists, or the flash was not read at "
+            "boot");
+        return false;
+    }
+    /* From here on, whatever happens, no second create in this boot. */
+    found = NET_RECORD;
     /* Counters of an earlier network stay used: start above them. */
     uint32_t max   = 0;
     bool     found = false;

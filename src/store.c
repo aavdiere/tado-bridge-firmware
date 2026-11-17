@@ -209,6 +209,15 @@ bool store_net_load(struct store_net *out, uint32_t *seq) {
     return ok;
 }
 
+bool store_net_probe(bool *any) {
+    uint8_t a[4], b[4];
+    if (!store_port_read(FLASH_NET_A, a, sizeof a) || !store_port_read(FLASH_NET_B, b, sizeof b)) {
+        return false;
+    }
+    *any = get32(a) == STORE_NET_MAGIC || get32(b) == STORE_NET_MAGIC;
+    return true;
+}
+
 bool store_net_write(const struct store_net *n, uint32_t *seq) {
     if (!store_net_allowed(n)) {
         return false;

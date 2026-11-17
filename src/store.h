@@ -83,6 +83,14 @@ bool store_net_allowed(const struct store_net *n);
 
 /* The newest valid network record that store_net_allowed() accepts. */
 bool store_net_load(struct store_net *out, uint32_t *seq);
+/* Is there any network record at all, valid or not? Reads the first four
+ * bytes of both slots: *any is true if either holds the record's magic,
+ * which is programmed last (the commit mark), so a write that was cut
+ * before it left no magic. False if a read failed. A network may be
+ * created only where there has never been one (#19): with *any true and no
+ * valid record, the record is damaged or refused (another channel), and
+ * devices may still be paired to the network it held. */
+bool store_net_probe(bool *any);
 /* Refuses a network store_net_allowed() rejects. *seq (if not NULL): the
  * seq written. */
 bool store_net_write(const struct store_net *n, uint32_t *seq);

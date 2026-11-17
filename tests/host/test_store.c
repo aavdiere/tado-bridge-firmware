@@ -272,12 +272,18 @@ static void test_record_basic(void) {
     fm.slot_a_body_reads = 0;
     CHECK(!store_net_load(&got, &seq));
     CHECK_EQ(fm.slot_a_body_reads, 0);
+    bool any = true;
+    CHECK(store_net_probe(&any));
+    CHECK(!any); /* no network has ever been written */
+    CHECK_EQ(fm.slot_a_body_reads, 0);
 
     struct store_net a = make_net(1, 0), b = make_net(2, 4096), c = make_net(3, 8192);
     CHECK(store_net_write(&a, NULL));
     CHECK(store_net_load(&got, &seq));
     CHECK_EQ(seq, 1);
     CHECK(same_net(&got, &a));
+    CHECK(store_net_probe(&any));
+    CHECK(any);
     /* Slot A held the stock data, so it was the invalid one and got the
      * first record; the next goes to B, then A again. */
     CHECK_EQ(mem[FLASH_NET_A], 0x4E);
@@ -341,6 +347,9 @@ static void test_record_policy(void) {
     uint8_t p[STORE_NET_LEN] = {0xCD, 0xAB, TXGATE_PROTECTED_CHANNEL, 0};
     CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
     CHECK(!store_net_load(&got, &seq));
+    bool any = false;
+    CHECK(store_net_probe(&any));
+    CHECK(any); /* a record, refused: not "no network" */
     p[2] = TXGATE_TEST_CHANNEL;
     CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
     CHECK(store_net_load(&got, &seq));
@@ -381,7 +390,12 @@ static void test_record_cuts(void) {
                 cases++;
                 reboot();
                 bool loaded = store_net_load(&got, &seq);
+                bool any    = !loaded;
+                CHECK(store_net_probe(&any));
+                CHECK(any || !loaded);
                 if (history == 0) {
+                    /* A first write cut before its magic leaves "no network". */
+                    CHECK_EQ(any, loaded);
                     CHECK(!loaded || (seq == 1 && same_net(&got, &neu)));
                 } else {
                     CHECK(loaded);
