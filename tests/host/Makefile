@@ -19,7 +19,7 @@ MBEDTLS_CFLAGS := -std=c11 -O1 -g -fsanitize=address,undefined -I. -I$(MBEDTLS)/
 AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o
 
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
-         test_airtime test_cc110l test_cc110l_off
+         test_airtime test_cc110l test_cc110l_off test_testtx
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -33,6 +33,8 @@ test_link_SRCS := link.c relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
 # the transmitter switched on for that translation unit only, one as the
 # firmware builds it.
 test_airtime_SRCS := airtime.c
+# TEMPORARY (#11): the test-frame sender's frame and schedule.
+test_testtx_SRCS := testtx.c txgate.c mac.c ccm.c
 test_cc110l_SRCS := txgate.c mac.c ccm.c airtime.c
 test_cc110l_DEPS := $(SRC)/cc110l.c cc110l_model.h
 test_cc110l_off_SRCS := txgate.c mac.c ccm.c airtime.c

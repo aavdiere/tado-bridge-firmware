@@ -2,6 +2,11 @@
  * builds it today: RADIO_TX_ALLOWED 0 (#17). Whatever is called, the
  * simulated chip (cc110l_model.h) must never see a transmit strobe or a
  * byte for its TX FIFO. test_cc110l.c tests the driver with the switch on. */
+/* TEMPORARY (#11): the image is built with the switch on for the test-frame
+ * sender; this program keeps testing the driver with it off. */
+#include "cc110l.h"
+#undef RADIO_TX_ALLOWED
+#define RADIO_TX_ALLOWED 0
 #include "../../src/cc110l.c"
 
 #include "cc110l_model.h"
@@ -9,9 +14,10 @@
 
 _Static_assert(RADIO_TX_ALLOWED == 0, "this program tests the switched-off driver");
 
-static const uint8_t own[8]    = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC5, 0x1B, 0x00};
-static const uint8_t device[8] = {0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xC5, 0x1B, 0x00};
-static const uint8_t key_bytes[CCM_KEY_LEN] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+static const uint8_t own[8]                 = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC5, 0x1B, 0x00};
+static const uint8_t device[8]              = {0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xC5, 0x1B, 0x00};
+static const uint8_t key_bytes[CCM_KEY_LEN] = {
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 
 int main(void) {
     struct ccm_key key;
