@@ -3,9 +3,11 @@
  * ENC28J60 and lwIP are set up by the net task (#12, #13). */
 #include "app.h"
 #include "board.h"
+#include "cc110l.h"
 #include "clock.h"
 #include "faults.h"
 #include "log.h"
+#include "radio.h"
 #include "spi1.h"
 #include "timebase.h"
 #include "watchdog.h"
@@ -32,8 +34,14 @@ int main(void) {
     timebase_init();
     faults_init();
     log_init();
-    LOG("tado-bridge P4 #15: radio receive-only, flash read-only, Ethernet with lwIP (DHCP, DNS), "
-        "PA3 entropy and CTR_DRBG, TLS and WebSocket to tanoclo");
+    /* Two lines: one log line holds 191 characters (src/log.c). The
+     * transmitter state comes from the switch itself, not from this text. */
+    LOG("tado-bridge P5 #17: radio link on channel %u, transmitter %s; flash read-only",
+        RADIO_CHANNEL,
+        RADIO_TX_ALLOWED ? "ALLOWED (RADIO_TX_ALLOWED 1, test channel only)"
+                         : "switched off (RADIO_TX_ALLOWED 0)");
+    LOG("tado-bridge: Ethernet with lwIP (DHCP, DNS), PA3 entropy and CTR_DRBG, TLS and "
+        "WebSocket to tanoclo");
     watchdog_log_reset_cause();
     LOG("clock: SYSCLK %lu Hz, APB1 %lu Hz, APB2 %lu Hz, from %s",
         (unsigned long)clock_hz,
