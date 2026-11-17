@@ -17,9 +17,11 @@
  *     in any other state the model counts a misuse;
  *   - only SFTX leaves TXFIFO_UNDERFLOW (:1944-1945);
  *   - after a frame the chip returns to RX (MCSM1 TXOFF_MODE, as the
- *     firmware's table sets it).
+ *     firmware's table sets it);
+ *   - SCAL only in IDLE (:2746-2747), FSCAL1 = 0x3F when the PLL did not
+ *     lock (:2756-2759); a test sets how many calibrations fail.
  * Not modelled: timing of the air interface (the test moves bytes out of
- * the TX FIFO itself), calibration, RX. */
+ * the TX FIFO itself), the duration of a calibration, RX. */
 #ifndef CC110L_MODEL_H
 #define CC110L_MODEL_H
 
@@ -71,6 +73,8 @@ static struct {
     unsigned         tx_fifo_writes; /* bytes written to the TX FIFO */
     unsigned         dropped;       /* strobes dropped after SIDLE */
     unsigned         frames_cut;    /* SIDLE while a frame was on the air */
+    unsigned         scal_count;    /* calibrations run (SCAL in IDLE) */
+    unsigned         cal_fail_left; /* this many calibrations end without lock */
     bool             locked;
 } chip;
 
@@ -191,6 +195,21 @@ static void model_strobe(uint8_t s) {
             }
             break;
         case CC_SCAL:
+            /* Manual calibration works from IDLE only (cc110l.txt:2746-2747);
+             * FSCAL1 = 0x3F afterwards is no lock (:2756-2759). Instantaneous
+             * here; the chip stays IDLE. */
+            if (chip.st == M_IDLE) {
+                chip.scal_count++;
+                if (chip.cal_fail_left) {
+                    chip.cal_fail_left--;
+                    chip.reg[CC_FSCAL1] = 0x3F;
+                } else {
+                    chip.reg[CC_FSCAL1] = 0x12;
+                }
+            } else {
+                chip.misuse++;
+            }
+            break;
         case CC_SNOP:
             break;
         default: /* SFSTXON, SXOFF, SPWD, reserved */

@@ -32,6 +32,9 @@
  * strobed in two places, cc110l_tx_start() and cc110l_ack_fire_from_isr(),
  * and only when all of this holds:
  *   - the whole register table has been written since the last reset;
+ *   - the synthesizer was calibrated after the last register write, the
+ *     PLL locked (FSCAL1 != 0x3F), and that calibration is younger than
+ *     CC_CAL_MAX_AGE_US (cc110l_calibrate(); #11);
  *   - the chip's own frequency registers have been read back and equal that
  *     table: before every frame the task sends, and at most
  *     ACK_VERIFY_MAX_US before an Enhanced ACK;
@@ -81,6 +84,24 @@ static bool    shadow_full;
 static bool     verified;
 static uint32_t verified_us;
 
+/* PLL lock (#11). MCSM0 FS_AUTOCAL = 0: the synthesizer is calibrated only
+ * by SCAL, from IDLE (cc110l.txt:2744-2747). FSCAL1 = 0x3F after it means
+ * the PLL did not lock (cc110l.txt:2756-2759). pll_locked is set only by
+ * cc110l_calibrate() after that check and a read-back of the carrier
+ * registers, and cleared by every SCAL strobe (guard_header()), every
+ * configuration write (a new frequency needs a new calibration,
+ * cc110l.txt:2741-2742) and every reset. cal_failed latches when
+ * CAL_TRIES calibrations in a row did not lock, until the next reset: no
+ * transmitter for the rest of that bring-up, whatever later calibrations
+ * give. Transmitting needs pll_locked, no latch, and a calibration younger
+ * than CC_CAL_MAX_AGE_US. */
+#define CAL_TRIES      3u
+#define CAL_WAIT_US    750u  /* manual calibration 735 us, cc110l.txt Table 5-11 */
+#define CAL_TIMEOUT_US 5000u /* TEST0 0x09: 712 us at most, Table 5-12; wide margin */
+static volatile bool pll_locked;
+static bool          cal_failed;
+static uint32_t      cal_us;
+
 static bool strobe_allowed(uint8_t addr) {
     switch (addr) {
         case CC_SRES:
@@ -109,6 +130,9 @@ static void guard_header(uint8_t hdr) {
     if (addr >= 0x30 && addr <= 0x3D && !burst) {
         if (!strobe_allowed(addr)) {
             fw_panic("radio guard: strobe refused", __FILE__, __LINE__);
+        }
+        if (addr == CC_SCAL) {
+            pll_locked = false; /* until cc110l_calibrate() has checked the lock */
         }
         return;
     }
@@ -249,6 +273,8 @@ bool cc110l_reset(void) {
     guard_header(CC_SRES);
     shadow_full  = false; /* the chip is back at its reset values */
     verified     = false;
+    pll_locked   = false;
+    cal_failed   = false; /* a new bring-up gets new tries */
     ack.prepared = false;
     tx_active    = false;
     tx.idx       = tx.total; /* nothing left to feed */
@@ -298,6 +324,7 @@ bool cc110l_write_burst(uint8_t addr, const uint8_t *val, size_t n) {
     for (size_t i = 0; i < n; i++) {
         guard_write((uint8_t)(addr + i), val[i]);
     }
+    pll_locked = false; /* calibrate again after any change (cc110l.txt:2741-2742) */
     if (!begin((uint8_t)(addr | (n > 1 ? HDR_BURST : 0)), NULL)) {
         return false;
     }
@@ -395,9 +422,11 @@ static struct txgate_radio shadow_radio(void) {
     return r;
 }
 
-bool cc110l_tx_verify_channel(void) {
+/* The chip's carrier registers equal the full table last written. A
+ * difference clears shadow_full: the chip no longer holds what was
+ * written, and nothing is sent until the table is written again. */
+static bool carrier_reads_back(void) {
     uint8_t a[CC_FREQ0 - CC_CHANNR + 1u], b[2];
-    verified = false;
     if (!shadow_full) {
         return false;
     }
@@ -406,12 +435,77 @@ bool cc110l_tx_verify_channel(void) {
     }
     if (memcmp(a, shadow + CC_CHANNR, sizeof a) != 0
         || memcmp(b, shadow + CC_MDMCFG1, sizeof b) != 0) {
-        shadow_full = false; /* the chip no longer holds what was written */
+        shadow_full = false;
+        return false;
+    }
+    return true;
+}
+
+bool cc110l_tx_verify_channel(void) {
+    verified = false;
+    if (!carrier_reads_back()) {
         return false;
     }
     verified_us = timebase_us();
     verified    = true;
     return true;
+}
+
+/* Safe from any context: plain loads and one subtraction. */
+bool cc110l_cal_ok(void) {
+    return pll_locked && !cal_failed && (uint32_t)(timebase_us() - cal_us) <= CC_CAL_MAX_AGE_US;
+}
+
+void cc110l_cal_expire(void) {
+    pll_locked = false;
+}
+
+static bool wait_idle(uint32_t timeout_us) {
+    uint32_t start = timebase_us();
+    uint8_t  m;
+    do {
+        if (cc110l_read_status_stable(CC_MARCSTATE, &m) && (m & 0x1Fu) == CC_MARC_IDLE) {
+            return true;
+        }
+        delay_us(50);
+    } while ((uint32_t)(timebase_us() - start) < timeout_us);
+    return false;
+}
+
+/* Bounded busy waits only (at most CAL_TRIES x CAL_TIMEOUT_US, about 2.3 ms
+ * when the chip answers as documented): the radio task's other work waits
+ * meanwhile, but nothing arrives while the chip is IDLE. */
+enum cc110l_cal cc110l_calibrate(uint8_t fscal[3], unsigned *tries) {
+    pll_locked = false;
+    *tries     = 0;
+    fscal[0] = fscal[1] = fscal[2] = 0;
+    for (unsigned t = 1; t <= CAL_TRIES; t++) {
+        *tries = t;
+        /* SCAL works from IDLE only (cc110l.txt:2746-2747); its own status
+         * byte would tell the state too late, after the strobe. */
+        uint8_t m = 0;
+        if (!cc110l_read_status_stable(CC_MARCSTATE, &m) || (m & 0x1Fu) != CC_MARC_IDLE) {
+            return CC_CAL_ERROR;
+        }
+        if (!radio_strobe(CC_SCAL, NULL)) {
+            return CC_CAL_ERROR;
+        }
+        delay_us(CAL_WAIT_US);
+        if (!wait_idle(CAL_TIMEOUT_US) || !cc110l_read_burst(CC_FSCAL3, fscal, 3)) {
+            return CC_CAL_ERROR;
+        }
+        if (fscal[2] == 0x3F) {
+            continue; /* not locked: calibrate again (cc110l.txt:2760-2761) */
+        }
+        if (!carrier_reads_back()) {
+            return CC_CAL_ERROR;
+        }
+        cal_us     = timebase_us();
+        pll_locked = true;
+        return CC_CAL_LOCKED;
+    }
+    cal_failed = true;
+    return CC_CAL_NO_LOCK;
 }
 _Static_assert(CC_CHANNR + 2u == CC_FSCTRL0 && CC_FSCTRL0 + 1u == CC_FREQ2
                    && CC_MDMCFG1 + 1u == CC_MDMCFG0,
@@ -456,6 +550,9 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
     cc110l_ack_cancel();
     if (cc110l_tx_expected()) {
         return CC_TX_BUSY;
+    }
+    if (!cc110l_cal_ok()) {
+        return CC_TX_NO_LOCK;
     }
     /* The gate judges the registers last written; the chip must still hold
      * them now (it may have reset since). Two short burst reads, about
@@ -577,6 +674,9 @@ enum cc110l_tx_result cc110l_ack_prepare(const uint8_t a[MAC_ACK_LEN],
         return CC_TX_DISABLED;
     }
     ack.prepared = false;
+    if (!cc110l_cal_ok()) {
+        return CC_TX_NO_LOCK;
+    }
     if (!verified) {
         last_verdict = TXGATE_OFF_PLAN;
         return CC_TX_REFUSED;
@@ -619,7 +719,7 @@ bool cc110l_ack_fire_from_isr(void) {
     /* Not over a frame of ours that is still on the air: the chip cannot
      * report a received packet then, so that edge is not a packet's, and
      * the SFTX below would be dropped (see cc110l_tx_start()). */
-    if (!shadow_full || cc110l_tx_expected()
+    if (!shadow_full || cc110l_tx_expected() || !cc110l_cal_ok()
         || (uint32_t)(timebase_us() - ack.verified_us) > ACK_VERIFY_MAX_US
         || txgate_check_channel(&r) != TXGATE_OK) {
         return false;

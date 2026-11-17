@@ -146,6 +146,37 @@ bool cc110l_take_tx_state_flag(void);
 /* --- Transmit (#17) ---------------------------------------------------------
  * The only code that can key the transmitter. */
 
+/* Frequency synthesizer calibration (#11). MCSM0 FS_AUTOCAL = 0, so the
+ * chip calibrates only on SCAL, from IDLE; the datasheet asks for it
+ * "regularly" and recommends repeating it until the PLL locks
+ * (cc110l.txt:2740-2761). With the chip in IDLE: up to 3 times SCAL, wait
+ * for IDLE, read FSCAL3-1; FSCAL1 = 0x3F is no lock. On lock the carrier
+ * registers are read back against the table. Task context, busy-waits at
+ * most about 16 ms (3 tries of 0.75 ms plus a 5 ms timeout each).
+ *   LOCKED:  the transmitter may be used, unless an earlier calibration
+ *            since the last reset gave NO_LOCK (cc110l_cal_ok());
+ *   NO_LOCK: 3 tries without lock. Latched until the next cc110l_reset():
+ *            the transmitter stays refused for this bring-up. RX may run;
+ *   ERROR:   the chip was not IDLE, did not answer, did not return to IDLE,
+ *            or its carrier registers no longer read back. No lock either.
+ * fscal: FSCAL3, FSCAL2, FSCAL1 of the last try, for the log. Every SCAL
+ * strobe, configuration write and reset clears the lock until this
+ * function has checked it again. */
+enum cc110l_cal { CC_CAL_LOCKED, CC_CAL_NO_LOCK, CC_CAL_ERROR };
+enum cc110l_cal cc110l_calibrate(uint8_t fscal[3], unsigned *tries);
+
+/* A calibration older than this does not count: the radio task
+ * recalibrates every 5 minutes (src/radio.c, RECAL_PERIOD_MS) and, with its
+ * 64-bit clock, calls cc110l_cal_expire() past this age, which the 32-bit
+ * check here cannot see after a timer wrap (71 minutes). */
+#define CC_CAL_MAX_AGE_US (12u * 60u * 1000000u)
+_Static_assert(CC_CAL_MAX_AGE_US < 0x80000000u, "age compared on the 32-bit microsecond clock");
+
+/* The transmitter may be used as far as calibration goes: locked at the
+ * last calibration, not latched off, younger than CC_CAL_MAX_AGE_US. */
+bool cc110l_cal_ok(void);
+void cc110l_cal_expire(void);
+
 /* Our wire EUI-64, for the transmit gate. Without it nothing is sent. */
 void cc110l_set_identity(const uint8_t own[8]);
 
@@ -163,6 +194,7 @@ enum cc110l_tx_result {
     CC_TX_DISABLED, /* RADIO_TX_ALLOWED is 0 */
     CC_TX_REFUSED,  /* by the transmit gate: cc110l_tx_verdict() says why */
     CC_TX_BUSY,     /* another frame of ours is still on the air; nothing was touched */
+    CC_TX_NO_LOCK,  /* no valid calibration with PLL lock (cc110l_cal_ok()); not touched */
     CC_TX_STATE,    /* the chip was found in a transmit state; abort and re-arm */
     CC_TX_SPI,      /* the chip did not answer; abort and re-arm */
 };

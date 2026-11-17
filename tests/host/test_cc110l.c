@@ -42,10 +42,14 @@ static void make_table(unsigned ch) {
     table[CC_PKTCTRL0] = 0x05;
 }
 
-/* What the radio task's bring-up does: reset, the whole table, RX. */
+/* What the radio task's bring-up does: reset, the whole table, calibrate,
+ * RX. */
 static void bring_up_table(void) {
+    uint8_t  fs[3];
+    unsigned tries = 0;
     CHECK(cc110l_reset());
     CHECK(cc110l_write_burst(0x00, table, sizeof table));
+    CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
     CHECK(radio_strobe(CC_SRX, NULL));
 }
 
@@ -116,9 +120,9 @@ static void test_preconditions(void) {
     uint8_t f[MAC_FRAME_MAX];
     size_t  n = wake_frame(f);
 
-    /* Driver state at boot: no table written. */
+    /* Driver state at boot: no table written, no calibration. */
     model_init();
-    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_LOCK);
     CHECK(!cc110l_tx_verify_channel());
     CHECK_EQ(chip.stx_count, 0);
     CHECK_EQ(chip.tx_fifo_writes, 0);
@@ -130,11 +134,16 @@ static void test_preconditions(void) {
     CHECK_EQ(chip.stx_count, 0);
     CHECK_EQ(chip.tx_fifo_writes, 0);
 
-    /* A partial table after a reset is not a table. */
+    /* A partial table after a reset is not a table: even the calibration
+     * fails on it, since the carrier registers cannot be checked. */
     cc110l_set_identity(own);
     CHECK(cc110l_reset());
     CHECK(cc110l_write_burst(CC_CHANNR, table + CC_CHANNR, 6));
-    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
+    uint8_t  fs[3];
+    unsigned tries;
+    CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_ERROR);
+    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_LOCK);
     CHECK_EQ(chip.stx_count, 0);
     check_clean();
 }
@@ -604,6 +613,121 @@ static void test_guard(void) {
     check_clean();
 }
 
+/* --- Calibration and PLL lock (#11) ---------------------------------------------- */
+static void table_rx_uncalibrated(void) {
+    CHECK(cc110l_reset());
+    CHECK(cc110l_write_burst(0x00, table, sizeof table));
+    CHECK(radio_strobe(CC_SRX, NULL));
+}
+
+/* Nothing goes out, by either path, and the chip is not touched. */
+static void refused_no_lock(const uint8_t *f, size_t n, const uint8_t *ackf, const uint8_t *up) {
+    unsigned stx = chip.stx_count, writes = chip.tx_fifo_writes;
+    CHECK(!cc110l_cal_ok());
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_LOCK);
+    (void)cc110l_tx_verify_channel(); /* the ACK's read-back, where the chip allows it */
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_NO_LOCK);
+    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(chip.stx_count, stx);
+    CHECK_EQ(chip.tx_fifo_writes, writes);
+}
+
+static void test_calibration(void) {
+    uint8_t  f[MAC_FRAME_MAX], ackf[MAC_ACK_LEN], up[MAC_FRAME_MAX], fs[3];
+    unsigned tries = 0;
+    size_t   n     = wake_frame(f);
+    CHECK(data_frame(up, own, device, 10) > 0);
+    CHECK(mac_ack_for_data(ackf, up, own, 0));
+
+    /* Table and RX without a calibration: nothing goes out. */
+    model_init();
+    make_table(TXGATE_TEST_CHANNEL);
+    table_rx_uncalibrated();
+    refused_no_lock(f, n, ackf, up);
+
+    /* SCAL needs IDLE: from RX the driver does not strobe it at all. */
+    CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_ERROR);
+    CHECK_EQ(chip.scal_count, 0);
+    refused_no_lock(f, n, ackf, up);
+
+    /* Two calibrations without lock, the third locks. */
+    CHECK(radio_strobe(CC_SIDLE, NULL));
+    chip.cal_fail_left = 2;
+    CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
+    CHECK_EQ(tries, 3);
+    CHECK_EQ(chip.scal_count, 3);
+    CHECK(fs[2] != 0x3F);
+    CHECK(cc110l_cal_ok());
+    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
+    finish_frame();
+    CHECK_EQ(chip.stx_count, 1);
+
+    /* Three without lock: refused, and latched for this bring-up. */
+    table_rx_uncalibrated();
+    CHECK(radio_strobe(CC_SIDLE, NULL));
+    chip.cal_fail_left = 3;
+    chip.scal_count    = 0;
+    CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_NO_LOCK);
+    CHECK_EQ(tries, 3);
+    CHECK_EQ(chip.scal_count, 3);
+    CHECK_EQ(fs[2], 0x3F);
+    CHECK(radio_strobe(CC_SRX, NULL));
+    refused_no_lock(f, n, ackf, up);
+    /* A later calibration that locks does not lift the latch... */
+    CHECK(radio_strobe(CC_SIDLE, NULL));
+    CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
+    CHECK(radio_strobe(CC_SRX, NULL));
+    refused_no_lock(f, n, ackf, up);
+    /* ...the next bring-up does. */
+    bring_up(TXGATE_TEST_CHANNEL);
+    CHECK(cc110l_cal_ok());
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
+    finish_frame();
+    CHECK_EQ(chip.stx_count, 2);
+
+    /* Any SCAL strobe outside cc110l_calibrate() clears the lock. */
+    CHECK(radio_strobe(CC_SIDLE, NULL));
+    CHECK(radio_strobe(CC_SCAL, NULL));
+    CHECK(radio_strobe(CC_SRX, NULL));
+    refused_no_lock(f, n, ackf, up);
+
+    /* So does any configuration write: a new frequency needs a new
+     * calibration (cc110l.txt:2741-2742). */
+    bring_up(TXGATE_TEST_CHANNEL);
+    CHECK(cc110l_write_reg(CC_FSCTRL0, 0));
+    refused_no_lock(f, n, ackf, up);
+
+    /* A lock that goes away between prepare and interrupt: no ACK. */
+    bring_up(TXGATE_TEST_CHANNEL);
+    CHECK(cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
+    cc110l_cal_expire();
+    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(chip.stx_count, 2);
+
+    /* Too old: refused once CC_CAL_MAX_AGE_US has passed. */
+    bring_up(TXGATE_TEST_CHANNEL);
+    delay_us(CC_CAL_MAX_AGE_US - 1000u);
+    CHECK(cc110l_cal_ok());
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
+    finish_frame();
+    delay_us(2000u);
+    refused_no_lock(f, n, ackf, up);
+    CHECK_EQ(chip.stx_count, 3);
+
+    /* The carrier registers changed behind the driver: the calibration
+     * fails, and nothing goes out. */
+    bring_up(TXGATE_TEST_CHANNEL);
+    CHECK(radio_strobe(CC_SIDLE, NULL));
+    chip.reg[CC_CHANNR] = TXGATE_PROTECTED_CHANNEL;
+    CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_ERROR);
+    CHECK(radio_strobe(CC_SRX, NULL));
+    refused_no_lock(f, n, ackf, up);
+    CHECK_EQ(chip.stx_count, 3);
+    check_clean();
+}
+
 /* --- Random use: whatever the caller does, the chip only sends on channel 10 -------- */
 static uint32_t rnd_state = 0x1234567u;
 
@@ -757,6 +881,7 @@ int main(void) {
     test_ack();
     test_long_and_abort();
     test_guard();
+    test_calibration();
     test_random();
     return TEST_REPORT("test_cc110l");
 }

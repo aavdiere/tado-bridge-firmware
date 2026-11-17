@@ -357,6 +357,7 @@ struct counters {
     uint32_t flash_ok, flash_bad, flash_in_frame, status_glitch, storm;
     uint32_t fe_pkt, fe_none, fe_stale, fe_rssi_diff; /* #11, see fe_sample */
     uint32_t ack_prepared, ack_sent, ack_late, tx_frames, tx_fail, tx_refused;
+    uint32_t tx_no_lock; /* of tx_refused: no calibration with PLL lock */
 };
 static struct counters minute, total;
 
@@ -692,8 +693,8 @@ static bool rx_flush_and_arm(void) {
 static void ack_consider(const uint8_t *hdr, uint32_t edges, bool arriving) {
     uint8_t        ack[MAC_ACK_LEN];
     const uint8_t *own = link_own();
-    if (!RADIO_TX_ALLOWED || !arriving || !gdo_irq_on || !own || !link_ready() || !csl_may_ack()
-        || !link_uplink_room() || !mac_ack_for_data(ack, hdr, own, ACK_CSL_PHASE)
+    if (!RADIO_TX_ALLOWED || !arriving || !gdo_irq_on || !cc110l_cal_ok() || !own || !link_ready()
+        || !csl_may_ack() || !link_uplink_room() || !mac_ack_for_data(ack, hdr, own, ACK_CSL_PHASE)
         || !cc110l_tx_verify_channel()) {
         return;
     }
@@ -904,6 +905,95 @@ static bool reg_is_reserved(unsigned a) {
     return a == CC_RSVD_20 || (a >= 0x29 && a <= 0x2B);
 }
 
+/* Registers 0x00-0x18 (IOCFG2 .. MCSM0) read back in one 25-byte burst and
+ * compared with the table: they include IOCFG2/IOCFG0 (interrupt pins),
+ * IOCFG1 (SO 3-state for the shared MISO), PKTCTRL0, CHANNR, FREQ and MCSM1
+ * (RXOFF/TXOFF modes), and the chip changes none of them by itself. FSCAL3-0
+ * (0x23-0x26) are not compared: calibration rewrites them. Returns the
+ * number of registers that differ, or HEALTH_REGS if the chip did not
+ * answer. Used by the health check and after every calibration. */
+#define HEALTH_REGS (CC_MCSM0 + 1u)
+_Static_assert(CC_MCSM1 < HEALTH_REGS && CC_CHANNR < HEALTH_REGS && CC_PKTCTRL0 < HEALTH_REGS
+                   && CC_IOCFG2 < HEALTH_REGS && CC_IOCFG0 < HEALTH_REGS,
+               "health check covers the safety registers");
+
+static unsigned regs_lost(void) {
+    uint8_t back[HEALTH_REGS];
+    if (!cc110l_read_burst(0x00, back, sizeof back)) {
+        COUNT(spi_err);
+        LOG("radio: register read-back: no answer");
+        return HEALTH_REGS;
+    }
+    unsigned bad = 0;
+    for (unsigned a = 0; a < HEALTH_REGS; a++) {
+        if (back[a] != cc_config[a]) {
+            if (bad < 4) {
+                LOG("radio: reg %02x reads %02x, want %02x", a, back[a], cc_config[a]);
+            }
+            bad++;
+        }
+    }
+    return bad;
+}
+
+/* Recalibration policy (#11). The datasheet asks for calibration
+ * "regularly" and after power-up or a frequency change, and notes that
+ * supply voltage or temperature changes make a calibration invalid
+ * (cc110l.txt:2740-2752); it gives no interval. MCSM0 FS_AUTOCAL = 0 (stock
+ * table) means the chip never calibrates by itself, and an Enhanced ACK
+ * cannot wait for the 0.8 ms an auto-calibration adds to IDLE -> TX. So:
+ * once at every bring-up, then every RECAL_PERIOD_MS from IDLE at a quiet
+ * moment (no packet arriving, no transaction on the air), independent of
+ * temperature, which the bridge does not measure [I]. A calibration older
+ * than CC_CAL_MAX_AGE_US (two missed periods and more) stops the
+ * transmitter until the next one. Each recalibration costs about 1 ms of
+ * deaf receiver: a Data frame lost then is sent again by its device. */
+#define RECAL_PERIOD_MS 300000u
+_Static_assert(2ull * RECAL_PERIOD_MS * 1000u < CC_CAL_MAX_AGE_US,
+               "a missed recalibration does not stop the transmitter yet");
+
+static uint64_t cal_at;      /* last calibration attempt, now64() */
+static uint64_t cal_good_at; /* last calibration with lock */
+
+/* With the chip in IDLE: calibrate (lock check and carrier read-back in the
+ * driver), then the same register read-back as the health check, so every
+ * calibration ends with both. False if the chip failed to calibrate at all
+ * or lost registers: the caller re-initialises. A calibration that did not
+ * lock returns true: the receiver may run, the driver refuses to transmit
+ * until the next bring-up. */
+static bool radio_calibrate(const char *why) {
+    uint8_t         fscal[3];
+    unsigned        tries = 0;
+    enum cc110l_cal c     = cc110l_calibrate(fscal, &tries);
+    cal_at                = now64();
+    if (c == CC_CAL_ERROR) {
+        LOG("radio: %s calibration failed on try %u (not IDLE, no answer, or the carrier "
+            "registers changed)",
+            why,
+            tries);
+        return false;
+    }
+    unsigned lost = regs_lost();
+    if (lost) {
+        LOG("radio: %u registers differ after %s calibration", lost, why);
+        return false;
+    }
+    if (c == CC_CAL_LOCKED) {
+        cal_good_at = cal_at;
+    }
+    LOG("radio: %s calibration, %u %s: FSCAL3 %02x FSCAL2 %02x FSCAL1 %02x, PLL %s, transmitter "
+        "%s",
+        why,
+        tries,
+        tries == 1 ? "try" : "tries",
+        fscal[0],
+        fscal[1],
+        fscal[2],
+        c == CC_CAL_LOCKED ? "locked" : "NOT locked",
+        cc110l_cal_ok() ? "may be used" : "REFUSED until the next bring-up");
+    return tx_watch();
+}
+
 static bool radio_configure_steps(void) {
     gdo_irq_enable(false);
     cc110l_ack_cancel();
@@ -961,26 +1051,9 @@ static bool radio_configure_steps(void) {
         return false;
     }
 
-    /* Manual calibration (MCSM0.FS_AUTOCAL = 0 in the table): SCAL from IDLE,
-     * about 735 us (cc110l.txt:2550, 2560-2567). FSCAL1 = 0x3F after
-     * calibration means the PLL did not lock (cc110l.txt:2756-2759). */
-    if (!radio_strobe(CC_SCAL, NULL)) {
-        LOG("radio: SCAL failed");
-        return false;
-    }
-    vTaskDelay(pdMS_TO_TICKS(2));
-    if (!wait_marcstate(CC_MARC_IDLE, 10000)) {
-        LOG("radio: calibration did not return to IDLE");
-        return false;
-    }
-    uint8_t fscal[3] = {0};
-    (void)cc110l_read_burst(CC_FSCAL3, fscal, 3);
-    LOG("radio: calibrated, FSCAL3 %02x FSCAL2 %02x FSCAL1 %02x%s",
-        fscal[0],
-        fscal[1],
-        fscal[2],
-        fscal[2] == 0x3F ? " (PLL NOT locked)" : "");
-    if (!tx_watch()) {
+    /* The chip is IDLE since SRES. A calibration without lock leaves the
+     * transmitter refused for this bring-up; receiving goes on. */
+    if (!radio_calibrate("bring-up")) {
         return false;
     }
 
@@ -997,6 +1070,7 @@ static bool radio_configure_steps(void) {
         RADIO_CHANNEL,
         (unsigned long)CARRIER_HZ(RADIO_CHANNEL),
         !RADIO_TX_ALLOWED            ? "switched off (RADIO_TX_ALLOWED 0)"
+        : !cc110l_cal_ok()           ? "refused: no PLL lock"
         : cc110l_tx_verify_channel() ? "enabled on this channel only"
                                      : "refused: frequency registers do not read back");
     return true;
@@ -1020,18 +1094,25 @@ static void radio_reinit(void) {
     (void)radio_configure();
 }
 
-/* Every 10 s: the chip must still hold our configuration and be in RX. A
- * brown-out or reset of the radio leaves reset defaults (IOCFG0 = 0x3F).
- * Registers 0x00-0x18 (IOCFG2 .. MCSM0) are read back in one 25-byte burst
- * and compared with the table: they include IOCFG2/IOCFG0 (interrupt pins),
- * IOCFG1 (SO 3-state for the shared MISO), PKTCTRL0, CHANNR, FREQ and MCSM1
- * (RXOFF/TXOFF modes), and the chip changes none of them by itself. FSCAL3-0
- * (0x23-0x26) are not compared: calibration rewrites them. */
-#define HEALTH_REGS (CC_MCSM0 + 1u)
-_Static_assert(CC_MCSM1 < HEALTH_REGS && CC_CHANNR < HEALTH_REGS && CC_PKTCTRL0 < HEALTH_REGS
-                   && CC_IOCFG2 < HEALTH_REGS && CC_IOCFG0 < HEALTH_REGS,
-               "health check covers the safety registers");
+/* Every RECAL_PERIOD_MS, at a quiet moment: from RX to IDLE, calibrate,
+ * back to RX. A prepared ACK is dropped first; GDO2 cannot fire while the
+ * chip is IDLE. Any failure re-initialises the radio. */
+static void radio_recalibrate(void) {
+    cc110l_ack_cancel();
+    rx.assembling   = false;
+    rx.in_packet    = false;
+    fe_sample.valid = false;
+    if (!radio_strobe(CC_SIDLE, NULL) || !wait_marcstate(CC_MARC_IDLE, 1000)
+        || !radio_calibrate("periodic") || !rx_flush_and_arm()
+        || !wait_marcstate(CC_MARC_RX, 2000)) {
+        LOG("radio: periodic calibration failed; re-initialising");
+        radio_reinit();
+    }
+}
 
+/* Every 10 s: the chip must still hold our configuration and be in RX. A
+ * brown-out or reset of the radio leaves reset defaults (IOCFG0 = 0x3F);
+ * regs_lost() compares the registers that matter. */
 static void health_check(void) {
     if (!gdo_irq_on) {
         /* A storm guard trip or a failed re-init left the interrupts off. */
@@ -1039,23 +1120,13 @@ static void health_check(void) {
         radio_reinit();
         return;
     }
-    uint8_t back[HEALTH_REGS];
-    if (!cc110l_read_burst(0x00, back, sizeof back)) {
+    unsigned bad = regs_lost();
+    if (bad == HEALTH_REGS) {
         /* No CHIP_RDYn: the chip is not answering, as the old IOCFG0 check
          * also treated it. */
-        COUNT(spi_err);
         LOG("radio: health: no answer; re-initialising");
         radio_reinit();
         return;
-    }
-    unsigned bad = 0;
-    for (unsigned a = 0; a < HEALTH_REGS; a++) {
-        if (back[a] != cc_config[a]) {
-            if (bad < 4) {
-                LOG("radio: health: reg %02x reads %02x, want %02x", a, back[a], cc_config[a]);
-            }
-            bad++;
-        }
     }
     if (bad) {
         LOG("radio: %u registers lost; forcing IDLE and re-initialising", bad);
@@ -1140,13 +1211,15 @@ static void log_minute(void) {
         (unsigned long)minute.fe_rssi_diff);
     const struct link_stats *ls = link_stats();
     /* Two lines: one log line holds 191 characters (src/log.c). */
-    LOG("link: 60 s: acks prepared %lu sent %lu too late %lu, tx frames %lu fail %lu refused %lu",
+    LOG("link: 60 s: acks prepared %lu sent %lu too late %lu, tx frames %lu fail %lu refused %lu "
+        "(no pll lock %lu)",
         (unsigned long)minute.ack_prepared,
         (unsigned long)minute.ack_sent,
         (unsigned long)minute.ack_late,
         (unsigned long)minute.tx_frames,
         (unsigned long)minute.tx_fail,
-        (unsigned long)minute.tx_refused);
+        (unsigned long)minute.tx_refused,
+        (unsigned long)minute.tx_no_lock);
     LOG("link: totals: to server %lu, dup %lu, mic fail %lu, dropped %lu, downlinks %lu refused "
         "%lu, RA %lu",
         (unsigned long)ls->rx[LINK_RX_FORWARDED],
@@ -1217,8 +1290,11 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
         tx_wait_tick();
     }
     enum cc110l_tx_result r = cc110l_tx_start(frame, len, flags);
-    if (r == CC_TX_DISABLED || r == CC_TX_REFUSED || r == CC_TX_BUSY) {
+    if (r == CC_TX_DISABLED || r == CC_TX_REFUSED || r == CC_TX_BUSY || r == CC_TX_NO_LOCK) {
         COUNT(tx_refused);
+        if (r == CC_TX_NO_LOCK) {
+            COUNT(tx_no_lock);
+        }
         return false; /* the chip was not touched: still receiving */
     }
     /* cc110l_tx_start() emptied the RX FIFO. */
@@ -1431,6 +1507,11 @@ void radio_task_run(void) {
         if (!lbt_seeded && rng_try_bytes(&lbt_state, sizeof lbt_state)) {
             lbt_seeded = true;
         }
+        /* The driver's age check runs on the 32-bit microsecond clock, which
+         * wraps every 71 minutes; this one cannot be fooled by a wrap. */
+        if (now64() - cal_good_at > CC_CAL_MAX_AGE_US) {
+            cc110l_cal_expire();
+        }
 
         /* Everything below can wait for a quiet moment: no packet arriving
          * (its Enhanced ACK must not wait behind a log line or the flash),
@@ -1444,6 +1525,8 @@ void radio_task_run(void) {
             if ((int32_t)(now - next_health) >= 0) {
                 next_health = now + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
                 health_check();
+            } else if (gdo_irq_on && now64() - cal_at >= (uint64_t)RECAL_PERIOD_MS * 1000u) {
+                radio_recalibrate();
             }
             if ((int32_t)(now - next_stats) >= 0) {
                 next_stats = now + pdMS_TO_TICKS(STATS_PERIOD_MS);
