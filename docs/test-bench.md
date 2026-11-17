@@ -95,7 +95,7 @@ Receive-only, RTL-SDR (R820T, gain 30 dB, 2.4 MS/s), tools `tools/sdr/chanscan.p
 | 20, 24, 25, 27, 28 | Many bursts in the power scan but **no** tado frames: other users of the band. These frequencies match common LoRaWAN channels (867.1-867.9, 868.1-868.5 MHz) **[I]** |
 | 0-10, 39-49 | Almost no activity in a 60 s power scan per span |
 
-**Test channel: 10 (865.1245 MHz), confirmed by the owner (2026-11-11).** It is quiet, 16 channels from the protected channel, and inside tado's own channel plan, which stock bridges also pick from. Regulatory limits per sub-band (duty cycle, listen-before-transmit) were not checked here **[I]**; re-check activity before first transmit. Since 2026-11-17 the driver enforces 30 s of airtime per rolling hour on every frame, against the 1 % (36 s) of the 865-868 MHz band **[I]** (`radio-runtime.md`, "Airtime").
+**Test channel: 16 (866.3242 MHz), owner decision 2026-11-17.** It replaces channel 10 (865.1245 MHz, confirmed by the owner 2026-11-11, used for the first transmit test below): the spare device scans channels 11, 16, 21 and 26 for a network and never asked on 10, so it could not pair there. Channel 16 is 10 channels (2.0 MHz) from the protected channel, inside tado's own channel plan, which stock bridges also pick from, and inside the 865-868 MHz band like channel 10. The scan above saw one Beacon Request on it (a scanning device) and no other user; it has not been checked since **[I]**: re-check its activity with the SDR before the first transmission on it. The transmit gate allows channel 16 only and refuses everything within 999 kHz of channel 26 (`src/txgate.h`); a network record for channel 10 is refused like any other channel (`store_net_allowed()`, `src/store.c`). Since 2026-11-17 the driver enforces 30 s of airtime per rolling hour on every frame, against the 1 % (36 s) of the 865-868 MHz band **[I]** (`radio-runtime.md`, "Airtime").
 
 Frequency offsets include the dongle's own crystal error, which is not yet calibrated, so they do not give the bridge's offset (#7) yet.
 
@@ -113,7 +113,7 @@ python3 -I tools/sdr/demod.py --fc 867923700 --channels 26 \
 rtl_sdr -f 867923700 -s 2400000 -g 20 - | python3 -I tools/sdr/demod.py --fc 867923700 --redact
 ```
 
-Tune 400 kHz below the channel (`--fc` must equal `rtl_sdr -f`) to keep the dongle's DC spike out of the band. For the test channel 10 use `-f 864724451` and `--channels 10`. Captures, CSV files and printed payloads stay in `~/ib01-captures/`, never in git: they carry the stock network's addresses.
+Tune 400 kHz below the channel (`--fc` must equal `rtl_sdr -f`) to keep the dongle's DC spike out of the band. For the test channel 16 use `-f 865924158` and `--channels 16` (for channel 10, the test channel until 2026-11-17: `-f 864724451`, `--channels 10`). Captures, CSV files and printed payloads stay in `~/ib01-captures/`, never in git: they carry the stock network's addresses.
 
 **How it measures [V]/[I]:** 2.4 MS/s, channel filter and decimation to 600 kS/s (1.667 µs per sample, 12 samples per bit), FM discriminator, one-bit matched filter, sync search with at most 2 bit errors. The sync start comes from a least-squares fit of every bit-boundary zero crossing in the frame (linearly interpolated between samples), with the pattern-dependent GFSK crossing shift modelled from the neighbouring bits; filter delays are removed, so times refer to the raw IQ sample index. Offset and deviation come from a fit of the bit-centre frequency with neighbour terms, against the channel centre the stock registers program (channel 0 = 863.124939 MHz, spacing 199.951172 kHz, `radio.md` register table). Radio CRC: CRC-16 poly `0x8005`, init `0xFFFF` over length and frame (`frames.py`).
 
@@ -185,7 +185,7 @@ Not run yet. The code is in `radio-runtime.md`, "Pairing (#19)". Gates before th
 
 1. `config/local.cmake` (gitignored): `PAIR_TARGET_EUI64` = the spare device's EUI-64, in the order of `BRIDGE_EUI64` (`00 1b c5` first; the source address of its Beacon Requests in `~/ib01-captures/spare/`, read backwards). CMake refuses any other prefix and the bridge's own EUI-64.
 2. `RADIO_TX_ALLOWED` 1 in `src/cc110l.h`, locally only, as for the first transmit test.
-3. SDR before arming (`rf-bench`): channel 10 quiet, channel 26 baseline; during the test `hopcap.py` on channels 3-13 and 19-29.
+3. SDR before arming (`rf-bench`): channel 16 quiet, channel 26 baseline. `hopcap.py` is still built around channel 10 (centre A 864.724451 MHz, channels 3-13, and its channel-10 burst rules); retune it for channel 16 before the test (owner decision 2026-11-17, test channel 16).
 4. Owner: put the spare device into pairing mode, then hold the bridge's pair button for 1 s. The pairing LED (PB8) lights for the 120 s window. The first network is created at that moment if the flash holds none (this erases the stock configuration sector at `0x102000`, owner decision 2026-11-17).
 5. Read: RTT `pair:` lines (beacon STX time, window closed, `PAIRED`), the minute counters; SDR: request-to-beacon gap (2.4-7.4 ms), the advertisement pairs (`59 e8` then `49 e8`), `d/pair` and the device's 2.04, nothing on channel 26.
 6. Optional, scope: PB8 against GDO0 (`radio-runtime.md`, "Measuring it").

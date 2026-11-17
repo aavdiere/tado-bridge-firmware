@@ -17,7 +17,7 @@
 #include "cc110l_model.h"
 #include "test.h"
 
-#define CH10_HZ 865124450ll /* docs/test-bench.md "Channel scan result" */
+#define TEST_HZ 866324157ll /* the test channel 16 (src/txgate.h) */
 #define CH26_HZ 868323668ll /* the protected channel */
 #define MIN_US  60000000u
 
@@ -69,7 +69,7 @@ static long long dist(long long a, long long b) {
  * no strobe in a wrong state ever. Called after every step. */
 static void check_chip(void) {
     for (unsigned i = 0; i < chip.stx_count && i < MODEL_MAX_STX; i++) {
-        CHECK(dist(chip.stx[i].carrier_hz, CH10_HZ) <= 51000);
+        CHECK(dist(chip.stx[i].carrier_hz, TEST_HZ) <= 51000);
         CHECK(dist(chip.stx[i].carrier_hz, CH26_HZ) >= 999000);
         CHECK_EQ(chip.stx[i].pa, RADIO_PA_BRINGUP);
     }
@@ -115,7 +115,7 @@ static void sent_is(unsigned index, const uint8_t *frame, size_t len) {
     CHECK_EQ(x->air_n, len + 1u);
     CHECK_EQ(x->air[0], len);
     CHECK_MEM(x->air + 1, frame, len);
-    CHECK(dist(x->carrier_hz, CH10_HZ) <= 1);
+    CHECK(dist(x->carrier_hz, TEST_HZ) <= 1);
 }
 
 /* --- Nothing without table, identity and gate ---------------------------------- */
@@ -242,11 +242,11 @@ static void test_channels(void) {
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
     CHECK_EQ(cc110l_tx_verdict(), TXGATE_PROTECTED);
 
-    /* "Channel 10" moved onto 868.3 MHz by the base frequency: 16 channels
-     * of 199.951 kHz are 0x1F80 FREQ units up. */
+    /* "Channel 16" moved onto 868.3 MHz by the base frequency: 10 channels
+     * of 199.951 kHz are 0x13B0 FREQ units up. */
     make_table(TXGATE_TEST_CHANNEL);
-    table[CC_FREQ1] = 0x51;
-    table[CC_FREQ0] = 0xF6;
+    table[CC_FREQ1] = 0x46;
+    table[CC_FREQ0] = 0x26;
     bring_up_table();
     CHECK(dist(model_carrier_hz(), CH26_HZ) <= 1);
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
@@ -294,7 +294,7 @@ static void test_chip_changed(void) {
         }
     }
 
-    /* The chip on the protected channel behind a shadow that says 10. */
+    /* The chip on the protected channel behind a shadow that says 16. */
     bring_up(TXGATE_TEST_CHANNEL);
     unsigned before          = chip.stx_count;
     chip.reg[CC_CHANNR]      = TXGATE_PROTECTED_CHANNEL;
@@ -1120,7 +1120,7 @@ static void test_duty(void) {
     check_clean();
 }
 
-/* --- Random use: whatever the caller does, the chip only sends on channel 10 -------- */
+/* --- Random use: whatever the caller does, the chip only sends on channel 16 -------- */
 static uint32_t rnd_state = 0x1234567u;
 
 static uint32_t rnd(void) {
@@ -1316,7 +1316,7 @@ static void test_random(void) {
         if (started) {
             /* The STX of this step, by the chip's registers at that moment. */
             const struct model_stx *x = &chip.stx[chip.stx_count - 1u];
-            CHECK(dist(x->carrier_hz, CH10_HZ) <= 51000);
+            CHECK(dist(x->carrier_hz, TEST_HZ) <= 51000);
             CHECK(dist(x->carrier_hz, CH26_HZ) >= 999000);
             sent++;
         } else {

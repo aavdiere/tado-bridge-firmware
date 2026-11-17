@@ -13,6 +13,13 @@
 #define PLAN_CHANSPC_E 2u
 #define PLAN_CHANSPC_M 0xF8u
 
+/* Rules 1 and 2 cannot both hold for a test channel near the protected one. */
+_Static_assert(TXGATE_TEST_CHANNEL <= TXGATE_MAX_CHANNEL
+                   && (TXGATE_TEST_CHANNEL + TXGATE_MIN_CHANNEL_DIST <= TXGATE_PROTECTED_CHANNEL
+                       || TXGATE_TEST_CHANNEL
+                              >= TXGATE_PROTECTED_CHANNEL + TXGATE_MIN_CHANNEL_DIST),
+               "the test channel is at least 5 channels from the protected one");
+
 /* Carrier in units of fXOSC / 2^18 (99.2 Hz), which keeps every term whole:
  *   carrier = fXOSC / 2^16 x FREQ                           (cc110l.txt:3729-3736)
  *           + CHAN x fXOSC / 2^18 x (256 + CHANSPC_M) x 2^CHANSPC_E  (:3869-3880)

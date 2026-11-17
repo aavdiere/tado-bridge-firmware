@@ -193,8 +193,11 @@ _Static_assert(CARRIER_HZ(0) > 863124000ull && CARRIER_HZ(0) < 863126000ull, "ba
 _Static_assert(CH_SPACING_X2_18 / 262144u == 199951u, "spacing 199.951 kHz");
 _Static_assert(CARRIER_HZ(26) > 868322700ull && CARRIER_HZ(26) < 868324700ull,
                "ch 26 = 868.3237 MHz");
-_Static_assert(CARRIER_HZ(10) > 865123500ull && CARRIER_HZ(10) < 865125500ull,
-               "ch 10 = 865.1245 MHz");
+_Static_assert(CARRIER_HZ(16) > 866323500ull && CARRIER_HZ(16) < 866325000ull,
+               "ch 16 = 866.3242 MHz");
+_Static_assert(CARRIER_HZ(RADIO_CHANNEL) + 999000ull <= CARRIER_HZ(RADIO_PROTECTED_CHANNEL)
+                   || CARRIER_HZ(RADIO_CHANNEL) >= CARRIER_HZ(RADIO_PROTECTED_CHANNEL) + 999000ull,
+               "the bridge's channel is at least 999 kHz from the protected one");
 _Static_assert(FXOSC_HZ * 6u / 1024u == 152343u, "IF 152 kHz with FSCTRL1 = 0x06");
 _Static_assert((256u + 0xF8u) * (1ull << 10) * FXOSC_HZ / (1ull << 28) == 49987u, "49.99 kBaud");
 _Static_assert(FXOSC_HZ / (8u * (4u + 2u) * 4u) == 135416u, "RX BW 135 kHz");

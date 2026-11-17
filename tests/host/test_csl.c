@@ -104,7 +104,7 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
         return false;
     }
     /* The same rules the real driver applies. */
-    static const struct txgate_radio radio = {0x21, 0x32, 0x76, 10, 0x22, 0xF8, 0};
+    static const struct txgate_radio radio = {0x21, 0x32, 0x76, TXGATE_TEST_CHANNEL, 0x22, 0xF8, 0};
     CHECK_EQ(txgate_check_frame(&radio, own, frame, len, NULL, flags), TXGATE_OK);
 
     struct sent *s = &sent[n_sent < 4096 ? n_sent++ : 4095];

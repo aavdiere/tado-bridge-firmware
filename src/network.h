@@ -21,7 +21,7 @@
  * one, reserve frame counters (one counter-log write) and set the key. */
 void network_boot(void);
 
-/* A fresh network on `channel` (only the test channel 10; never 26) with a
+/* A fresh network on `channel` (only the test channel 16; never 26) with a
  * new key from the CTR_DRBG, written to the network record and read back
  * as a boot would read it, then set as in network_boot(). Replaces any
  * earlier network: devices paired to it must be paired again. True only

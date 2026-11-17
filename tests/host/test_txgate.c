@@ -12,7 +12,8 @@
 #define N(a) (sizeof(a) / sizeof((a)[0]))
 
 #define PROTECTED_HZ 868323668ll /* channel 26, docs/radio-runtime.md "Channel" */
-#define TEST_HZ      865124450ll /* channel 10 */
+#define TEST_HZ      866324157ll /* channel 16, the test channel since 2026-11-17 */
+#define OLD_TEST_HZ  865124450ll /* channel 10, the test channel until 2026-11-17 */
 
 /* The register values of src/radio.c's table, on channel ch. */
 static struct txgate_radio plan(unsigned ch) {
@@ -31,7 +32,11 @@ static void test_carrier(void) {
     r = plan(26);
     CHECK(dist(&r, PROTECTED_HZ) <= 1);
     r = plan(10);
+    CHECK(dist(&r, OLD_TEST_HZ) <= 1);
+    r = plan(16);
     CHECK(dist(&r, TEST_HZ) <= 1);
+    /* 10 channels, about 2.0 MHz, from the protected channel. */
+    CHECK(TEST_HZ - PROTECTED_HZ < -1999000ll && TEST_HZ - PROTECTED_HZ > -2000000ll);
     r.fsctrl0 = 0x01; /* fXOSC / 2^14 = 1586.9 Hz per unit */
     CHECK(dist(&r, TEST_HZ + 1587) <= 1);
     r.fsctrl0 = 0xFF;
@@ -57,11 +62,14 @@ static void test_channel(void) {
         }
     }
     CHECK_EQ(TXGATE_PROTECTED_CHANNEL, 26);
-    CHECK_EQ(TXGATE_TEST_CHANNEL, 10);
-
-    /* "Channel 10" moved onto the protected frequency by other registers. */
+    CHECK_EQ(TXGATE_TEST_CHANNEL, 16);
+    /* The old test channel is refused like any other. */
     struct txgate_radio r = plan(10);
-    long                f = 0x213276 + 16 * 504; /* base raised by 16 channels */
+    CHECK_EQ(txgate_check_channel(&r), TXGATE_NOT_TEST_CHANNEL);
+
+    /* "Channel 16" moved onto the protected frequency by other registers. */
+    r      = plan(16);
+    long f = 0x213276 + 10 * 504; /* base raised by 10 channels */
     r.freq2               = (uint8_t)(f >> 16);
     r.freq1               = (uint8_t)(f >> 8);
     r.freq0               = (uint8_t)f;
@@ -73,16 +81,16 @@ static void test_channel(void) {
     CHECK(dist(&r, PROTECTED_HZ) <= 1);
     CHECK_EQ(txgate_check_channel(&r), TXGATE_PROTECTED);
 
-    r         = plan(10);
+    r         = plan(16);
     r.mdmcfg0 = 0xF9; /* a slightly different spacing: off the plan */
     CHECK_EQ(txgate_check_channel(&r), TXGATE_OFF_PLAN);
-    r       = plan(10);
+    r       = plan(16);
     r.freq0 = 0x77;
     CHECK_EQ(txgate_check_channel(&r), TXGATE_OFF_PLAN);
 
     /* Offset trim: small values pass, large ones do not. */
     for (int t = -128; t < 128; t++) {
-        r         = plan(10);
+        r         = plan(16);
         r.fsctrl0 = (uint8_t)t;
         CHECK_EQ(txgate_check_channel(&r),
                  t >= -TXGATE_MAX_TRIM && t <= TXGATE_MAX_TRIM ? TXGATE_OK : TXGATE_OFF_PLAN);
@@ -140,7 +148,7 @@ static struct ccm_key key;
 static uint8_t        own[8], peer[8];
 
 static void test_ack_rule(void) {
-    struct txgate_radio r = plan(10);
+    struct txgate_radio r = plan(16);
     for (size_t i = 0; i < N(v_ack); i++) {
         const uint8_t *me  = v_ack[i].own.p;
         const uint8_t *hdr = v_ack[i].data_hdr.p; /* uplink addressed to me */
@@ -181,14 +189,15 @@ static void test_ack_rule(void) {
             CHECK_EQ(txgate_check_frame(&r, me, bad, MAC_ACK_LEN, hdr, 0), TXGATE_WRONG_ANSWER);
         }
         /* Off the test channel, and on the protected channel. */
-        struct txgate_radio p = plan(26), q = plan(11);
+        struct txgate_radio p = plan(26), q = plan(11), o = plan(10);
         CHECK_EQ(txgate_check_frame(&p, me, ack, MAC_ACK_LEN, hdr, 0), TXGATE_PROTECTED);
         CHECK_EQ(txgate_check_frame(&q, me, ack, MAC_ACK_LEN, hdr, 0), TXGATE_NOT_TEST_CHANNEL);
+        CHECK_EQ(txgate_check_frame(&o, me, ack, MAC_ACK_LEN, hdr, 0), TXGATE_NOT_TEST_CHANNEL);
     }
 }
 
 static void test_frame_rules(void) {
-    struct txgate_radio r = plan(10), prot = plan(26);
+    struct txgate_radio r = plan(16), prot = plan(26);
     uint8_t             f[MAC_FRAME_MAX], dgram[40] = {0x7E, 0x33, 0xF0};
     static const uint8_t zero[8];
 

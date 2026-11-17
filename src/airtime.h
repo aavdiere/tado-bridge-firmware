@@ -7,7 +7,7 @@
 
 /* Rolling airtime limit for the transmitter (#17, duty cycle).
  *
- * The test channel 10 (865.1245 MHz) lies in the 865-868 MHz SRD band:
+ * The test channel 16 (866.3242 MHz) lies in the 865-868 MHz SRD band:
  * 25 mW e.r.p. and a duty cycle of at most 1 %, or listen-before-talk with
  * adaptive frequency agility instead [I: ERC Recommendation 70-03, Annex
  * 1, band h1.4, as recalled; not checked against a copy of the

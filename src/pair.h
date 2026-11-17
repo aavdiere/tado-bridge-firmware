@@ -30,7 +30,7 @@
  *   - The window is short (PAIR_WINDOW_MS) and bounded in what it sends
  *     (PAIR_BEACONS_MAX, PAIR_RA_PAIRS_MAX, PAIR_DPAIR_MAX).
  *   - The network key is held here only while the window is open and is
- *     wiped when it closes. The channel (test channel 10 only) is the
+ *     wiped when it closes. The channel (test channel 16 only) is the
  *     transmit gate's business (src/txgate.h rule 5); every frame of the
  *     window carries TXGATE_PAIRING. */
 #ifndef PAIR_H

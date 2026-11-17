@@ -6,8 +6,9 @@
 /* Channel plan: f = 863.125 MHz + n x 199.951 kHz, n = 0..49 (docs/radio.md
  * "PHY"). */
 
-/* The bridge's channel: the test network's channel 10 (865.1245 MHz), owner
- * decision of 2026-11-11 (docs/test-bench.md "Channel scan result"). The
+/* The bridge's channel: the test network's channel 16 (866.3242 MHz), owner
+ * decision of 2026-11-17 (channel 10 before; docs/README.md "Project
+ * decisions", src/txgate.h). The
  * radio receives and, once RADIO_TX_ALLOWED is set (src/cc110l.h),
  * transmits there. Until P5 the receive-only images listened on the stock
  * network's channel 26 instead. P6 takes the channel from the network

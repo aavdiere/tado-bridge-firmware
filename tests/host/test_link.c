@@ -28,7 +28,7 @@ static uint8_t  bcast_log[64][MAC_FRAME_MAX];
 static size_t   bcast_log_len[64];
 static unsigned n_bcast_log;
 /* The test channel, as the driver's registers would give it. */
-static const struct txgate_radio radio = {0x21, 0x32, 0x76, 10, 0x22, 0xF8, 0};
+static const struct txgate_radio radio = {0x21, 0x32, 0x76, TXGATE_TEST_CHANNEL, 0x22, 0xF8, 0};
 
 uint64_t csl_port_now(void) {
     return now_us;

@@ -9,8 +9,8 @@
  *      (channel 26, 868.3237 MHz), nor within 5 channels (about 1 MHz) of it.
  *      The carrier is computed from the register values that set it, so a
  *      changed base frequency, channel spacing or offset trim cannot move a
- *      "channel 10" onto it.
- *   2. Transmit only on the test channel (channel 10, 865.1245 MHz) while
+ *      "channel 16" onto it.
+ *   2. Transmit only on the test channel (channel 16, 866.3242 MHz) while
  *      the project is on the bench.
  *   3. An Enhanced ACK is sent only as the exact answer to a unicast Data
  *      frame addressed to our own EUI-64.
@@ -26,10 +26,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Channel plan, owner decisions of 2026-11-11 (docs/test-bench.md "Channel
- * scan result"). */
+/* Channel plan: protected channel, owner decision of 2026-11-11
+ * (docs/test-bench.md "Channel scan result"); test channel 16, owner
+ * decision of 2026-11-17 (was 10: the spare device scans 11, 16, 21 and 26
+ * for a network and never asked on 10; docs/README.md "Project
+ * decisions"). Channel 16 is 10 channels (2.0 MHz) from channel 26. */
 #define TXGATE_PROTECTED_CHANNEL 26u
-#define TXGATE_TEST_CHANNEL      10u
+#define TXGATE_TEST_CHANNEL      16u
 #define TXGATE_MAX_CHANNEL       49u
 #define TXGATE_MIN_CHANNEL_DIST  5u       /* docs/test-bench.md rule 2 */
 #define TXGATE_MIN_DIST_HZ       999000ll /* 5 channels of 199.951 kHz, rounded down */

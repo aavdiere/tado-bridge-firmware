@@ -335,6 +335,8 @@ static void test_record_policy(void) {
     CHECK(!store_net_write(&n, NULL));
     n.channel = TXGATE_TEST_CHANNEL - 1u;
     CHECK(!store_net_write(&n, NULL));
+    n.channel = 10u; /* the test channel until 2026-11-17 */
+    CHECK(!store_net_write(&n, NULL));
     n.channel     = TXGATE_TEST_CHANNEL;
     n.pan_id      = 0xFFFF;
     unsigned ops0 = fm.ops;
@@ -350,10 +352,14 @@ static void test_record_policy(void) {
     bool any = false;
     CHECK(store_net_probe(&any));
     CHECK(any); /* a record, refused: not "no network" */
+    /* Nor one for the old test channel 10 (owner decision 2026-11-17). */
+    p[2] = 10u;
+    CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
+    CHECK(!store_net_load(&got, &seq));
     p[2] = TXGATE_TEST_CHANNEL;
     CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
     CHECK(store_net_load(&got, &seq));
-    CHECK_EQ(seq, 2);
+    CHECK_EQ(seq, 3); /* after the two refused records */
     p[2] = TXGATE_PROTECTED_CHANNEL;
     CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
     CHECK(!store_net_load(&got, &seq)); /* the newest is refused, not an older one taken */
