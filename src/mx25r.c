@@ -127,6 +127,26 @@ bool mx25r_read_status(uint8_t *sr) {
     return true;
 }
 
+/* RDSR until WIP = 0, giving the CPU to the other tasks between polls
+ * (1 ms ticks); the radio task is the caller and checks in with the
+ * watchdog (bounded by max_ms; the IWDG window is ~3 s). The last status
+ * read is left in *sr. */
+static bool wait_idle_ms(unsigned max_ms, uint8_t *sr) {
+    for (unsigned ms = 0; (*sr = rdsr()) & SR_WIP; ms++) {
+        if (ms > max_ms) {
+            return false;
+        }
+        vTaskDelay(1);
+        watchdog_checkin(WDG_RADIO);
+    }
+    return true;
+}
+
+bool mx25r_wait_idle(void) {
+    uint8_t sr;
+    return wait_idle_ms(SE_TIMEOUT_MS, &sr);
+}
+
 bool mx25r_read(uint32_t addr, uint8_t *dst, size_t n) {
     if (addr >= FLASH_SIZE || n > FLASH_SIZE - addr) {
         return false;
@@ -199,12 +219,8 @@ bool mx25r_erase_sector(uint32_t addr) {
     /* 40-240 ms: give the CPU to the other tasks while the chip works. The
      * radio task is the caller, so its own FIFO is not served meanwhile
      * (docs/design.md "Counter log", erase cost). */
-    for (unsigned ms = 0; (sr = rdsr()) & SR_WIP; ms++) {
-        if (ms > SE_TIMEOUT_MS) {
-            return false;
-        }
-        vTaskDelay(1);
-        watchdog_checkin(WDG_RADIO); /* bounded by SE_TIMEOUT_MS; the IWDG window is ~3 s */
+    if (!wait_idle_ms(SE_TIMEOUT_MS, &sr)) {
+        return false;
     }
     return cycle_ok(sr, SCUR_EFAIL);
 }

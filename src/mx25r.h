@@ -31,6 +31,14 @@ bool mx25r_read_id(uint32_t *id);
  * mx25r1635f.txt:1380-1394). RDSR opcode 05h (mx25r1635f.txt:2647). */
 bool mx25r_read_status(uint8_t *sr);
 
+/* RDSR until WIP = 0, for up to 2 x tSE max (480 ms; a program or erase
+ * the MCU did not see end, e.g. one cut short by an MCU reset, which does
+ * not reset the chip). While WIP = 1 the chip ignores reads of the array
+ * and does not decode RDID (mx25r1635f.txt:556-557, 968-969); RDSR works
+ * at any time (:1142-1144). False if WIP is still set: treat the flash as
+ * unavailable. Yields between polls (radio task only). */
+bool mx25r_wait_idle(void);
+
 /* READ 03h, any length, in transactions of at most MX25R_XFER_MAX bytes. */
 bool mx25r_read(uint32_t addr, uint8_t *dst, size_t n);
 

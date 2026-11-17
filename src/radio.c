@@ -1193,16 +1193,23 @@ static void health_check(void) {
 }
 
 /* --- Flash on the shared bus (#10) ----------------------------------------- */
-static void flash_boot(void) {
-    bool     awake = mx25r_wake();
-    uint32_t id    = 0;
-    uint8_t  sr    = 0;
-    bool     ok    = mx25r_read_id(&id) && mx25r_read_status(&sr);
+/* Wake the chip, wait for a program or erase still running (an MCU reset
+ * does not stop it, and the array reads garbage meanwhile), then check the
+ * JEDEC ID. True if the flash may be read: otherwise no record is read. */
+static bool flash_boot(void) {
+    (void)mx25r_wake(); /* its ID check fails while WIP = 1; checked below */
+    bool     idle = mx25r_wait_idle();
+    uint32_t id   = 0;
+    uint8_t  sr   = 0;
+    bool     ok   = idle && mx25r_read_id(&id) && mx25r_read_status(&sr) && id == MX25R_JEDEC_ID;
     LOG("flash: JEDEC ID %06lx%s, status register %02x%s",
         (unsigned long)id,
         id == MX25R_JEDEC_ID ? " (MX25R1635F)" : " (UNEXPECTED, want c22815)",
         sr,
-        ok && awake ? "" : " (wake or read failed)");
+        ok     ? ""
+        : idle ? " (read failed): flash not used"
+               : " (still busy after 480 ms): flash not used");
+    return ok;
 }
 
 static void flash_check(void) {
@@ -1535,9 +1542,13 @@ void radio_task_run(void) {
     LOG("spi1: SCK %lu Hz, mode 0", (unsigned long)spi1_sck_hz());
 
     watchdog_checkin(WDG_RADIO);
-    flash_boot();
+    bool flash_ok = flash_boot();
     link_start();
-    network_boot(); /* key and counter reservation from flash, before the radio (#37) */
+    if (flash_ok) {
+        network_boot(); /* key and counter reservation from flash, before the radio (#37) */
+    } else {
+        LOG("network: flash not ready: network record not read: no key, nothing sent");
+    }
     gdo_irq_setup();
 
     while (!radio_configure()) {
