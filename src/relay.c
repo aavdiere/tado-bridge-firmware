@@ -211,7 +211,8 @@ enum relay_down relay_downlink(struct relay *r, const uint8_t *msg, size_t len) 
     if (count > csl_free_jobs()) {
         return RELAY_DOWN_QUEUE_FULL;
     }
-    uint16_t id = r->next_id++;
+    uint16_t id = r->next_id;
+    r->next_id  = id < RELAY_ID_LAST ? (uint16_t)(id + 1u) : 0u;
     if (count == 1) {
         return csl_enqueue_data(dst, down_pkt, n, id, 0, CSL_KEY_NETWORK) ? RELAY_DOWN_QUEUED
                                                                           : RELAY_DOWN_QUEUE_FULL;

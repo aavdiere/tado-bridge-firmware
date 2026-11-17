@@ -134,6 +134,13 @@ bool pair_is_target(const uint8_t wire[MAC_EUI_LEN]) {
     return w.open && memcmp(wire, w.target, MAC_EUI_LEN) == 0;
 }
 
+bool pair_target(uint8_t wire[MAC_EUI_LEN]) {
+    if (w.have_target) {
+        memcpy(wire, w.target, MAC_EUI_LEN);
+    }
+    return w.have_target;
+}
+
 /* d/pair becomes due at `at`, unless one is in flight, all were sent, or
  * one is due sooner already. */
 static void arm(uint32_t at) {

@@ -56,6 +56,10 @@ void relay_ipv6_from_wire(const uint8_t wire[MAC_EUI_LEN], uint8_t ipv6[16]);
 bool relay_wire_from_ipv6(const uint8_t ipv6[16], uint8_t wire[MAC_EUI_LEN]);
 
 /* --- Per-device state ------------------------------------------------------- */
+/* Downlink datagram ids run 0..RELAY_ID_LAST; the ids above are the link
+ * layer's own (Router Advertisements, d/pair, #19). */
+#define RELAY_ID_LAST 0xFFEFu
+
 #define RELAY_PEERS         16u    /* owner decision: 16 devices (docs/design.md) */
 #define RELAY_DUP_WINDOW_MS 10000u /* freedo tado/mac_duplicate.go:13 */
 

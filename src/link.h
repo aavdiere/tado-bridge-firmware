@@ -11,7 +11,9 @@
 #ifndef LINK_H
 #define LINK_H
 
+#include "csl.h"
 #include "mac.h"
+#include "pair.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -42,19 +44,22 @@ bool link_uplink_room(void);
 
 enum link_rx {
     LINK_RX_BAD_CRC,
-    LINK_RX_ACK_TAKEN,   /* the Enhanced ACK our transaction waited for */
-    LINK_RX_ACK_OTHER,   /* an Enhanced ACK that closes nothing of ours */
-    LINK_RX_FORWARDED,   /* uplink queued for the server */
-    LINK_RX_HELD,        /* fragment of an incomplete datagram */
-    LINK_RX_DUPLICATE,   /* MAC retransmission */
-    LINK_RX_NOT_RELAYED, /* decrypted, but not for the server (zone plane, ICMPv6) */
-    LINK_RX_DROPPED,     /* decrypted, queue full (the frame was not acknowledged) */
-    LINK_RX_NOT_FOR_US,  /* unicast Data for another address */
-    LINK_RX_NO_KEY,      /* Data or broadcast, and no key set */
-    LINK_RX_MIC_FAIL,    /* wrong key or damaged */
-    LINK_RX_BROADCAST,   /* a device's broadcast (Router Solicitation, ...) */
-    LINK_RX_BEACON_REQ,  /* a joining device (pairing, #19) */
-    LINK_RX_OTHER,       /* wake-up frame, beacon, unknown */
+    LINK_RX_ACK_TAKEN,     /* the Enhanced ACK our transaction waited for */
+    LINK_RX_ACK_OTHER,     /* an Enhanced ACK that closes nothing of ours */
+    LINK_RX_FORWARDED,     /* uplink queued for the server */
+    LINK_RX_HELD,          /* fragment of an incomplete datagram */
+    LINK_RX_DUPLICATE,     /* MAC retransmission */
+    LINK_RX_NOT_RELAYED,   /* decrypted, but not for the server (zone plane, ICMPv6) */
+    LINK_RX_DROPPED,       /* decrypted, queue full (the frame was not acknowledged) */
+    LINK_RX_NOT_FOR_US,    /* unicast Data for another address */
+    LINK_RX_NO_KEY,        /* Data or broadcast, and no key set */
+    LINK_RX_MIC_FAIL,      /* wrong key or damaged */
+    LINK_RX_BROADCAST,     /* a device's broadcast (Router Solicitation, ...) */
+    LINK_RX_BEACON_REQ,    /* a joining device, not answered (no window, not its target, ...) */
+    LINK_RX_BEACON_ANSWER, /* the window's target: an Enhanced Beacon is ready (link_beacon()) */
+    LINK_RX_PAIRING,       /* a frame of the window's target under the pairing key */
+    LINK_RX_PAIRED,        /* the target's 2.04 to d/pair: paired (not relayed) */
+    LINK_RX_OTHER,         /* wake-up frame, beacon, unknown */
     LINK_RX_COUNT,
 };
 
@@ -72,8 +77,34 @@ struct link_stats {
     uint32_t rx[LINK_RX_COUNT];
     uint32_t down_queued, down_refused, down_full;
     uint32_t ra_queued, rs_seen;
+    uint32_t ra_pairs_queued, beacons_sent, beacons_dropped, dpair_queued;
 };
 const struct link_stats *link_stats(void);
+
+/* Radio task: every report of the coordinator (csl_port_report()). */
+void link_on_report(const struct csl_report *r);
+
+/* --- Pairing (#19, src/pair.h) ------------------------------------------------- */
+/* Radio task. Opens a pairing window for the device whose wire EUI-64 is
+ * target, to hand it net_key, which must be the key in use (link_set_key()).
+ * The window's first Router Advertisement pair is due a second later.
+ * False if the link has no identity or key, or target is ours or not a node
+ * address. rnd: PAIR_RAND_LEN random bytes. The caller wipes its copies of
+ * net_key and rnd afterwards. */
+bool link_pair_open(const uint8_t target[MAC_EUI_LEN],
+                    const uint8_t net_key[CCM_KEY_LEN],
+                    const uint8_t rnd[PAIR_RAND_LEN],
+                    uint32_t      now_ms);
+void link_pair_close(void);
+bool link_pair_active(uint32_t now_ms);
+
+/* After LINK_RX_BEACON_ANSWER: the Enhanced Beacon to send and the 16
+ * header bytes of the request it answers, for the transmit gate; NULL if
+ * none is ready. The radio task sends it 2.4-7.4 ms after the request
+ * ended (pair.h, PAIR_BEACON_TX_AT_US), or not at all, then calls
+ * link_beacon_done(). */
+const uint8_t *link_beacon(size_t *len, const uint8_t **answered);
+void           link_beacon_done(bool sent);
 
 /* --- Net task ---------------------------------------------------------------- */
 /* A frame from the server for a device (the whole WebSocket message). False

@@ -27,7 +27,7 @@ test_lowpan_SRCS := lowpan.c mac.c ccm.c
 test_txgate_SRCS := txgate.c mac.c ccm.c
 test_csl_SRCS := csl.c txgate.c mac.c ccm.c
 test_relay_SRCS := relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
-test_link_SRCS := link.c relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
+test_link_SRCS := link.c pair.c relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
 # Pairing window, beacon and d/pair (#19).
 test_pair_SRCS := pair.c mac.c ccm.c
 # Network record and counter log against a flash model with power cuts (#37).

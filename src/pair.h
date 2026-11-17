@@ -120,6 +120,9 @@ const struct ccm_key *pair_key(void);
 /* The window is open and wire is its target. */
 bool pair_is_target(const uint8_t wire[MAC_EUI_LEN]);
 
+/* The target of the current or last window: false if there was none. */
+bool pair_target(uint8_t wire[MAC_EUI_LEN]);
+
 /* --- Enhanced Beacon -------------------------------------------------------- */
 enum pair_req {
     PAIR_REQ_OK,             /* answer it */

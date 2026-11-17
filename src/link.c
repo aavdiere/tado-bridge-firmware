@@ -1,9 +1,10 @@
-/* Radio link layer (#17). See link.h. */
+/* Radio link layer (#17), and pairing (#19, src/pair.h). See link.h. */
 #include "link.h"
 
 #include "csl.h"
 #include "lowpan.h"
 #include "msgq.h"
+#include "pair.h"
 #include "relay.h"
 
 #include <string.h>
@@ -50,6 +51,23 @@ static volatile uint32_t router_gw, router_dns; /* written by the net task */
 static uint32_t          ra_due_ms, ra_last_ms, heard_ms;
 static bool              ra_armed, ra_sent_once, heard;
 
+/* Datagram ids of the link's own frames, above the relay's (relay.h). */
+#define ID_RA    0xFFFFu
+#define ID_DPAIR 0xFFFEu
+_Static_assert(ID_DPAIR > RELAY_ID_LAST, "d/pair id not used by the relay");
+
+/* The Enhanced Beacon prepared for the last Beacon Request of the window's
+ * target, and that request's header. */
+static uint8_t beacon[PAIR_BEACON_LEN], beacon_req[MAC_HDR_LEN];
+static size_t  beacon_len;
+
+static void wipe(void *p, size_t n) {
+    volatile uint8_t *v = p;
+    while (n--) {
+        *v++ = 0;
+    }
+}
+
 void link_init(const uint8_t own_wire[MAC_EUI_LEN]) {
     msgq_init(&up_q, up_store, sizeof up_store);
     msgq_init(&down_q, down_store, sizeof down_store);
@@ -58,16 +76,22 @@ void link_init(const uint8_t own_wire[MAC_EUI_LEN]) {
         memcpy(own, own_wire, MAC_EUI_LEN);
     }
     relay_init(&relay, own);
+    pair_init();
+    beacon_len = 0;
     link_clear_key();
 }
 
 static void csl_restart(uint32_t counter, uint32_t limit) {
-    struct csl_config cfg = {.key = {&net_key, NULL}, .counter = counter, .counter_limit = limit};
+    /* The pairing key's schedule is set only while a window is open; jobs
+     * that need it fail as "no key" otherwise. */
+    struct csl_config cfg = {
+        .key = {&net_key, pair_key()}, .counter = counter, .counter_limit = limit};
     memcpy(cfg.own, own, MAC_EUI_LEN);
     csl_init(&cfg);
 }
 
 void link_set_key(const uint8_t key[CCM_KEY_LEN], uint32_t first_counter, uint32_t counter_limit) {
+    pair_close(); /* a window would hand out the key it was opened with */
     ccm_set_key(&net_key, key);
     csl_restart(first_counter, counter_limit);
     ra_armed = false;
@@ -78,6 +102,7 @@ void link_set_counter_limit(uint32_t counter_limit) {
 }
 
 void link_clear_key(void) {
+    pair_close(); /* a window hands out the key in use: no key, no window */
     ccm_clear_key(&net_key);
     csl_restart(0, 0);
     ra_armed = false;
@@ -123,6 +148,18 @@ static void solicit(uint32_t now_ms) {
     }
 }
 
+/* A frame of the pairing window's target under the pairing key (#19): it
+ * has taken our beacon. Its Router Solicitation asks for an advertisement
+ * pair; nothing of it goes to the server. Frames of any other device are
+ * not tried under the pairing key. */
+static enum link_rx on_pairing(bool rs, uint32_t now_ms) {
+    pair_note_joiner(now_ms);
+    if (rs) {
+        solicit(now_ms);
+    }
+    return LINK_RX_PAIRING;
+}
+
 static enum link_rx on_data(const uint8_t *frame, size_t len, uint32_t now_ms) {
     if (len < MAC_HDR_LEN || memcmp(frame + 3, own, MAC_EUI_LEN) != 0) {
         return LINK_RX_NOT_FOR_US;
@@ -132,7 +169,14 @@ static enum link_rx on_data(const uint8_t *frame, size_t len, uint32_t now_ms) {
     }
     struct mac_data d;
     if (mac_open_data(&net_key, frame, len, plain, sizeof plain, &d) != MAC_OPEN_OK) {
-        return LINK_RX_MIC_FAIL; /* a joiner under the pairing key is #19 */
+        uint8_t src[MAC_EUI_LEN];
+        memcpy(src, frame + 11, 5);
+        memcpy(src + 5, mac_eui_suffix, 3);
+        if (pair_is_target(src)
+            && mac_open_data(pair_key(), frame, len, plain, sizeof plain, &d) == MAC_OPEN_OK) {
+            return on_pairing(is_router_solicitation(d.dgram, d.dgram_len), now_ms);
+        }
+        return LINK_RX_MIC_FAIL;
     }
     heard    = true;
     heard_ms = now_ms;
@@ -140,6 +184,15 @@ static enum link_rx on_data(const uint8_t *frame, size_t len, uint32_t now_ms) {
     struct relay_uplink up;
     switch (relay_uplink(&relay, &d, now_ms, &up)) {
         case RELAY_UP_FORWARD: {
+            /* The target's answer to d/pair is the window's, not the server's. */
+            switch (pair_reply(d.src, up.coap, up.coap_len)) {
+                case PAIR_REPLY_PAIRED:
+                    return LINK_RX_PAIRED;
+                case PAIR_REPLY_OTHER:
+                    return LINK_RX_NOT_RELAYED;
+                case PAIR_REPLY_NONE:
+                    break;
+            }
             uint8_t hdr[RELAY_HDR_LEN];
             relay_frame_header(hdr, up.ipv6, up.port, up.coap_len);
             return msgq_put(&up_q, hdr, sizeof hdr, up.coap, up.coap_len) ? LINK_RX_FORWARDED
@@ -165,6 +218,12 @@ static enum link_rx on_broadcast(const uint8_t *frame, size_t len, uint32_t now_
     }
     size_t n = 0;
     if (mac_open(&net_key, frame, len, plain, sizeof plain, &n) != MAC_OPEN_OK || n < 2u) {
+        /* 49 e8 seq | ff ff | src(8) | ...: the source is in the clear. */
+        if (len >= MAC_HDR_LEN && pair_is_target(frame + 5)
+            && mac_open(pair_key(), frame, len, plain, sizeof plain, &n) == MAC_OPEN_OK
+            && n >= 2u) {
+            return on_pairing(is_router_solicitation(plain + 2, n - 2u), now_ms);
+        }
         return LINK_RX_MIC_FAIL;
     }
     heard    = true;
@@ -173,6 +232,43 @@ static enum link_rx on_broadcast(const uint8_t *frame, size_t len, uint32_t now_
         solicit(now_ms);
     }
     return LINK_RX_BROADCAST;
+}
+
+/* A Beacon Request: answered only for the pairing window's target, with
+ * the bridge's next seq and frame counter (freedo docs/PROTOCOL.md:
+ * 651-656). The beacon is built here, before the radio task's wait, so
+ * nothing but the transmission itself is left for the deadline. */
+static enum link_rx on_beacon_request(const uint8_t *frame, size_t len, uint32_t now_ms) {
+    beacon_len   = 0;
+    uint8_t  seq = 0;
+    uint32_t ctr = 0;
+    if (!net_key.set || pair_check_request(frame, len, now_ms) != PAIR_REQ_OK
+        || !csl_take_seq_counter(&seq, &ctr)) {
+        return LINK_RX_BEACON_REQ;
+    }
+    beacon_len = pair_build_beacon(beacon, seq, frame + 7, own, ctr);
+    if (beacon_len == 0) {
+        return LINK_RX_BEACON_REQ;
+    }
+    memcpy(beacon_req, frame, MAC_HDR_LEN);
+    return LINK_RX_BEACON_ANSWER;
+}
+
+const uint8_t *link_beacon(size_t *len, const uint8_t **answered) {
+    *len      = beacon_len;
+    *answered = beacon_req;
+    return beacon_len ? beacon : NULL;
+}
+
+void link_beacon_done(bool sent) {
+    if (beacon_len) {
+        if (sent) {
+            stats.beacons_sent++;
+        } else {
+            stats.beacons_dropped++;
+        }
+    }
+    beacon_len = 0;
 }
 
 enum link_rx
@@ -198,7 +294,7 @@ link_on_frame(const uint8_t *frame, size_t len, bool crc_ok, uint64_t end_us, ui
                 r = LINK_RX_ACK_OTHER;
                 break;
             case MAC_BEACON_REQUEST:
-                r = LINK_RX_BEACON_REQ;
+                r = on_beacon_request(frame, len, now_ms);
                 break;
             default:
                 break;
@@ -223,19 +319,63 @@ static void router_advertisement(uint32_t now_ms, uint32_t rnd) {
     if ((int32_t)(now_ms - ra_due_ms) < 0) {
         return;
     }
-    ra_due_ms = now_ms + RA_MIN_MS + rnd % RA_SPAN_MS;
-    if (!heard || (uint32_t)(now_ms - heard_ms) > RA_LISTENER_MS) {
-        return; /* nobody to hear it */
+    ra_due_ms    = now_ms + RA_MIN_MS + rnd % RA_SPAN_MS;
+    bool pairing = pair_active(now_ms);
+    if (!pairing && (!heard || (uint32_t)(now_ms - heard_ms) > RA_LISTENER_MS)) {
+        return; /* nobody to hear it; in a pairing window the joiner does */
     }
     uint8_t  pkt[LOWPAN_RA_LEN];
     uint32_t gw = router_gw, dns = router_dns;
-    if (lowpan_build_ra(pkt, sizeof pkt, own, (const uint8_t *)&gw, (const uint8_t *)&dns)
-        && csl_enqueue_broadcast(pkt, sizeof pkt, 0xFFFFu, 0, CSL_KEY_NETWORK)) {
+    bool     ok = lowpan_build_ra(pkt, sizeof pkt, own, (const uint8_t *)&gw, (const uint8_t *)&dns)
+                  == LOWPAN_RA_LEN;
+    if (ok && pairing && csl_broadcasts_queued() == 0 && csl_room_for_broadcasts(2)
+        && pair_take_ra_pair(now_ms)) {
+        /* In a pairing window: the copy under the network key with Frame
+         * Pending, then the same under the pairing key, so that the joiner
+         * can read one (freedo docs/PROTOCOL.md:667-672). The pool has room
+         * for both, so neither enqueue fails. */
+        ok = csl_enqueue_broadcast(
+                 pkt, sizeof pkt, ID_RA, CSL_JOB_PAIRING | CSL_JOB_PENDING, CSL_KEY_NETWORK)
+             && csl_enqueue_broadcast(pkt, sizeof pkt, ID_RA, CSL_JOB_PAIRING, CSL_KEY_PAIRING);
+        if (ok) {
+            stats.ra_pairs_queued++;
+        }
+    } else {
+        ok = ok && csl_enqueue_broadcast(pkt, sizeof pkt, ID_RA, 0, CSL_KEY_NETWORK);
+    }
+    if (ok) {
         stats.ra_queued++;
         ra_last_ms   = now_ms;
         ra_sent_once = true;
     } else {
         ra_due_ms = now_ms + RA_SOLICITED_MS; /* the one before is still queued: try again */
+    }
+}
+
+/* d/pair, when the window says it is due: a link-local UDP datagram from
+ * port 5683 to 5683 (freedo tado/build_resources.go:476-478) under the
+ * pairing key, ahead of nothing (the joiner has no other downlinks yet). */
+static void pair_downlink(uint32_t now_ms) {
+    uint8_t target[MAC_EUI_LEN];
+    if (csl_free_jobs() == 0 || !pair_target(target)) {
+        return;
+    }
+    uint8_t coap[PAIR_COAP_LEN];
+    size_t  n = pair_dpair_due(coap, sizeof coap, now_ms);
+    if (n == 0) {
+        return;
+    }
+    uint8_t dg[LOWPAN_FRAME_MAX];
+    size_t  dl =
+        lowpan_build_udp_ll(dg, sizeof dg, own, target, RELAY_PORT_COAP, RELAY_PORT_COAP, coap, n);
+    bool ok =
+        dl != 0 && csl_enqueue_data(target, dg, dl, ID_DPAIR, CSL_JOB_PAIRING, CSL_KEY_PAIRING);
+    wipe(coap, sizeof coap); /* both hold the network key */
+    wipe(dg, sizeof dg);
+    if (ok) {
+        stats.dpair_queued++;
+    } else {
+        pair_dpair_done(false);
     }
 }
 
@@ -273,7 +413,39 @@ void link_poll(uint32_t now_ms, uint32_t rnd) {
 advertise:
     if (link_ready()) {
         router_advertisement(now_ms, rnd);
+        pair_downlink(now_ms);
     }
+}
+
+void link_on_report(const struct csl_report *r) {
+    uint8_t target[MAC_EUI_LEN];
+    if (r->id == ID_DPAIR && r->final && pair_target(target)
+        && memcmp(r->dst, target, MAC_EUI_LEN) == 0) {
+        pair_dpair_done(r->outcome == CSL_DELIVERED);
+    }
+}
+
+bool link_pair_open(const uint8_t target[MAC_EUI_LEN],
+                    const uint8_t key[CCM_KEY_LEN],
+                    const uint8_t rnd[PAIR_RAND_LEN],
+                    uint32_t      now_ms) {
+    if (!link_ready() || memcmp(target, own, MAC_EUI_LEN) == 0
+        || !pair_open(target, key, rnd, now_ms)) {
+        return false;
+    }
+    /* The window's first advertisement pair goes a second from now, before
+     * any frame of the joiner (freedo docs/PROTOCOL.md:673-674). */
+    ra_due_ms = now_ms + RA_SOLICITED_MS;
+    ra_armed  = true;
+    return true;
+}
+
+void link_pair_close(void) {
+    pair_close();
+}
+
+bool link_pair_active(uint32_t now_ms) {
+    return pair_active(now_ms);
 }
 
 bool link_downlink_put(const uint8_t *msg, size_t len) {
