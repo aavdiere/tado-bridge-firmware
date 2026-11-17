@@ -18,7 +18,8 @@ int main(void) {
     ccm_set_key(&key, key_bytes);
 
     /* Everything in place that a transmission needs: the plan's table on the
-     * test channel, RX, our identity, a read-back. */
+     * test channel, the output power, a calibration with lock, RX, our
+     * identity, a read-back. */
     uint8_t table[CC_NUM_CONFIG_REGS] = {0};
     table[CC_FREQ2]                   = 0x21;
     table[CC_FREQ1]                   = 0x32;
@@ -31,6 +32,11 @@ int main(void) {
     model_init();
     CHECK(cc110l_reset());
     CHECK(cc110l_write_burst(0x00, table, sizeof table));
+    CHECK(cc110l_set_pa(RADIO_PA_BRINGUP));
+    uint8_t  fs[3];
+    unsigned tries;
+    CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
+    CHECK(cc110l_cal_ok());
     CHECK(radio_strobe(CC_SRX, NULL));
     cc110l_set_identity(own);
     CHECK(cc110l_tx_verify_channel());

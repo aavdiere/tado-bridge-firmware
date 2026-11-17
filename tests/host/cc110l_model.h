@@ -19,7 +19,9 @@
  *   - after a frame the chip returns to RX (MCSM1 TXOFF_MODE, as the
  *     firmware's table sets it);
  *   - SCAL only in IDLE (:2746-2747), FSCAL1 = 0x3F when the PLL did not
- *     lock (:2756-2759); a test sets how many calibrations fail.
+ *     lock (:2756-2759); a test sets how many calibrations fail;
+ *   - PATABLE[0], reset 0xC6, single-byte read and write; every STX logs
+ *     it. A PATABLE burst (entry 1) counts as forbidden.
  * Not modelled: timing of the air interface (the test moves bytes out of
  * the TX FIFO itself), the duration of a calibration, RX. */
 #ifndef CC110L_MODEL_H
@@ -46,12 +48,14 @@ enum model_state { M_IDLE, M_RX, M_TX, M_UNDERFLOW };
 
 struct model_stx {
     int64_t  carrier_hz;         /* from the chip's registers at the strobe */
+    uint8_t  pa;                 /* PATABLE[0] at the strobe */
     uint8_t  air[257]; /* length byte and frame, as they left the FIFO */
     unsigned air_n;
 };
 
 static struct {
     uint8_t          reg[0x2F];
+    uint8_t          patable; /* PATABLE[0]; the PA uses only this entry (FREND0 = 0x10) */
     enum model_state st;
     uint8_t          txf[64], rxf[64];
     unsigned         txn, rxn;
@@ -69,11 +73,12 @@ static struct {
     unsigned         stx_count;
     unsigned         spi_bytes;
     unsigned         misuse;        /* SFTX/SFRX in a wrong state, FIFO overrun, xfer without CS */
-    unsigned         forbidden;     /* SFSTXON, SXOFF, SPWD, PATABLE: never, in any build */
+    unsigned         forbidden;     /* SFSTXON, SXOFF, SPWD, PATABLE burst: never, in any build */
     unsigned         tx_fifo_writes; /* bytes written to the TX FIFO */
     unsigned         dropped;       /* strobes dropped after SIDLE */
     unsigned         frames_cut;    /* SIDLE while a frame was on the air */
     unsigned         scal_count;    /* calibrations run (SCAL in IDLE) */
+    unsigned         pa_writes;     /* PATABLE[0] writes */
     unsigned         cal_fail_left; /* this many calibrations end without lock */
     bool             locked;
 } chip;
@@ -92,6 +97,7 @@ static void model_chip_reset(void) {
     chip.reg[CC_FREQ0]   = 0xEC;
     chip.reg[CC_MDMCFG1] = 0x22;
     chip.reg[CC_MDMCFG0] = 0xF8;
+    chip.patable         = 0xC6; /* reset value, cc110l.txt:2806-2809 */
     chip.st              = M_IDLE;
     chip.txn             = 0;
     chip.rxn             = 0;
@@ -191,6 +197,7 @@ static void model_strobe(uint8_t s) {
                 if (chip.stx_count < MODEL_MAX_STX) {
                     struct model_stx *x = &chip.stx[chip.stx_count];
                     x->carrier_hz       = model_carrier_hz();
+                    x->pa               = chip.patable;
                     x->air_n            = 0;
                 }
                 chip.stx_count++;
@@ -351,8 +358,17 @@ uint8_t spi1_xfer(uint8_t out) {
         if (!chip.burst) {
             chip.in_data = false;
         }
+    } else if (chip.addr == 0x3E && !chip.burst) {
+        /* PATABLE[0], one byte (cc110l.txt:1505-1517). */
+        if (chip.read) {
+            in = chip.patable;
+        } else {
+            chip.patable = out;
+            chip.pa_writes++;
+        }
+        chip.in_data = false;
     } else {
-        chip.forbidden++; /* PATABLE, or 0x2F */
+        chip.forbidden++; /* PATABLE burst (entry 1), or 0x2F */
     }
     return in;
 }

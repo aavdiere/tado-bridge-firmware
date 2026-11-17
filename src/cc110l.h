@@ -10,17 +10,28 @@
 /* TI CC110L register-level access over SPI1 (docs/datasheets/cc110l.txt,
  * SWRS109C). Every SPI access to the radio goes through one header check in
  * cc110l.c, which is the transmit guard. It refuses (fw_panic) every strobe
- * other than SRES, SCAL, SRX, SIDLE, SFRX and SNOP, every TX FIFO or PATABLE
- * access, and any MCSM1 value whose RXOFF_MODE or TXOFF_MODE could lead into
- * TX or FSTXON. STX, SFTX and the TX FIFO open only inside the transmit
- * functions below, for a frame the transmit gate (src/txgate.h) has
- * approved against the frequency registers last written to the chip. */
+ * other than SRES, SCAL, SRX, SIDLE, SFRX and SNOP, every TX FIFO access,
+ * every PATABLE write other than cc110l_set_pa()'s, and any MCSM1 value
+ * whose RXOFF_MODE or TXOFF_MODE could lead into TX or FSTXON. STX, SFTX
+ * and the TX FIFO open only inside the transmit functions below, for a
+ * frame the transmit gate (src/txgate.h) has approved against the
+ * frequency registers last written to the chip. */
 
 /* Master switch for the transmitter. 0: the image cannot transmit; the
  * transmit functions refuse, and STX, SFTX and the TX FIFO panic as in the
  * receive-only images. Set to 1 only with a fw-reviewer "safe to flash"
  * verdict for the transmit path (docs/test-bench.md rule 4, CLAUDE.md). */
 #define RADIO_TX_ALLOWED 0
+
+/* Output power for the bring-up on the bench (P5): PATABLE 0x26, -10 dBm
+ * at 868 MHz with wire-wound inductors (cc110l.txt:2828, Table 5-14); with
+ * multi-layer inductors -10 dBm is 0x27 (cc110l.txt:2862, Table 5-16). The
+ * IB01's inductor type is not known, so the real level is within about a
+ * PA step of -10 dBm, about 20 dB below the reset level 0xC6 that stock
+ * keeps (docs/radio.md:53) and far below the band's 25 mW e.r.p. The bench
+ * bridge sits next to the SDR. cc110l_set_pa() refuses any setting above
+ * 0xC6's level. */
+#define RADIO_PA_BRINGUP 0x26u
 
 /* Configuration registers, cc110l.txt:3274-3373. */
 #define CC_IOCFG2          0x00
@@ -177,6 +188,15 @@ _Static_assert(CC_CAL_MAX_AGE_US < 0x80000000u, "age compared on the 32-bit micr
 bool cc110l_cal_ok(void);
 void cc110l_cal_expire(void);
 
+/* Output power: write PATABLE[0] and read it back. Only the settings
+ * documented at or below the reset level 0xC6 (9.6 dBm) are accepted; any
+ * other value returns false without touching the chip. Until a write has
+ * read back since the last cc110l_reset(), and whenever a later read-back
+ * differs, nothing is sent. Task context. */
+bool cc110l_set_pa(uint8_t v);
+/* PATABLE[0] still holds what cc110l_set_pa() wrote. Task context. */
+bool cc110l_pa_reads_back(void);
+
 /* Our wire EUI-64, for the transmit gate. Without it nothing is sent. */
 void cc110l_set_identity(const uint8_t own[8]);
 
@@ -196,6 +216,7 @@ enum cc110l_tx_result {
     CC_TX_BUSY,     /* another frame of ours is still on the air; nothing was touched */
     CC_TX_NO_LOCK,  /* no valid calibration with PLL lock (cc110l_cal_ok()); not touched */
     CC_TX_DUTY,     /* the hour's airtime budget is spent (src/airtime.h); not touched */
+    CC_TX_NO_PA,    /* no output power set and read back since the last reset; not touched */
     CC_TX_STATE,    /* the chip was found in a transmit state; abort and re-arm */
     CC_TX_SPI,      /* the chip did not answer; abort and re-arm */
 };

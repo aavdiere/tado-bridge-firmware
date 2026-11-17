@@ -913,8 +913,9 @@ static bool reg_is_reserved(unsigned a) {
  * compared with the table: they include IOCFG2/IOCFG0 (interrupt pins),
  * IOCFG1 (SO 3-state for the shared MISO), PKTCTRL0, CHANNR, FREQ and MCSM1
  * (RXOFF/TXOFF modes), and the chip changes none of them by itself. FSCAL3-0
- * (0x23-0x26) are not compared: calibration rewrites them. Returns the
- * number of registers that differ, or HEALTH_REGS if the chip did not
+ * (0x23-0x26) are not compared: calibration rewrites them. PATABLE[0]
+ * (output power) is read back too and counts as one more register. Returns
+ * the number of registers that differ, or HEALTH_REGS if the chip did not
  * answer. Used by the health check and after every calibration. */
 #define HEALTH_REGS (CC_MCSM0 + 1u)
 _Static_assert(CC_MCSM1 < HEALTH_REGS && CC_CHANNR < HEALTH_REGS && CC_PKTCTRL0 < HEALTH_REGS
@@ -936,6 +937,10 @@ static unsigned regs_lost(void) {
             }
             bad++;
         }
+    }
+    if (!cc110l_pa_reads_back()) {
+        LOG("radio: PATABLE does not read back %02x", RADIO_PA_BRINGUP);
+        bad++;
     }
     return bad;
 }
@@ -1055,6 +1060,13 @@ static bool radio_configure_steps(void) {
         return false;
     }
 
+    /* Output power: SRES left PATABLE at 0xC6; the bring-up level is about
+     * 20 dB lower (src/cc110l.h). */
+    if (!cc110l_set_pa(RADIO_PA_BRINGUP)) {
+        LOG("radio: PATABLE %02x not set or did not read back", RADIO_PA_BRINGUP);
+        return false;
+    }
+
     /* The chip is IDLE since SRES. A calibration without lock leaves the
      * transmitter refused for this bring-up; receiving goes on. */
     if (!radio_calibrate("bring-up")) {
@@ -1070,9 +1082,10 @@ static bool radio_configure_steps(void) {
         return false;
     }
     gdo_irq_enable(true);
-    LOG("radio: RX on channel %u (%lu Hz), transmitter %s",
+    LOG("radio: RX on channel %u (%lu Hz), PATABLE %02x, transmitter %s",
         RADIO_CHANNEL,
         (unsigned long)CARRIER_HZ(RADIO_CHANNEL),
+        RADIO_PA_BRINGUP,
         !RADIO_TX_ALLOWED            ? "switched off (RADIO_TX_ALLOWED 0)"
         : !cc110l_cal_ok()           ? "refused: no PLL lock"
         : cc110l_tx_verify_channel() ? "enabled on this channel only"
@@ -1300,7 +1313,7 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
     }
     enum cc110l_tx_result r = cc110l_tx_start(frame, len, flags);
     if (r == CC_TX_DISABLED || r == CC_TX_REFUSED || r == CC_TX_BUSY || r == CC_TX_NO_LOCK
-        || r == CC_TX_DUTY) {
+        || r == CC_TX_DUTY || r == CC_TX_NO_PA) {
         /* The chip was not touched: still receiving. A frame refused for
          * airtime fails its transaction; the coordinator gives up on the
          * datagram after CSL_ATTEMPTS (src/csl.h), it does not wait. */

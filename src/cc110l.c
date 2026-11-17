@@ -13,10 +13,14 @@
  * everything that can transmit or prepare a transmission:
  *   - strobes other than SRES, SCAL, SRX, SIDLE, SFRX, SNOP: never SFSTXON,
  *     SXOFF or SPWD; STX and SFTX only while tx_permit is set;
- *   - any write header to 0x2F-0x3F except those strobes: never PATABLE (the
- *     chip keeps its reset output power, as stock does, docs/radio.md), the
- *     TX FIFO only as a burst write while tx_permit is set; any read there
- *     except status registers and the RX FIFO;
+ *   - any write header to 0x2F-0x3F except those strobes: PATABLE only as
+ *     the single-byte write inside cc110l_set_pa(), which accepts only the
+ *     settings documented at or below the reset level 0xC6 (pa_allowed()),
+ *     never a burst (PATABLE[1]); the TX FIFO only as a burst write while
+ *     tx_permit is set; any read there except status registers, PATABLE[0]
+ *     and the RX FIFO;
+ *   - FREND0 with PA_POWER other than 0: the PA uses PATABLE[0] only
+ *     (cc110l.txt:2799-2805, Table 5-55);
  *   - MCSM1 with RXOFF_MODE = FSTXON or TX, or TXOFF_MODE = FSTXON or "stay
  *     in TX" (cc110l.txt:3929-3955): the only ways the state machine enters
  *     TX without an STX strobe;
@@ -32,6 +36,8 @@
  * strobed in two places, cc110l_tx_start() and cc110l_ack_fire_from_isr(),
  * and only when all of this holds:
  *   - the whole register table has been written since the last reset;
+ *   - PATABLE[0] has been set by cc110l_set_pa() since the last reset and
+ *     reads back as set, before every frame and every ACK;
  *   - the synthesizer was calibrated after the last register write, the
  *     PLL locked (FSCAL1 != 0x3F), and that calibration is younger than
  *     CC_CAL_MAX_AGE_US (cc110l_calibrate(); #11);
@@ -107,6 +113,15 @@ static volatile bool pll_locked;
 static bool          cal_failed;
 static uint32_t      cal_us;
 
+/* Output power (PATABLE[0]). The chip resets it to 0xC6 (cc110l.txt:2806-
+ * 2809). pa_ok: cc110l_set_pa() wrote pa_value since the last reset and it
+ * read back; cleared by a reset and by any read-back that differs. pa_permit
+ * opens the guard for that one write. */
+#define PATABLE 0x3Eu
+static volatile bool pa_ok;
+static bool          pa_permit;
+static uint8_t       pa_value;
+
 static bool strobe_allowed(uint8_t addr) {
     switch (addr) {
         case CC_SRES:
@@ -147,6 +162,9 @@ static void guard_header(uint8_t hdr) {
     if (read && addr == 0x3F) {
         return; /* RX FIFO */
     }
+    if (addr == PATABLE && !burst && (read || pa_permit)) {
+        return; /* PATABLE[0]: a read, or the checked write of cc110l_set_pa() */
+    }
     if (!read && burst && addr == 0x3F && RADIO_TX_ALLOWED && tx_permit) {
         return; /* TX FIFO, an approved frame */
     }
@@ -166,6 +184,9 @@ static void guard_write(uint8_t addr, uint8_t val) {
     }
     if (addr == CC_PKTCTRL0 && ((val >> 4) & 3) != 0) {
         fw_panic("radio guard: PKTCTRL0 not in FIFO mode", __FILE__, __LINE__);
+    }
+    if (addr == CC_FREND0 && (val & 7u) != 0) {
+        fw_panic("radio guard: FREND0 PA_POWER selects PATABLE[1..]", __FILE__, __LINE__);
     }
 }
 
@@ -290,6 +311,7 @@ bool cc110l_reset(void) {
     verified     = false;
     pll_locked   = false;
     cal_failed   = false; /* a new bring-up gets new tries */
+    pa_ok        = false; /* PATABLE is back at 0xC6 */
     ack.prepared = false;
     tx_active    = false;
     tx.idx       = tx.total; /* nothing left to feed */
@@ -458,7 +480,7 @@ static bool carrier_reads_back(void) {
 
 bool cc110l_tx_verify_channel(void) {
     verified = false;
-    if (!carrier_reads_back()) {
+    if (!carrier_reads_back() || !cc110l_pa_reads_back()) {
         return false;
     }
     verified_us = timebase_us();
@@ -473,6 +495,80 @@ bool cc110l_cal_ok(void) {
 
 void cc110l_cal_expire(void) {
     pll_locked = false;
+}
+
+/* PATABLE settings for 868 MHz documented at or below the reset level 0xC6
+ * (9.6 dBm with wire-wound inductors, Table 5-15, cc110l.txt:2834-2839;
+ * 8.5 dBm with multi-layer inductors, Table 5-17, cc110l.txt:2868-2873).
+ * The PA code is not monotonic: 0xC0, 0xC2, 0xC3 and 0xC5 are numerically
+ * below 0xC6 but give 10-12 dBm (Tables 5-14 and 5-16, cc110l.txt:
+ * 2816-2832, 2852-2865), so the check is this list, not a comparison.
+ * Besides 0xC6 itself only the entries at 0 dBm and below, which are at
+ * least 8 dB under 0xC6 in either inductor variant; the IB01's variant is
+ * not known. 0x61-0x6F are not allowed at all (cc110l.txt:2808). */
+static bool pa_allowed(uint8_t v) {
+    switch (v) {
+        case 0xC6: /* reset value, 9.6 / 8.5 dBm */
+        case 0x50: /*   0 dBm, both tables */
+        case 0x37: /*  -6 dBm, wire-wound */
+        case 0x26: /* -10 dBm, wire-wound */
+        case 0x27: /* -10 dBm, multi-layer */
+        case 0x1D: /* -15 dBm, wire-wound */
+        case 0x1E: /* -15 dBm, multi-layer */
+        case 0x17: /* -20 dBm, wire-wound */
+        case 0x0F: /* -20 dBm, multi-layer */
+        case 0x03: /* -30 dBm, both tables */
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool pa_read(uint8_t *v) {
+    if (!begin(PATABLE | HDR_READ, NULL)) {
+        return false;
+    }
+    *v = spi1_xfer(0);
+    end();
+    return true;
+}
+
+bool cc110l_set_pa(uint8_t v) {
+    pa_ok = false;
+    if (!pa_allowed(v)) {
+        return false; /* the chip is not touched */
+    }
+    /* One byte to PATABLE[0]: header 0x3E, no burst (cc110l.txt:1505-1517).
+     * The read-back is a new access: CSn high resets the PATABLE index. */
+    pa_permit = true;
+    bool ok   = begin(PATABLE, NULL);
+    if (ok) {
+        (void)spi1_xfer(v);
+        end();
+    }
+    pa_permit = false;
+    uint8_t back;
+    if (!ok || !pa_read(&back) || back != v) {
+        return false;
+    }
+    pa_value = v;
+    pa_ok    = true;
+    return true;
+}
+
+bool cc110l_pa_reads_back(void) {
+    uint8_t back;
+    if (!pa_ok) {
+        return false;
+    }
+    if (!pa_read(&back)) {
+        return false; /* no answer now; the setting is not in doubt */
+    }
+    if (back != pa_value) {
+        pa_ok = false; /* the chip no longer holds it: until the next bring-up */
+        return false;
+    }
+    return true;
 }
 
 static bool wait_idle(uint32_t timeout_us) {
@@ -568,6 +664,9 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
     }
     if (!cc110l_cal_ok()) {
         return CC_TX_NO_LOCK;
+    }
+    if (!pa_ok) {
+        return CC_TX_NO_PA;
     }
     /* The gate judges the registers last written; the chip must still hold
      * them now (it may have reset since). Two short burst reads, about
@@ -695,6 +794,9 @@ enum cc110l_tx_result cc110l_ack_prepare(const uint8_t a[MAC_ACK_LEN],
     if (!cc110l_cal_ok()) {
         return CC_TX_NO_LOCK;
     }
+    if (!pa_ok) {
+        return CC_TX_NO_PA;
+    }
     if (!verified) {
         last_verdict = TXGATE_OFF_PLAN;
         return CC_TX_REFUSED;
@@ -740,7 +842,7 @@ bool cc110l_ack_fire_from_isr(void) {
     /* Not over a frame of ours that is still on the air: the chip cannot
      * report a received packet then, so that edge is not a packet's, and
      * the SFTX below would be dropped (see cc110l_tx_start()). */
-    if (!shadow_full || cc110l_tx_expected() || !cc110l_cal_ok()
+    if (!shadow_full || !pa_ok || cc110l_tx_expected() || !cc110l_cal_ok()
         || (uint32_t)(timebase_us() - ack.verified_us) > ACK_VERIFY_MAX_US
         || txgate_check_channel(&r) != TXGATE_OK) {
         return false;

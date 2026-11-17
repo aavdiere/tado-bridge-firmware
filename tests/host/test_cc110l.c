@@ -49,6 +49,7 @@ static void bring_up_table(void) {
     unsigned tries = 0;
     CHECK(cc110l_reset());
     CHECK(cc110l_write_burst(0x00, table, sizeof table));
+    CHECK(cc110l_set_pa(RADIO_PA_BRINGUP));
     CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
     CHECK(radio_strobe(CC_SRX, NULL));
 }
@@ -69,6 +70,7 @@ static void check_chip(void) {
     for (unsigned i = 0; i < chip.stx_count && i < MODEL_MAX_STX; i++) {
         CHECK(dist(chip.stx[i].carrier_hz, CH10_HZ) <= 51000);
         CHECK(dist(chip.stx[i].carrier_hz, CH26_HZ) >= 999000);
+        CHECK_EQ(chip.stx[i].pa, RADIO_PA_BRINGUP);
     }
     CHECK_EQ(chip.forbidden, 0);
     CHECK_EQ(chip.misuse, 0);
@@ -617,6 +619,7 @@ static void test_guard(void) {
 static void table_rx_uncalibrated(void) {
     CHECK(cc110l_reset());
     CHECK(cc110l_write_burst(0x00, table, sizeof table));
+    CHECK(cc110l_set_pa(RADIO_PA_BRINGUP));
     CHECK(radio_strobe(CC_SRX, NULL));
 }
 
@@ -725,6 +728,106 @@ static void test_calibration(void) {
     CHECK(radio_strobe(CC_SRX, NULL));
     refused_no_lock(f, n, ackf, up);
     CHECK_EQ(chip.stx_count, 3);
+    check_clean();
+}
+
+/* --- Output power ---------------------------------------------------------------------- */
+/* The settings the datasheet documents at or below the reset level 0xC6
+ * (cc110l.txt Tables 5-14 to 5-17), at 0 dBm and less, and 0xC6 itself. */
+static bool documented_low(unsigned v) {
+    static const uint8_t ok[] = {0xC6, 0x50, 0x37, 0x26, 0x27, 0x1D, 0x1E, 0x17, 0x0F, 0x03};
+    for (unsigned i = 0; i < sizeof ok; i++) {
+        if (ok[i] == v) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void test_power(void) {
+    uint8_t       f[MAC_FRAME_MAX], ackf[MAC_ACK_LEN], up[MAC_FRAME_MAX];
+    size_t        n = wake_frame(f);
+    volatile bool p = false;
+    CHECK(data_frame(up, own, device, 10) > 0);
+    CHECK(mac_ack_for_data(ackf, up, own, 0));
+
+    model_init();
+    bring_up(TXGATE_TEST_CHANNEL);
+    CHECK_EQ(chip.patable, RADIO_PA_BRINGUP);
+    CHECK(documented_low(RADIO_PA_BRINGUP));
+
+    /* Every byte value: only the documented low settings reach the chip.
+     * Above all the ones numerically below 0xC6 but louder (0xC0 +12 dBm,
+     * 0xC2/0xC3/0xC5 +10 dBm), everything above 0xC6, and 0x61-0x6F,
+     * which the datasheet does not allow. */
+    unsigned accepted = 0;
+    for (unsigned v = 0; v < 256; v++) {
+        unsigned writes = chip.pa_writes, bytes = chip.spi_bytes;
+        bool     ok     = cc110l_set_pa((uint8_t)v);
+        CHECK_EQ(ok, documented_low(v));
+        if (ok) {
+            accepted++;
+            CHECK_EQ(chip.patable, v);
+            CHECK_EQ(chip.pa_writes, writes + 1u);
+        } else {
+            CHECK_EQ(chip.pa_writes, writes);
+            CHECK_EQ(chip.spi_bytes, bytes);
+            /* A refused value also withdraws the old one: nothing is sent
+             * until a good value has been written. */
+            CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_PA);
+            CHECK(!cc110l_tx_verify_channel());
+            CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_NO_PA);
+        }
+    }
+    CHECK_EQ(accepted, 10);
+    static const uint8_t louder[] = {0xC0, 0xC2, 0xC3, 0xC5, 0xC7, 0xCB, 0xCD, 0xFF, 0x61, 0x6F};
+    for (unsigned i = 0; i < sizeof louder; i++) {
+        CHECK(!cc110l_set_pa(louder[i]));
+    }
+    CHECK(chip.patable != 0xC0);
+    CHECK_EQ(chip.stx_count, 0);
+
+    /* No PATABLE write outside cc110l_set_pa(), and never PATABLE[1]
+     * (burst), whatever the switch; PA_POWER must select PATABLE[0]. */
+    PANICS((void)begin(PATABLE, NULL), p);
+    CHECK(p);
+    PANICS((void)begin(PATABLE | HDR_BURST, NULL), p);
+    CHECK(p);
+    PANICS((void)begin(PATABLE | HDR_BURST | HDR_READ, NULL), p);
+    CHECK(p);
+    PANICS(cc110l_write_reg(CC_FREND0, 0x11), p);
+    CHECK(p);
+    PANICS(cc110l_write_reg(CC_FREND0, 0x10), p);
+    CHECK(!p);
+
+    /* After a reset of the chip by the driver PATABLE is 0xC6 again, and
+     * nothing is sent until the bring-up has set it. */
+    bring_up(TXGATE_TEST_CHANNEL);
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
+    finish_frame();
+    CHECK(cc110l_reset());
+    CHECK_EQ(chip.patable, 0xC6);
+    CHECK(cc110l_write_burst(0x00, table, sizeof table));
+    uint8_t  fs[3];
+    unsigned tries;
+    CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
+    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_PA);
+
+    /* PATABLE changed behind the driver: the next frame and the next ACK
+     * are refused, and stay refused until it is set again. */
+    bring_up(TXGATE_TEST_CHANNEL);
+    chip.patable = 0xC0;
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
+    CHECK(!cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_NO_PA);
+    CHECK(!cc110l_ack_fire_from_isr());
+    chip.patable = RADIO_PA_BRINGUP;
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_PA);
+    CHECK(cc110l_set_pa(RADIO_PA_BRINGUP));
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
+    finish_frame();
+    CHECK_EQ(chip.stx_count, 2);
     check_clean();
 }
 
@@ -1049,6 +1152,7 @@ int main(void) {
     test_long_and_abort();
     test_guard();
     test_calibration();
+    test_power();
     test_duty();
     test_random();
     return TEST_REPORT("test_cc110l");
