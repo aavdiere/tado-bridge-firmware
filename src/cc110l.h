@@ -21,8 +21,7 @@
  * transmit functions refuse, and STX, SFTX and the TX FIFO panic as in the
  * receive-only images. Set to 1 only with a fw-reviewer "safe to flash"
  * verdict for the transmit path (docs/test-bench.md rule 4, CLAUDE.md). */
-/* TEMPORARY 1 for the #11 test-frame sender (src/testtx.h), revert after the test. */
-#define RADIO_TX_ALLOWED 1
+#define RADIO_TX_ALLOWED 0
 
 /* Output power for the bring-up on the bench (P5): PATABLE 0x26, -10 dBm
  * at 868 MHz with wire-wound inductors (cc110l.txt:2828, Table 5-14); with

@@ -67,7 +67,6 @@
 #include "provision.h"
 #include "rng.h"
 #include "spi1.h"
-#include "testtx.h"
 #include "timebase.h"
 #include "watchdog.h"
 
@@ -1227,8 +1226,6 @@ static void flash_check(void) {
  * bench data. */
 #define LBT_RSSI_BUSY_DBM (-85)
 static bool lbt_listening;
-static bool lbt_listen_seen; /* TEMPORARY (#11): highest RSSI of the current listen */
-static int  lbt_listen_max_x2;
 static bool lbt_rssi_seen; /* lbt_rssi_max_x2 holds a value this minute */
 static int  lbt_rssi_max_x2;
 
@@ -1306,11 +1303,6 @@ static void log_minute(void) {
  * loop to act on afterwards. */
 static uint32_t pending_bits;
 
-/* TEMPORARY test-frame sender (#11): the driver's result of the last
- * csl_port_send() that reached cc110l_tx_start(). */
-static enum cc110l_tx_result ttx_result;
-static bool                  ttx_result_set;
-
 uint64_t csl_port_now(void) {
     return now64();
 }
@@ -1364,8 +1356,6 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
         tx_wait_tick();
     }
     enum cc110l_tx_result r = cc110l_tx_start(frame, len, flags);
-    ttx_result              = r; /* TEMPORARY test-frame sender (#11) */
-    ttx_result_set          = true;
     if (r == CC_TX_DISABLED || r == CC_TX_REFUSED || r == CC_TX_BUSY || r == CC_TX_NO_LOCK
         || r == CC_TX_DUTY || r == CC_TX_NO_PA) {
         /* The chip was not touched: still receiving. A frame refused for
@@ -1457,10 +1447,6 @@ static void lbt_sample_rssi(void) {
         return;
     }
     int x2 = rssi_x2(raw);
-    if (!lbt_listen_seen || x2 > lbt_listen_max_x2) {
-        lbt_listen_max_x2 = x2;
-        lbt_listen_seen   = true;
-    }
     if (!lbt_rssi_seen || x2 > lbt_rssi_max_x2) {
         lbt_rssi_max_x2 = x2;
         lbt_rssi_seen   = true;
@@ -1471,11 +1457,10 @@ static void lbt_sample_rssi(void) {
 }
 
 void csl_port_listen_begin(void) {
-    lbt_edges       = gdo0_edges;
-    lbt_rssi_hit    = false;
-    lbt_listen_seen = false;
-    lbt_listening   = true;
-    lbt_busy        = on_air_now() || !cc110l_tx_verify_channel();
+    lbt_edges     = gdo0_edges;
+    lbt_rssi_hit  = false;
+    lbt_listening = true;
+    lbt_busy      = on_air_now() || !cc110l_tx_verify_channel();
     lbt_sample_rssi();
 }
 
@@ -1517,107 +1502,6 @@ void csl_port_report(const struct csl_report *r) {
             : "");
 }
 
-/* --- TEMPORARY test-frame sender (#11, src/testtx.h): revert after the test.
- * One slot: listen (csl_port_listen_begin(), 3.968 ms with one RSSI sample
- * half way, csl_port_listen_busy()); busy skips the slot; otherwise one
- * csl_port_send(), no retry. Every driver guard applies as for any frame
- * (gate, PLL lock, PATABLE read-back, airtime, carrier read-back). Runs only
- * where the coordinator's other work runs: no packet arriving, no
- * transaction on the air. The log has seq and results, no addresses. */
-static struct testtx ttx;
-
-static const char *ttx_result_name(bool ok) {
-    static const char *const n[] = {
-        [CC_TX_OK]       = "ok",
-        [CC_TX_DISABLED] = "transmitter switched off",
-        [CC_TX_REFUSED]  = "refused by the gate",
-        [CC_TX_BUSY]     = "own frame on air",
-        [CC_TX_NO_LOCK]  = "no pll lock",
-        [CC_TX_DUTY]     = "airtime budget spent",
-        [CC_TX_NO_PA]    = "patable not set",
-        [CC_TX_STATE]    = "chip in a tx state",
-        [CC_TX_SPI]      = "spi failure",
-    };
-    if (!ttx_result_set) {
-        return "radio not up";
-    }
-    if (ttx_result == CC_TX_OK && !ok) {
-        return "failed after STX, aborted and re-armed";
-    }
-    return (unsigned)ttx_result < sizeof n / sizeof n[0] && n[ttx_result] ? n[ttx_result] : "?";
-}
-
-static void testtx_run(void) {
-    enum testtx_step st  = testtx_poll(&ttx, now64(), testtx_arm == TESTTX_ARM_MAGIC);
-    const uint8_t   *own = link_own();
-    if (st == TESTTX_IDLE) {
-        return;
-    }
-    if (st == TESTTX_START) {
-        LOG("testtx: START (TEMPORARY, #11): channel %u, %u-byte unicast Data test frames, one per "
-            "%u s or slower, stop after %u frames or %u s%s",
-            RADIO_CHANNEL,
-            TESTTX_LEN,
-            (unsigned)(TESTTX_PERIOD_US / 1000000u),
-            TESTTX_MAX_FRAMES,
-            (unsigned)(TESTTX_MAX_RUN_US / 1000000u),
-            own ? "" : "; NO IDENTITY, nothing will be sent");
-        return;
-    }
-    if (st != TESTTX_SLOT) {
-        testtx_arm = 0;
-        LOG("testtx: STOP (%s): %u frames sent in %u slots; re-arming needs a reset",
-            st == TESTTX_STOP_COUNT  ? "frame limit"
-            : st == TESTTX_STOP_TIME ? "time limit"
-                                     : "disarmed",
-            ttx.sent,
-            ttx.slots);
-        return;
-    }
-    uint8_t seq = (uint8_t)(ttx.slots - 1u);
-    if (!own) {
-        LOG("testtx: seq %02x: no identity, not sent", seq);
-        return;
-    }
-    uint8_t f[TESTTX_LEN];
-    testtx_build(f, own, seq);
-    uint32_t before = cc110l_airtime_used_us();
-
-    csl_port_listen_begin();
-    delay_us(CSL_LBT_LISTEN_US / 2u);
-    lbt_sample_rssi();
-    delay_us(CSL_LBT_LISTEN_US - CSL_LBT_LISTEN_US / 2u);
-    bool        busy = csl_port_listen_busy();
-    bool        sync = gdo0_edges != lbt_edges, hit = lbt_rssi_hit, other = lbt_busy;
-    char        r[12];
-    const char *rssi = lbt_listen_seen ? half_db(r, sizeof r, lbt_listen_max_x2) : "none";
-    if (busy) {
-        LOG("testtx: seq %02x: channel busy (%s%s%s), slot skipped; airtime +0 us; lbt rssi max %s "
-            "dBm",
-            seq,
-            sync ? "sync word " : "",
-            hit ? "rssi " : "",
-            other || !(sync || hit) ? "on air or read-back" : "",
-            rssi);
-        return;
-    }
-    ttx_result_set = false;
-    bool ok        = csl_port_send(f, sizeof f, 0);
-    if (ok) {
-        testtx_sent(&ttx);
-    }
-    uint32_t after = cc110l_airtime_used_us();
-    LOG("testtx: seq %02x: %s (%s%s%s), airtime %+ld us (last hour %lu ms), lbt rssi max %s dBm",
-        seq,
-        ok ? "sent" : "NOT sent",
-        ttx_result_name(ok),
-        ttx_result_set && ttx_result == CC_TX_REFUSED ? ": " : "",
-        ttx_result_set && ttx_result == CC_TX_REFUSED ? txgate_reason(cc110l_tx_verdict()) : "",
-        (long)(int32_t)(after - before),
-        (unsigned long)(after / 1000u),
-        rssi);
-}
-
 #define HEALTH_PERIOD_MS    10000u
 #define STATS_PERIOD_MS     60000u
 #define RETRY_PERIOD_MS     10000u
@@ -1648,7 +1532,6 @@ static void link_start(void) {
 void radio_task_run(void) {
     self = xTaskGetCurrentTaskHandle();
     LOG("spi1: SCK %lu Hz, mode 0", (unsigned long)spi1_sck_hz());
-    LOG("testtx: TEMPORARY test-frame sender built in (#11); armed only over SWD, not armed");
 
     watchdog_checkin(WDG_RADIO);
     flash_boot();
@@ -1763,7 +1646,6 @@ void radio_task_run(void) {
          * no transaction on the air. */
         flash_due |= (bits & NOTE_FLASH) != 0;
         if (!packet_arriving() && !csl_busy()) {
-            testtx_run(); /* TEMPORARY (#11) */
             if (flash_due) {
                 flash_due = false;
                 flash_check();

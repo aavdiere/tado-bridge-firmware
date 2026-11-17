@@ -226,7 +226,6 @@ add_executable(${BINARY}
     ../src/msgq.c
     ../src/relay.c
     ../src/link.c
-    ../src/testtx.c # TEMPORARY (#11)
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c
