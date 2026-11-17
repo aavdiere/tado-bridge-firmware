@@ -257,22 +257,65 @@ static void test_pairing(uint32_t *now_ms) {
     run_ms(now_ms, 20000);
 
     /* A new window: at most PAIR_RA_PAIRS_MAX advertisement pairs however
-     * often the target asks, and the window ends on its own. */
+     * often the target asks. Once they are used up, its Router
+     * Solicitations under the pairing key send nothing at all: no lone
+     * advertisement under the network key, which it cannot read (#19
+     * review M2). The window ends on its own. */
     CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
-    unsigned from = n_bcast_log;
+    unsigned from      = n_bcast_log;
+    uint32_t rs_before = link_stats()->rs_seen;
     for (unsigned i = 0; i < 9; i++) {
         n = mac_build_broadcast(&pk, f, sizeof f, false, (uint8_t)(20 + i), joiner, 30 + i, rs,
                                 sizeof rs);
         CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_PAIRING);
         run_ms(now_ms, 12000);
     }
+    CHECK(link_pair_active(*now_ms));
+    CHECK(!pair_ra_pairs_left(*now_ms));
     CHECK_EQ(count_pending_bcasts(from), PAIR_RA_PAIRS_MAX);
-    CHECK(n_bcast_log - from > 2 * PAIR_RA_PAIRS_MAX); /* the rest: single advertisements */
+    CHECK_EQ(n_bcast_log - from, 2 * PAIR_RA_PAIRS_MAX); /* the pairs, nothing else */
+    CHECK_EQ(link_stats()->rs_seen - rs_before, PAIR_RA_PAIRS_MAX);
     CHECK_EQ(pair_stats()->dpair_sent, 2 + PAIR_DPAIR_MAX);
+    /* A network device's solicitation is still answered as outside a
+     * window: one advertisement under the network key. */
+    from = n_bcast_log;
+    n    = mac_build_broadcast(&key, f, sizeof f, false, 0x50, dev, 0x5000, rs, sizeof rs);
+    CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_BROADCAST);
+    run_ms(now_ms, 3000);
+    CHECK_EQ(n_bcast_log - from, 1);
+    CHECK_EQ(bcast_log[from][0], 0x49);
+    CHECK_EQ(mac_open(&key, bcast_log[from], bcast_log_len[from], body, sizeof body, &b0),
+             MAC_OPEN_OK);
     run_ms(now_ms, PAIR_WINDOW_MS);
     CHECK(!link_pair_active(*now_ms));
     n = beacon_request(f, joiner, 0x7d);
     CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_BEACON_REQ);
+
+    /* While the window has a pair left, an advertisement that finds another
+     * broadcast queued waits for it and then goes as a pair, never alone.
+     * The counter reservation holds the other broadcast in the queue. */
+    static const uint8_t other[] = {0x7B, 0x3B, 58, 0x02, 134, 0, 0, 0, 0, 0, 0, 0};
+    unsigned             pairs   = link_stats()->ra_pairs_queued;
+    uint32_t             ras     = link_stats()->ra_queued;
+    link_set_key(v_key.p, link_counter(), link_counter());
+    CHECK(csl_enqueue_broadcast(other, sizeof other, 7, 0, CSL_KEY_NETWORK));
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    from = n_bcast_log;
+    run_ms(now_ms, 3000);
+    CHECK_EQ(n_bcast_log - from, 0);
+    CHECK_EQ(csl_broadcasts_queued(), 1);
+    CHECK_EQ(link_stats()->ra_queued, ras);
+    link_set_counter_limit(UINT32_MAX);
+    run_ms(now_ms, 4000);
+    CHECK_EQ(n_bcast_log - from, 3);
+    CHECK_EQ(bcast_log[from][0], 0x49);
+    CHECK_EQ(bcast_log[from + 1][0], 0x59);
+    CHECK_EQ(bcast_log[from + 2][0], 0x49);
+    CHECK_EQ(mac_open(&pk, bcast_log[from + 2], bcast_log_len[from + 2], body, sizeof body, &b0),
+             MAC_OPEN_OK);
+    CHECK_EQ(link_stats()->ra_pairs_queued, pairs + 1);
+    link_pair_close();
+    run_ms(now_ms, 4000);
 
     /* A new key (a new network) closes a window. */
     CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));

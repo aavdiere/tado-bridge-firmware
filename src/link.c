@@ -150,11 +150,13 @@ static void solicit(uint32_t now_ms) {
 
 /* A frame of the pairing window's target under the pairing key (#19): it
  * has taken our beacon. Its Router Solicitation asks for an advertisement
- * pair; nothing of it goes to the server. Frames of any other device are
- * not tried under the pairing key. */
+ * pair, while the window has one left; once they are used up it asks for
+ * nothing: a lone advertisement under the network key is of no use to the
+ * joiner and would only cost airtime. Nothing of it goes to the server.
+ * Frames of any other device are not tried under the pairing key. */
 static enum link_rx on_pairing(bool rs, uint32_t now_ms) {
     pair_note_joiner(now_ms);
-    if (rs) {
+    if (rs && pair_ra_pairs_left(now_ms)) {
         solicit(now_ms);
     }
     return LINK_RX_PAIRING;
@@ -319,22 +321,30 @@ static void router_advertisement(uint32_t now_ms, uint32_t rnd) {
     if ((int32_t)(now_ms - ra_due_ms) < 0) {
         return;
     }
-    ra_due_ms    = now_ms + RA_MIN_MS + rnd % RA_SPAN_MS;
-    bool pairing = pair_active(now_ms);
+    ra_due_ms = now_ms + RA_MIN_MS + rnd % RA_SPAN_MS;
+    /* In a pairing window with an advertisement pair left, every
+     * advertisement goes as a pair, or waits until one fits: never as a
+     * lone copy that the joiner cannot read, so a window sends at most
+     * PAIR_RA_PAIRS_MAX pairs and nothing else in their place. */
+    bool pairing = pair_ra_pairs_left(now_ms);
     if (!pairing && (!heard || (uint32_t)(now_ms - heard_ms) > RA_LISTENER_MS)) {
         return; /* nobody to hear it; in a pairing window the joiner does */
+    }
+    if (pairing && (csl_broadcasts_queued() != 0 || !csl_room_for_broadcasts(2))) {
+        ra_due_ms = now_ms + RA_SOLICITED_MS; /* the one before is still queued: try again */
+        return;
     }
     uint8_t  pkt[LOWPAN_RA_LEN];
     uint32_t gw = router_gw, dns = router_dns;
     bool     ok = lowpan_build_ra(pkt, sizeof pkt, own, (const uint8_t *)&gw, (const uint8_t *)&dns)
                   == LOWPAN_RA_LEN;
-    if (ok && pairing && csl_broadcasts_queued() == 0 && csl_room_for_broadcasts(2)
-        && pair_take_ra_pair(now_ms)) {
+    if (pairing) {
         /* In a pairing window: the copy under the network key with Frame
          * Pending, then the same under the pairing key, so that the joiner
          * can read one (freedo docs/PROTOCOL.md:667-672). The pool has room
          * for both, so neither enqueue fails. */
-        ok = csl_enqueue_broadcast(
+        ok = ok && pair_take_ra_pair(now_ms)
+             && csl_enqueue_broadcast(
                  pkt, sizeof pkt, ID_RA, CSL_JOB_PAIRING | CSL_JOB_PENDING, CSL_KEY_NETWORK)
              && csl_enqueue_broadcast(pkt, sizeof pkt, ID_RA, CSL_JOB_PAIRING, CSL_KEY_PAIRING);
         if (ok) {

@@ -223,8 +223,12 @@ void pair_note_joiner(uint32_t now_ms) {
     arm(now_ms + PAIR_DPAIR_DELAY_MS);
 }
 
+bool pair_ra_pairs_left(uint32_t now_ms) {
+    return pair_active(now_ms) && w.ra_pairs < PAIR_RA_PAIRS_MAX;
+}
+
 bool pair_take_ra_pair(uint32_t now_ms) {
-    if (!pair_active(now_ms) || w.ra_pairs >= PAIR_RA_PAIRS_MAX) {
+    if (!pair_ra_pairs_left(now_ms)) {
         return false;
     }
     w.ra_pairs++;

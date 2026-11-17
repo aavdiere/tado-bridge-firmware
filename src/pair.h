@@ -156,6 +156,10 @@ size_t pair_build_beacon(uint8_t       out[PAIR_BEACON_LEN],
  * beacon; d/pair becomes due PAIR_DPAIR_DELAY_MS later. */
 void pair_note_joiner(uint32_t now_ms);
 
+/* The window is open and has an advertisement pair left: false once
+ * PAIR_RA_PAIRS_MAX went in this window. */
+bool pair_ra_pairs_left(uint32_t now_ms);
+
 /* Counts one Router Advertisement pair: false once PAIR_RA_PAIRS_MAX went
  * in this window, or if it is closed. */
 bool pair_take_ra_pair(uint32_t now_ms);
