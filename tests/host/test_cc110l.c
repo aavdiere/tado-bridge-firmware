@@ -19,6 +19,7 @@
 
 #define CH10_HZ 865124450ll /* docs/test-bench.md "Channel scan result" */
 #define CH26_HZ 868323668ll /* the protected channel */
+#define MIN_US  60000000u
 
 static const uint8_t own[8]     = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC5, 0x1B, 0x00};
 static const uint8_t device[8]  = {0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xC5, 0x1B, 0x00};
@@ -303,7 +304,7 @@ static void test_chip_changed(void) {
     CHECK(mac_ack_for_data(ackf, up, own, 0));
     CHECK(!cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_REFUSED);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     CHECK_EQ(chip.stx_count, before);
     check_clean();
 }
@@ -348,22 +349,22 @@ static void test_ack(void) {
     CHECK(mac_ack_for_data(ackf, up, own, 0));
 
     /* Nothing prepared: the interrupt sends nothing. */
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
 
     /* Not without a read-back of the frequency registers since the reset. */
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_REFUSED);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
 
     /* The normal case, and at most once. */
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
     CHECK_EQ(chip.stx_count, 0);
     CHECK_EQ(chip.tx_fifo_writes, 0); /* the chip sees nothing before the interrupt */
-    CHECK(cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_SENT);
     CHECK(cc110l_tx_expected());
     model_air(300);
     sent_is(0, ackf, sizeof ackf);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     CHECK_EQ(chip.stx_count, 1);
     delay_us(10000);
 
@@ -372,47 +373,47 @@ static void test_ack(void) {
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, other), CC_TX_REFUSED);
     CHECK_EQ(cc110l_tx_verdict(), TXGATE_NOT_FOR_US);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     uint8_t forged[MAC_ACK_LEN];
     mac_build_enh_ack(forged, other[2], device, another, 0);
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(forged, other), CC_TX_REFUSED);
     CHECK_EQ(cc110l_tx_verdict(), TXGATE_NOT_FOR_US);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     /* The right frame, the wrong answer (another sequence number). */
     mac_build_enh_ack(forged, (uint8_t)(up[2] + 1u), device, own, 0);
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(forged, up), CC_TX_REFUSED);
     CHECK_EQ(cc110l_tx_verdict(), TXGATE_WRONG_ANSWER);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     /* A refused prepare also drops the ACK prepared before it. */
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, other), CC_TX_REFUSED);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
 
     /* One read-back covers one ACK: the next prepare needs its own. */
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_REFUSED);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
 
     /* Cancelled. */
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
     cc110l_ack_cancel();
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
 
     /* The read-back is from another frame's reception: too old. */
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
     delay_us(50001);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
     delay_us(49000);
-    CHECK(cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_SENT);
     model_air(300);
     CHECK_EQ(chip.stx_count, 2);
     delay_us(10000);
@@ -423,7 +424,7 @@ static void test_ack(void) {
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
     CHECK_EQ(cc110l_tx_start(w, sizeof w, 0), CC_TX_OK);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     finish_frame();
     CHECK_EQ(chip.stx_count, 3);
 
@@ -435,7 +436,7 @@ static void test_ack(void) {
     CHECK_EQ(cc110l_tx_start(w, sizeof w, 0), CC_TX_OK);
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     CHECK_EQ(chip.frames_cut, 0);
     finish_frame();
     CHECK_EQ(chip.stx_count, 4);
@@ -444,7 +445,7 @@ static void test_ack(void) {
      * frame over it. */
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
-    CHECK(cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_SENT);
     CHECK_EQ(cc110l_tx_start(w, sizeof w, 0), CC_TX_BUSY);
     CHECK_EQ(chip.frames_cut, 0);
     model_air(300);
@@ -460,7 +461,7 @@ static void test_ack(void) {
     unsigned fifo = chip.tx_fifo_writes;
     chip.rxn      = 3;
     chip.lie_once = true;
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     CHECK_EQ(chip.st, M_RX);
     CHECK_EQ(chip.rxn, 3);
     CHECK_EQ(chip.tx_fifo_writes, fifo);
@@ -472,8 +473,141 @@ static void test_ack(void) {
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
     bring_up(TXGATE_TEST_CHANNEL);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     CHECK_EQ(chip.stx_count, 5);
+    check_clean();
+}
+
+/* --- The ACK interrupt fails part way ------------------------------------------------ */
+/* The chip as the interrupt finds it: receiving, with the end of the Data
+ * frame still in the RX FIFO. */
+static void prepared_in_rx(const uint8_t *ackf, const uint8_t *up) {
+    CHECK(cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
+    CHECK_EQ(chip.st, M_RX);
+    chip.rxn = 5;
+}
+
+static void test_ack_failures(void) {
+    uint8_t ackf[MAC_ACK_LEN], up[MAC_FRAME_MAX];
+    CHECK(data_frame(up, own, device, 10) > 0);
+    CHECK(mac_ack_for_data(ackf, up, own, 0));
+    model_init();
+    bring_up(TXGATE_TEST_CHANNEL);
+
+    /* The chip not ready for the first access: nothing reaches it. */
+    prepared_in_rx(ackf, up);
+    unsigned writes = chip.tx_fifo_writes;
+    chip.so_high    = 1;
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
+    CHECK_EQ(chip.st, M_RX);
+    CHECK_EQ(chip.rxn, 5);
+    CHECK_EQ(chip.tx_fifo_writes, writes);
+
+    /* Not ready for the STX access: the interrupt puts the chip back in RX
+     * itself, the ACK out of the TX FIFO, the frame still in the RX FIFO. */
+    prepared_in_rx(ackf, up);
+    chip.so_skip = 1;
+    chip.so_high = 1;
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_FAILED);
+    CHECK_EQ(chip.st, M_RX);
+    CHECK_EQ(chip.txn, 0);
+    CHECK_EQ(chip.rxn, 5);
+    CHECK(!cc110l_tx_expected());
+
+    /* The bus refused for the STX access: the same. */
+    prepared_in_rx(ackf, up);
+    chip.isr_skip   = 1;
+    chip.isr_refuse = 1;
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_FAILED);
+    CHECK_EQ(chip.st, M_RX);
+    CHECK_EQ(chip.txn, 0);
+    CHECK_EQ(chip.rxn, 5);
+
+    /* Neither the STX access nor the one after it: the chip is IDLE with
+     * the ACK in its TX FIFO, and the task is told to re-arm. What the task
+     * then does (tx_abort, flush and re-arm) brings it back to RX empty. */
+    prepared_in_rx(ackf, up);
+    chip.so_skip = 1;
+    chip.so_high = 2;
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_REARM);
+    CHECK_EQ(chip.st, M_IDLE);
+    CHECK_EQ(chip.txn, sizeof ackf + 1u);
+    CHECK(!cc110l_tx_expected());
+    cc110l_tx_abort();
+    CHECK(radio_strobe(CC_SIDLE, NULL));
+    CHECK(radio_strobe(CC_SFRX, NULL));
+    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK_EQ(chip.st, M_RX);
+    CHECK_EQ(chip.txn, 0);
+    CHECK_EQ(chip.rxn, 0);
+
+    /* Bus refused twice in a row (STX and recovery): re-arm too. */
+    prepared_in_rx(ackf, up);
+    chip.isr_skip   = 1;
+    chip.isr_refuse = 2;
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_REARM);
+    CHECK_EQ(chip.st, M_IDLE);
+    cc110l_tx_abort();
+    CHECK(radio_strobe(CC_SFRX, NULL));
+    CHECK(radio_strobe(CC_SRX, NULL));
+
+    /* No STX in any of this, and the next ACK goes out whole. */
+    CHECK_EQ(chip.stx_count, 0);
+    chip.rxn = 0;
+    CHECK(cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_SENT);
+    model_air(300);
+    sent_is(0, ackf, sizeof ackf);
+    check_clean();
+}
+
+/* --- Our own frame on the air, hours later -------------------------------------------- */
+static void test_tx_expected_wrap(void) {
+    uint8_t ackf[MAC_ACK_LEN], up[MAC_FRAME_MAX], v;
+    CHECK(data_frame(up, own, device, 10) > 0);
+    CHECK(mac_ack_for_data(ackf, up, own, 0));
+    model_init();
+    bring_up(TXGATE_TEST_CHANNEL);
+    CHECK(cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_SENT);
+    model_air(300);
+    CHECK(cc110l_tx_expected());
+
+    /* Nobody looks for 40 minutes (a quiet network). The ACK is long over:
+     * a TX state now is not ours and must be flagged. Until 2026-11-17 a
+     * signed end-time compare read "still on the air" from 35.8 minutes. */
+    for (unsigned m = 0; m < 40; m++) {
+        delay_us(MIN_US);
+    }
+    (void)cc110l_take_tx_state_flag();
+    chip.st = M_TX;
+    CHECK(cc110l_read_status(CC_RXBYTES, &v));
+    CHECK(cc110l_take_tx_state_flag());
+    CHECK(!cc110l_tx_expected());
+    chip.st = M_RX;
+
+    /* While an ACK is prepared the task leaves tx_active alone: the
+     * interrupt may start that ACK at any moment. The interrupt itself
+     * clears it. */
+    bring_up(TXGATE_TEST_CHANNEL);
+    CHECK(cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_SENT);
+    model_air(300);
+    delay_us(20000);
+    CHECK(cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
+    CHECK(!cc110l_tx_expected());
+    CHECK(tx_active);
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_SENT);
+    CHECK(cc110l_tx_expected());
+    model_air(300);
+    delay_us(20000);
+    CHECK(!cc110l_tx_expected());
+    CHECK(!tx_active);
     check_clean();
 }
 
@@ -630,7 +764,7 @@ static void refused_no_lock(const uint8_t *f, size_t n, const uint8_t *ackf, con
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_LOCK);
     (void)cc110l_tx_verify_channel(); /* the ACK's read-back, where the chip allows it */
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_NO_LOCK);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     CHECK_EQ(chip.stx_count, stx);
     CHECK_EQ(chip.tx_fifo_writes, writes);
 }
@@ -706,7 +840,7 @@ static void test_calibration(void) {
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
     cc110l_cal_expire();
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     CHECK_EQ(chip.stx_count, 2);
 
     /* Too old: refused once CC_CAL_MAX_AGE_US has passed. */
@@ -821,7 +955,7 @@ static void test_power(void) {
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
     CHECK(!cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_NO_PA);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     chip.patable = RADIO_PA_BRINGUP;
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_PA);
     CHECK(cc110l_set_pa(RADIO_PA_BRINGUP));
@@ -832,7 +966,6 @@ static void test_power(void) {
 }
 
 /* --- Airtime budget (duty cycle) ----------------------------------------------------- */
-#define MIN_US 60000000u
 
 /* Re-calibrate as the radio task does every 5 minutes, and let time pass. */
 static void wait_minutes(unsigned minutes) {
@@ -884,7 +1017,7 @@ static void test_duty(void) {
     bytes = chip.spi_bytes;
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_DUTY);
     CHECK_EQ(chip.spi_bytes, bytes);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
     CHECK_EQ(chip.stx_count, stx);
     CHECK_EQ(chip.tx_fifo_writes, writes);
     CHECK_EQ(chip.st, M_RX);
@@ -903,7 +1036,7 @@ static void test_duty(void) {
     CHECK_EQ(cc110l_airtime_used_us(), 0);
     CHECK(cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
-    CHECK(cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_SENT);
     model_air(300);
     CHECK_EQ(cc110l_airtime_used_us(), AIRTIME_FRAME_US(MAC_ACK_LEN));
     delay_us(10000);
@@ -1081,7 +1214,7 @@ static void test_random(void) {
                 if (rnd() % 4u == 0) {
                     pass_time(rnd() % 100000u);
                 }
-                started = cc110l_ack_fire_from_isr();
+                started = cc110l_ack_fire_from_isr() == CC_ACK_SENT;
                 CHECK(!started || prepared);
                 if (started) {
                     emitted(MAC_ACK_LEN);
@@ -1089,7 +1222,7 @@ static void test_random(void) {
                 break;
             }
             case 7: /* the interrupt with nothing new prepared */
-                CHECK(!cc110l_ack_fire_from_isr());
+                CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
                 break;
             case 8:
                 model_air(rnd() % 200u);
@@ -1149,6 +1282,8 @@ int main(void) {
     test_chip_changed();
     test_frames();
     test_ack();
+    test_ack_failures();
+    test_tx_expected_wrap();
     test_long_and_abort();
     test_guard();
     test_calibration();

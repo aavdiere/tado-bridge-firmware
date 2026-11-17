@@ -68,6 +68,12 @@ static struct {
     bool     dropping;
     bool     lie_once; /* the next status byte reports TX, whatever the state */
 
+    /* Failures to inject: after so_skip more selects, SO stays high (chip
+     * not ready) for the next so_high selects; after isr_skip more
+     * interrupt selects, the next isr_refuse are refused (bus taken). */
+    unsigned so_skip, so_high, isr_skip, isr_refuse;
+    bool     so_stuck; /* this access */
+
     /* What the tests look at. */
     struct model_stx stx[MODEL_MAX_STX];
     unsigned         stx_count;
@@ -269,6 +275,13 @@ static void model_select(void) {
     if (chip.cs_low) {
         chip.misuse++;
     }
+    chip.so_stuck = false;
+    if (chip.so_skip) {
+        chip.so_skip--;
+    } else if (chip.so_high) {
+        chip.so_high--;
+        chip.so_stuck = true;
+    }
     chip.cs_low  = true;
     chip.in_data = false;
     model_now_us += 1u;
@@ -294,6 +307,12 @@ bool spi1_select_from_isr(enum spi1_dev dev) {
     if (chip.cs_low) {
         return false;
     }
+    if (chip.isr_skip) {
+        chip.isr_skip--;
+    } else if (chip.isr_refuse) {
+        chip.isr_refuse--;
+        return false;
+    }
     model_select();
     return true;
 }
@@ -305,7 +324,7 @@ void spi1_deselect_from_isr(enum spi1_dev dev) {
 
 bool spi1_miso_high(void) {
     model_now_us += 1u;
-    return !chip.cs_low; /* CHIP_RDYn: low as soon as the chip is selected */
+    return !chip.cs_low || chip.so_stuck; /* CHIP_RDYn: low once selected, unless injected */
 }
 
 uint8_t spi1_xfer(uint8_t out) {

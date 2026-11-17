@@ -58,7 +58,7 @@ int main(void) {
     CHECK(mac_build_data(&key, up, sizeof up, false, 3, own, device, 1, body, sizeof body) > 0);
     CHECK(mac_ack_for_data(ack_frame, up, own, 0));
     CHECK_EQ(cc110l_ack_prepare(ack_frame, up), CC_TX_DISABLED);
-    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
 
     /* The abort of a failed transmission does not touch the chip either. */
     unsigned bytes = chip.spi_bytes;

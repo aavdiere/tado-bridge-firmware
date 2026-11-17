@@ -190,9 +190,35 @@ static void guard_write(uint8_t addr, uint8_t val) {
     }
 }
 
-/* A transmission of our own is on the air from its STX until tx_until_us. */
+/* The prepared Enhanced ACK, as it goes into the TX FIFO: length byte,
+ * frame. prepared is the hand-over to the GDO2 interrupt: the task writes
+ * buf only while it is false, and only the task sets it. */
+static struct {
+    uint8_t       buf[1u + MAC_ACK_LEN];
+    uint32_t      verified_us; /* the read-back this ACK was prepared on */
+    volatile bool prepared;
+} ack;
+
+/* A transmission of our own is on the air from its STX (tx_start_us) for
+ * tx_len_us. Written by the task (cc110l_tx_start()) and by the GDO2
+ * interrupt (an Enhanced ACK).
+ *
+ * The time is kept as a start and a length, and compared as an unsigned
+ * elapsed time: an end time compared as a signed difference (as until
+ * 2026-11-17) reads "still on the air" from 35.8 to 71.6 minutes after the
+ * frame if nobody looked in between, which in a quiet network nobody does,
+ * and the TX-state watch would then take a stray TX state for ours. The
+ * elapsed time can still wrap after 71.6 minutes; tx_active is cleared once
+ * the frame is over, so that needs no call for 71.6 minutes, and the radio
+ * task calls cc110l_tx_expected() on every loop pass.
+ *
+ * Who may clear tx_active: the interrupt, which nothing preempts here, and
+ * the task only while no ACK is prepared. Only a prepared ACK can make the
+ * interrupt start a transmission, and only the task prepares one, so the
+ * interrupt cannot set tx_active between the task's check and its store.
+ * ack.prepared is read first for that reason. */
 static volatile bool     tx_active;
-static volatile uint32_t tx_until_us;
+static volatile uint32_t tx_start_us, tx_len_us;
 
 /* Airtime of a frame of n bytes: 4 preamble, 4 sync, the length byte and 2
  * CRC bytes around it at 160 us per byte (docs/radio.md "Data frame
@@ -200,15 +226,23 @@ static volatile uint32_t tx_until_us;
  * for the interrupt and task that watch for it. */
 #define TX_MARGIN_US 2000u
 static void tx_expect(size_t n) {
-    tx_until_us = timebase_us() + (uint32_t)(11u + n) * 160u + 75u + TX_MARGIN_US;
+    tx_len_us   = (uint32_t)(11u + n) * 160u + 75u + TX_MARGIN_US;
+    tx_start_us = timebase_us();
     tx_active   = true;
 }
 
 bool cc110l_tx_expected(void) {
-    if (tx_active && (int32_t)(timebase_us() - tx_until_us) >= 0) {
+    bool may_clear = !ack.prepared; /* read before tx_active, see above */
+    if (!tx_active) {
+        return false;
+    }
+    if ((uint32_t)(timebase_us() - tx_start_us) < tx_len_us) {
+        return true;
+    }
+    if (may_clear) {
         tx_active = false;
     }
-    return tx_active;
+    return false;
 }
 
 /* STATE TX (010), FSTXON (011) and TXFIFO_UNDERFLOW (111) can only follow a
@@ -249,14 +283,6 @@ static struct {
     uint8_t  buf[1u + MAC_FRAME_MAX];
     uint16_t total, idx;
 } tx;
-
-/* The prepared Enhanced ACK, the same way. prepared is the hand-over to the
- * GDO2 interrupt: the task writes buf only while it is false. */
-static struct {
-    uint8_t       buf[1u + MAC_ACK_LEN];
-    uint32_t      verified_us; /* the read-back this ACK was prepared on */
-    volatile bool prepared;
-} ack;
 
 static enum txgate_verdict last_verdict = TXGATE_NO_IDENTITY;
 
@@ -823,6 +849,31 @@ void cc110l_ack_cancel(void) {
     ack.prepared = false;
 }
 
+/* From the interrupt, after a failed STX access: the chip is IDLE (the first
+ * access strobed SIDLE) with the ACK in its TX FIFO and the rest of the Data
+ * frame in its RX FIFO. One access: SIDLE (nothing from IDLE; it stops a
+ * state the first access did not see), SFTX (allowed in IDLE, cc110l.txt:
+ * 1499-1502), SRX. The RX FIFO is kept: the task still reads the frame,
+ * and the device, without an ACK, sends it again. Whether the chip did
+ * reach RX the caller has the task check with MARCSTATE: a status byte
+ * cannot tell, since IDLE is "also reported for some transitional states"
+ * on the way to RX (cc110l.txt:1381-1385). */
+static bool rx_back_from_isr(void) {
+    if (!spi1_select_from_isr(SPI1_DEV_RADIO)) {
+        return false;
+    }
+    bool ok = wait_so_low(100);
+    if (ok && state_blocks_flush(more(CC_SIDLE))) {
+        ok = false; /* a transmit state: the task's TX-state watch handles it */
+    }
+    if (ok) {
+        (void)more(CC_SFTX);
+        (void)more(CC_SRX);
+    }
+    spi1_deselect_from_isr(SPI1_DEV_RADIO);
+    return ok;
+}
+
 /* GDO2 interrupt, priority configMAX_SYSCALL_INTERRUPT_PRIORITY: task-level
  * accesses to SPI1 run with it masked (src/spi1.c), so the bus is between
  * two accesses here. No mutex, no logging, bounded waits only.
@@ -832,10 +883,23 @@ void cc110l_ack_cancel(void) {
  * ACK into the TX FIFO. Access 2: STX. IDLE to TX takes 75 us without
  * calibration (MCSM0 FS_AUTOCAL = 0; cc110l.txt Table 5-11), and no clear
  * channel assessment applies from IDLE (cc110l.txt:2253-2262), which an ACK
- * must not wait for. About 35 bytes at 6 MHz: 60-70 us in total [I]. */
-bool cc110l_ack_fire_from_isr(void) {
+ * must not wait for. About 35 bytes at 6 MHz: 60-70 us in total [I].
+ *
+ * Failure points, and the state each one leaves:
+ *   - SO does not go low for access 1: no byte reached the chip, which is
+ *     still receiving. CC_ACK_NONE.
+ *   - The SIDLE status byte shows a transmit state: SRX in the same access
+ *     (as before). CC_ACK_NONE.
+ *   - Access 2 cannot be opened (bus taken, SO high): the chip is IDLE with
+ *     the ACK in its TX FIFO. A third access puts it back in RX at once
+ *     (rx_back_from_isr()): CC_ACK_FAILED; the caller has the radio task
+ *     confirm RX with MARCSTATE. If that access fails too: CC_ACK_REARM,
+ *     the caller wakes the radio task to abort and re-arm right away
+ *     instead of at the next 10 s health check.
+ * Every path that fails keeps tx_active false: the chip did not transmit. */
+enum cc110l_ack_fire cc110l_ack_fire_from_isr(void) {
     if (!RADIO_TX_ALLOWED || !ack.prepared) {
-        return false;
+        return CC_ACK_NONE;
     }
     ack.prepared          = false; /* at most once */
     struct txgate_radio r = shadow_radio();
@@ -845,43 +909,49 @@ bool cc110l_ack_fire_from_isr(void) {
     if (!shadow_full || !pa_ok || cc110l_tx_expected() || !cc110l_cal_ok()
         || (uint32_t)(timebase_us() - ack.verified_us) > ACK_VERIFY_MAX_US
         || txgate_check_channel(&r) != TXGATE_OK) {
-        return false;
+        return CC_ACK_NONE;
     }
     if (!spi1_select_from_isr(SPI1_DEV_RADIO)) {
-        return false;
+        return CC_ACK_NONE;
     }
-    bool permit_before = tx_permit;
-    tx_permit          = true;
+    bool                 permit_before = tx_permit;
+    enum cc110l_ack_fire res           = CC_ACK_NONE;
+    tx_permit                          = true;
     /* CHIP_RDYn: SO is low at once unless the chip sleeps (cc110l.txt:
      * 1297-1299), which it never does here. */
-    bool ok = wait_so_low(100);
-    if (ok && state_blocks_flush(more(CC_SIDLE))) {
+    if (!wait_so_low(100)) {
+        spi1_deselect_from_isr(SPI1_DEV_RADIO);
+        goto out;
+    }
+    if (state_blocks_flush(more(CC_SIDLE))) {
         /* No ACK. If the status byte was wrong about the state (it can
          * read corrupt, cc110l.txt:1994-1996) the chip was receiving and is
          * IDLE now: SRX puts it back, with the frame still in the RX FIFO.
          * From a real transmit state the SRX is dropped, and the TX-state
          * watch of the radio task deals with it. */
         (void)more(CC_SRX);
-        ok = false;
+        spi1_deselect_from_isr(SPI1_DEV_RADIO);
+        goto out;
     }
-    if (ok) {
-        (void)more(CC_SFTX);
-        (void)more(0x3F | HDR_BURST);
-        for (size_t i = 0; i < sizeof ack.buf; i++) {
-            (void)spi1_xfer(ack.buf[i]);
-        }
+    (void)more(CC_SFTX);
+    (void)more(0x3F | HDR_BURST);
+    for (size_t i = 0; i < sizeof ack.buf; i++) {
+        (void)spi1_xfer(ack.buf[i]);
     }
     spi1_deselect_from_isr(SPI1_DEV_RADIO);
-    if (ok && spi1_select_from_isr(SPI1_DEV_RADIO)) {
-        ok = wait_so_low(100);
-        if (ok) {
+
+    if (spi1_select_from_isr(SPI1_DEV_RADIO)) {
+        if (wait_so_low(100)) {
             tx_expect(MAC_ACK_LEN);
             (void)more(CC_STX);
+            spi1_deselect_from_isr(SPI1_DEV_RADIO);
+            res = CC_ACK_SENT;
+            goto out;
         }
         spi1_deselect_from_isr(SPI1_DEV_RADIO);
-    } else {
-        ok = false;
     }
+    res = rx_back_from_isr() ? CC_ACK_FAILED : CC_ACK_REARM;
+out:
     tx_permit = permit_before;
-    return ok;
+    return res;
 }

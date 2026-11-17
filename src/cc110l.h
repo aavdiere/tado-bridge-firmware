@@ -265,9 +265,20 @@ bool cc110l_tx_expected(void);
  *   registers (cc110l_tx_verify_channel()) since the last frame or ACK;
  * - fire, from the GDO2 interrupt when the chip reports the frame complete
  *   with a good CRC: SIDLE, SFTX, the prepared bytes into the TX FIFO, STX.
+ *   If the STX cannot be sent after the chip has been made IDLE, the
+ *   interrupt puts it back in RX itself (CC_ACK_FAILED), or reports
+ *   CC_ACK_REARM if it cannot.
  * cancel drops a prepared ACK. Each prepared ACK is sent at most once. */
 enum cc110l_tx_result cc110l_ack_prepare(const uint8_t ack[29], const uint8_t answered[16]);
 void                  cc110l_ack_cancel(void);
-bool                  cc110l_ack_fire_from_isr(void);
+
+/* Result of the interrupt's attempt. */
+enum cc110l_ack_fire {
+    CC_ACK_NONE,   /* nothing prepared or allowed, or no byte reached the chip: still receiving */
+    CC_ACK_SENT,   /* STX strobed */
+    CC_ACK_FAILED, /* STX could not be sent; SRX strobed again: the task confirms RX */
+    CC_ACK_REARM,  /* the chip may be IDLE: the radio task must abort and re-arm at once */
+};
+enum cc110l_ack_fire cc110l_ack_fire_from_isr(void);
 
 #endif

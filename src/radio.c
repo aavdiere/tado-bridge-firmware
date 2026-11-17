@@ -200,6 +200,11 @@ _Static_assert(FXOSC_HZ * 8u * 16u / (1u << 17) == 25390u, "deviation 25.39 kHz"
 #define NOTE_STORM (1u << 3)
 #define NOTE_SYNC  (1u << 4)
 #define NOTE_LINK  (1u << 5) /* the net task queued a message for a device */
+/* The ACK interrupt could not strobe STX after making the chip IDLE (see
+ * cc110l_ack_fire_from_isr()): CHECK, it strobed SRX again, confirm RX;
+ * REARM, it could not, abort and re-arm now. */
+#define NOTE_ACK_CHECK (1u << 6)
+#define NOTE_ACK_REARM (1u << 7)
 
 /* FreeRTOS FromISR calls need a numeric priority >= 5 (FreeRTOSConfig.h,
  * configMAX_SYSCALL_INTERRUPT_PRIORITY = 0x50). */
@@ -261,8 +266,9 @@ static volatile uint32_t gdo0_edges;
  * enough to be misread either, since the next sync needs a preamble first. */
 /* Time of the last falling GDO0 edge: the end of the last packet. */
 static volatile uint32_t gdo0_fall_us;
-/* Enhanced ACKs sent by the interrupt below. */
-static volatile uint32_t acks_fired;
+/* Enhanced ACKs sent by the interrupt below, and attempts that failed after
+ * the chip had been made IDLE. */
+static volatile uint32_t acks_fired, acks_failed;
 
 void exti0_isr(void) {
     exti_reset_request(EXTI0);
@@ -283,10 +289,23 @@ void exti0_isr(void) {
  * that can block here. */
 void exti1_isr(void) {
     exti_reset_request(EXTI1);
-    if (cc110l_ack_fire_from_isr()) {
-        acks_fired++;
+    uint32_t note = NOTE_CRCOK;
+    switch (cc110l_ack_fire_from_isr()) {
+        case CC_ACK_SENT:
+            acks_fired++;
+            break;
+        case CC_ACK_FAILED:
+            acks_failed++;
+            note |= NOTE_ACK_CHECK;
+            break;
+        case CC_ACK_REARM:
+            acks_failed++;
+            note |= NOTE_ACK_REARM;
+            break;
+        case CC_ACK_NONE:
+            break;
     }
-    gdo_edge_from_isr(NOTE_CRCOK);
+    gdo_edge_from_isr(note);
 }
 
 static void gdo_irq_enable(bool on) {
@@ -360,6 +379,7 @@ struct counters {
     uint32_t ack_prepared, ack_sent, ack_late, tx_frames, tx_fail, tx_refused;
     uint32_t tx_no_lock;        /* of tx_refused: no calibration with PLL lock */
     uint32_t tx_duty, ack_duty; /* refused: the hour's airtime budget is spent */
+    uint32_t ack_rearm;         /* the ACK interrupt failed and the task re-armed RX */
 };
 static struct counters minute, total;
 
@@ -1237,11 +1257,14 @@ static void log_minute(void) {
         (unsigned long)minute.tx_fail,
         (unsigned long)minute.tx_refused,
         (unsigned long)minute.tx_no_lock);
-    LOG("link: airtime last hour %lu ms of %lu ms; 60 s: refused for airtime %lu frames, %lu acks",
+    LOG("link: airtime last hour %lu ms of %lu ms; 60 s: refused for airtime %lu frames, %lu acks; "
+        "acks failed %lu (re-armed %lu)",
         (unsigned long)(cc110l_airtime_used_us() / 1000u),
         (unsigned long)(AIRTIME_BUDGET_US / 1000u),
         (unsigned long)minute.tx_duty,
-        (unsigned long)minute.ack_duty);
+        (unsigned long)minute.ack_duty,
+        (unsigned long)acks_failed,
+        (unsigned long)minute.ack_rearm);
     LOG("link: totals: to server %lu, dup %lu, mic fail %lu, dropped %lu, downlinks %lu refused "
         "%lu, RA %lu",
         (unsigned long)ls->rx[LINK_RX_FORWARDED],
@@ -1520,6 +1543,22 @@ void radio_task_run(void) {
             }
         }
 
+        /* The ACK interrupt failed after it had made the chip IDLE: back to
+         * RX now, not at the next health check. CHECK: the interrupt strobed
+         * SRX and kept the RX FIFO, so the frame can still be read if the
+         * chip is receiving; otherwise, and on REARM, abort (SIDLE, SFTX)
+         * and flush and re-arm (SIDLE, SFRX, SRX), which drops the frame;
+         * its device sends it again. */
+        if (bits & (NOTE_ACK_CHECK | NOTE_ACK_REARM)) {
+            if ((bits & NOTE_ACK_REARM) || !wait_marcstate(CC_MARC_RX, 1000)) {
+                COUNT(ack_rearm);
+                cc110l_tx_abort();
+                if (!rx_flush_and_arm() || !wait_marcstate(CC_MARC_RX, 2000)) {
+                    radio_reinit();
+                }
+            }
+        }
+
         if (bits & NOTE_SYNC) {
             rx.in_packet = true;
             rx.sync_us   = timebase_us();
@@ -1562,6 +1601,10 @@ void radio_task_run(void) {
                 log_minute();
             }
         }
+
+        /* Retire a frame of ours that is over, so its airtime never looks
+         * current again after the 32-bit clock wraps (src/cc110l.c). */
+        (void)cc110l_tx_expected();
 
         /* Last radio access of every pass: a TX state that is not ours,
          * caused by any access above, is stopped now, not one pass later. */
