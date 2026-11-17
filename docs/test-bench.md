@@ -181,7 +181,7 @@ First over-the-air transmission of the bridge (#11, P5). Captures stay in `~/ib0
 
 ## Pairing test (#19), plan [I]
 
-Not run yet. The code is in `radio-runtime.md`, "Pairing (#19)". Gates before the image goes onto the bench bridge: a `fw-reviewer` "safe to flash" verdict on the pairing code (rule 4), then a local image whose target is never committed:
+Run on 2026-11-17; see "Pairing test (#19) result" below. The code is in `radio-runtime.md`, "Pairing (#19)". Gates before the image goes onto the bench bridge: a `fw-reviewer` "safe to flash" verdict on the pairing code (rule 4), then a local image whose target is never committed:
 
 1. `config/local.cmake` (gitignored): `PAIR_TARGET_EUI64` = the spare device's EUI-64, in the order of `BRIDGE_EUI64` (`00 1b c5` first; the source address of its Beacon Requests in `~/ib01-captures/spare/`, read backwards). CMake refuses any other prefix and the bridge's own EUI-64.
 2. The transmitter is built in by default since 2026-11-17 (`RADIO_TX_ALLOWED`, CMake option, default 1; owner decision, `README.md`, "Project decisions"); nothing to edit. Check that the boot log's first line says `TRANSMIT image (RADIO_TX_ALLOWED 1)` and the second `pairing for the device named in the build only`. (Until 2026-11-17 this step was editing `RADIO_TX_ALLOWED` to 1 in `src/cc110l.h`, locally only, as for the first transmit test.)
@@ -237,6 +237,61 @@ python3 -I tools/sdr/demod.py --fc 867923670 --channels 26 --file ~/ib01-capture
 ```
 
 The gap is the summary line `beacon-req end -> enh-beacon preamble start, us` (expect 3.8-4.1 ms, accept 2.4-7.4 ms; `--channels 16` alone, so that request and beacon are consecutive in the frame list). A request and its beacon never straddle two A stretches, since a hop needs 5 s without a burst. File times map to stream and host time through `run.segments.csv`. For a capture without hopping, `rtl_sdr -f 865924158 -s 2400000 -g 19.7 <file>` and the same `demod.py` line: `-f` and `--fc` must be equal, and `--channels` belongs to `demod.py`, not to `rtl_sdr`.
+
+## Pairing test (#19) result (2026-11-17) [V]
+
+The spare device paired with the bench bridge on channel 16 and stayed in the test network. Image: the local pairing build (`RADIO_TX_ALLOWED` 1, the spare device named in `config/local.cmake`, nothing committed). The flash held no network record, so the button created one on channel 16 (`~/ib01-captures/pair16/rtt.log:34-37`). Analysis was offline afterwards; the bridge and the ST-Link were not touched for it.
+
+**Method.** `hopcap.py` as above, 900 s, gain 19.7 dB. A was on air 740.8 s (82.3 %), B 141.8 s (15.8 %), and 150 retunes lost 1.9 %. During the 600 s window, A covered 82.7 % and B 15.4 %. Decoders: `demod.py` (the commands above, plus channels 10-15, 17 and 18 on A and 20-25, 27 and 28 on B), `burstscan.py` on both files, and the new `tools/sdr/hoplist.py`, which maps file times to stream and host time through `run.segments.csv`. The mapping is exact in samples. Host time comes from hopcap's START line and is good to a few ms; the bridge's RTT lines come 18-105 ms after each frame's end. Frame times are `demod.py` sync fits at 600 kS/s (1.667 us per sample, 12 per bit), good to well under 1 us ("Demodulator", accuracy). Burst times are good to one 427 us row. Senders are named by role here; no address is recorded. Stream times are seconds from hopcap's start, at 21:42:20.
+
+**Exchange on channel 16, all on A:**
+
+| Stream s | On air | Source |
+| --: | :--- | :--- |
+| 78.69 | Window opens (no frame) | `rtt.log:37` |
+| 79.76-81.81 | Two 1 s trains, then Router Advertisement `59 e8` seq 00 and `49 e8` seq 01, 108 bytes each: pair 1, sent 1.07 s after the window opened | `rtt.log:40-41` |
+| 85.1610 | Beacon Request from the spare device, 27 bytes. Its request 8.0 s earlier fell in a B visit, came before the window, and was seen folded onto B's channel 28 | `rtt.log:31,43` |
+| 85.1712 | **Enhanced Beacon** seq 02, 32 bytes | `rtt.log:42` |
+| 87.8395 | Spare: broadcast `49 e8`, 52 bytes, 2.678 s after the beacon (its Router Solicitation under the pairing key) | `rtt.log:45` |
+| 89.76-92.84 | Three 1 s trains: Router Advertisement `59 e8` seq 03, `49 e8` seq 04, then **`d/pair`** (Data seq 05, 82 bytes, train to the spare's short address) | `rtt.log:60-62` |
+| 92.8353 | Spare's Enhanced ACK to seq 05 | `rtt.log:63` |
+| 94.2149 | Spare: Data, 45 bytes, under the network key: **its 2.04**, 1.38 s after its ACK; the bridge ACKs it | `rtt.log:64` (`PAIRED`) |
+| 95.46-890.16 | Spare: 22 more Data frames, 91 bytes each, all ACKed | `rtt.log` `to server, acked` |
+| 463.56-464.58 | One train, then a lone `49 e8` seq 06: the periodic advertisement (`RA 3`) | `rtt.log:192,215` |
+| 473.95-511.18 | Two stock devices send 10 Beacon Requests: 8 seen on A, 2 during B visits. None was answered | `rtt.log:195-223,237` |
+
+**Results:**
+
+| Item | Result |
+| :--- | :--- |
+| Beacon answer (#28) | The request's end to the beacon's preamble start took **4057.1 us** (envelope to envelope 4030.0 us), inside 2.4-7.4 ms: 1.66 ms after the earliest start and 3.34 ms before the latest. The RTT says STX 3919 us after the GDO0 stamp, with the preamble estimated at 3994 us (`rtt.log:42`). The air shows 63 us more than that estimate, so 138 us pass from the STX time to the preamble: 75 us IDLE to TX plus the GDO0 fall and stamp latency **[I]** for the split. n=1, because the spare device took the first beacon |
+| Beacons | 1 sent, to the target. The 10 requests from stock devices during the window went unanswered: no other Enhanced Beacon on 16, and the RTT counts `beacons sent 1` against `from others 10` |
+| Advertisement pairs | 2 pairs, each `59 e8` then `49 e8`, with consecutive seq (00/01, 03/04) and each behind its own train. Afterwards one lone `49 e8`. The RTT counts `RA pairs 2`, `RA 3` |
+| `d/pair` | Sent on the first attempt, 4.98 s after the Router Solicitation, against the 3 s in the design: it waited behind the advertisement pair the solicitation asked for (two 1.02 s trains). The spare's ACK came after **375.1 us**; stock devices took 350-393 us in this run (n=15) |
+| Enhanced ACK (#16, 17d) | Bridge: Data end to ACK preamble start **226.0 us** median, 225.3-239.3 us, std 2.8 us, n=24. 22 of the 24 fall within 225.3-226.2 us; the other two took 231.2 and 239.3 us **[I]** (the interrupt waited for an SPI1 access). The estimate was 0.15-0.3 ms. In the same run the stock coordinator took 1507-1978 us (n=22). The RTT counts acks prepared 24, sent 24, too late 0, failed 0, and stale stays 0 in every minute log |
+| Count | The RTT counts 1495 tx frames (499 + 747 + 249, `rtt.log:49,77,212`) and 24 ACKs inside the capture. Channel 16 shows 1488 wake-ups (6 trains of 248), the 6 frames after them, the beacon and 24 ACKs: **1519 of 1519 transmissions decoded on channel 16** |
+| The 747 tx frames (`rtt.log:77`) | 3 × (248 wake-ups + 1 frame): the second advertisement pair and `d/pair`, each behind a 1 s CSL train, not a fault. A train has 248 wake-ups at a step of 4047.6 us (std 8.2 us), rendezvous 3125 counting down to 0, and spans 1.0035 s. The frame follows 0.41-0.43 ms after the last wake-up. From the first preamble to the frame's end a train holds the channel for 1.0230 s (1.0189 s for `d/pair`); the radio is keyed for 248 × 3.681 ms + the frame = 0.93 s of that. The stock coordinator's step on 26 is 3970 us median |
+| Airtime | The driver charged 962 ms per advertisement train, 958 ms for `d/pair`, 7.0 ms for the beacon and 6.5 ms per ACK. That gives 1931 ms and 2910 ms in the first two minutes (`rtt.log:50,78`), and 5934 ms in the last hour at the end (`rtt.log:361`), 20 % of the 30 s budget |
+| Offset (#7) | Bridge against the dongle: **+5.75 ppm** median at 866.3242 MHz. Over 15 min it ranged +4.86 to +5.88 ppm: it fell by 0.9 ppm in the first 9 min and recovered 0.2. The stock coordinator measured +5.25 to +6.09 ppm on 26 against the same dongle. Paired within 30 s, **bridge minus coordinator is -0.12 ppm** median (-0.44 to +0.01, 24 points); the first transmit test gave +0.6 ppm. The bridge sits 7.8 ppm below the spare device (-6730 Hz, each ACK against the Data frame it answers) and 1-8 ppm below the stock devices on 26. Its bit rate, +6.2 ppm (frames of 40 bytes or more, n=6), agrees with its carrier; the stock coordinator's does not (-31 ppm bit rate against +5.35 ppm carrier). Two stock devices heard on both 16 and 26 agree within 0.17 ppm, so the two views compare. **[I]** No per-unit trim is needed |
+| Level | Bridge -0.4 dBFS median (frames -0.8 to +0.3) with PATABLE 0x26 (-10 dBm nominal): the ADC's limit, with up to 22 % of samples clipped in hopcap's rows of its first trains. So the figure is only a lower bound. The spare device clipped too (-1.2 dBFS median, up to 47 % clipped). On channel 12, the IQ image of the trains gave CRC-failed sync hits at -50 dBFS. For the next run, lower the gain (about 10 dB) or move the dongle away |
+| Channel 26 (B, 141.8 s: 15.8 % of the run, 15.4 % of the window) | 742 sync hits, 734 CRC OK. The stock coordinator sent 609 of them: 571 wake-ups to 4 destinations, steps 3965-3981 us, -22 to -25 dBFS, and 38 Data and ACK frames with a -31 ppm bit rate. Five stock devices sent 121 and the spare device 4 (see below). Of the 8 CRC failures, 6 are noise sync hits at -58 dBFS and 2 are damaged coordinator wake-ups. **No frame has the bridge's address as source or destination, and no train has the bridge's step (4048 us) or level (0 dBFS).** By carrier offset alone the bridge cannot be told from the coordinator: it would sit at +4.3 to +5.1 kHz on 26, the coordinator at +4.6 to +5.1 kHz. Bit rate, step and address tell them apart |
+| `burstscan.py` B | No narrowband tone. Channel 26: 227 bursts, 223 decoded frames and 4 others. The 4 are a collision tail at the coordinator's ACK (stream 21.90 s), a decoded device exchange (321.88 s), and two retune-edge fragments (567.12 and 870.89 s); the bridge sent nothing at any of those times. Others: the channel-27 neighbour (-31 kHz, 70 kHz rate), a 20 ms event at a 100 kHz rate on 29, and a 6.4 ms wideband impulse on 19-24 and 29 (77.16 s). None is tado |
+| Off channel 16 (A 10-18, B 20-28) | 13 CRC-OK frames, all Beacon Requests: the spare device's on 11, its requests on 6 and 16 seen as 2.4 MHz folds (A channel 18 = channel 6, B channel 28 = channel 16), and two stock devices' on 11 and 21. None is the bridge's |
+| `burstscan.py` A | No narrowband tone. Channel 16: 53 bursts, 42 decoded and 1 spill-over. The 10 others are the spare's channel-21 request folded in (78.17 s, +20 dB) and wideband 0.43 ms impulses (30.85, 66.84, 69.84 and 72.84 s), all before the window, when the bridge sent nothing. Channels 9-15: the spare's folded channel-6 and channel-21 requests (75.15, 78.17 and 83.14 s), the same impulses, and weak multi-pulse events on 9 at 477-512 s while the stock devices scanned. Channels 17-19: 891 bursts of about 20 ms, 200 kHz wide, at a 213 kHz rate, from the start of the capture: the non-tado users near 867.1 MHz from the baseline. Everything else is spill-over, mostly from the bridge's full-scale trains |
+| Server (28b) | Each of the spare's 91-byte uplinks reached tanoclo within 90 ms and was dropped there with `AUTH REJECTED: Device ... is not a known device in standalone mode` (`docker logs tanoclo-ws`; `tanoclo/ws-server/lib/handlers.js:229-232`, no answer sent). The bridge relayed them (`to server`, dup 0) and received `downlinks 0`. The device retries with a doubling back-off: about 11, 22, 44, 89 s, then over again |
+| Bridge health | Radio stack: 550 of 896 words never used, so the window with network creation used at most 346 words (1.4 KB), below the 1.9 KB estimate. Heap minimum 7960 bytes. Periodic calibration took 1 try, PLL locked (`rtt.log:125,240`) |
+
+**Verdict.** Nothing of ours appeared on channel 26 or off channel 16. Two independent checks back this:
+1. Every transmission the bridge's driver counted (1495 frames, 24 ACKs) was decoded on channel 16 at the time its RTT line gives. `STX` is strobed in two places only, both counted (`radio-runtime.md`, "Transmit guard"). This check covers the whole run.
+2. The SDR's own check covers less. Channel 26 was watched for 15.8 % of the run (15.4 % of the window), and in that time held only stock frames and the spare device's broadcasts. Channels 9-19 were watched for 82.3 %, and every burst there off channel 16 is explained as above.
+
+No B visit overlapped a transmission of the bridge, since A is held while channel 16 is busy. So the SDR could not have seen a copy of one of our frames on 26, only stray emissions.
+
+**Unexpected.**
+- **The spare device itself transmitted on channel 26** before the window opened: 4 broadcasts of 52 bytes (`49 e8`), at full scale, at stream 9.8-54.8 s, 12 s apart in the B visits, in between its Beacon Requests on 6, 11, 16 and 21. That is its own search for a network (the same length as its Router Solicitation on 16), not caused by the bridge. In B's coverage it sent nothing on 26 after it paired. The two stock devices that scan sent the same 52-byte broadcasts on 26.
+- `d/pair` came 2 s later than designed (see above); the device accepted it.
+- The bridge's ACK, at 226 us, is faster than the stock devices' (375 us) and far faster than the stock coordinator's (1.5-2.0 ms). The device accepted all 24 at first try (dup 0).
+- The wake-up step is 4047.6 us; stock uses 3.94-3.99 or 4.40-4.45 ms. Every train was delivered on its first attempt.
 
 ## Bench network
 
