@@ -137,7 +137,7 @@ Channel 26, receive-only, 300 s capture plus 10 s and 30 s runs, `demod.py` as a
 **What this means [I]:**
 - **#16:** the stock coordinator starts its Enhanced ACK 1.5-2.0 ms after the Data frame ends, and devices accept that. The "well under 1 ms" target in `radio.md` is stricter than stock; matching stock is enough. Devices answer in about 0.37 ms.
 - **#7:** the coordinator's bit clock runs about 37 ppm slower than its carrier offset implies, while every device's two figures agree. The likeliest reading: the coordinator's crystal is far off (about -42 ppm against the devices' average bit clock), and its RF is pulled back to within about 6 ppm of the devices by a frequency trim that stock applies after the logged init, which writes `FSCTRL0=0` (`radio.md`, register table; freedo's trim: `freedo/docs/PROTOCOL.md:1670-1718`). Alternatively the coordinator does not use the logged FREQ or data-rate values. Either way a per-unit trim is probably needed on the IB01. The bench unit's own crystal is still to be measured, from our first transmissions on channel 10 (P5) with this tool.
-- `tools/sdr/hopcap.py`: one RTL-SDR at 2.4 MS/s alternating between A 864.724 MHz (channels 3-13) and B 867.924 MHz (channels 19-29), with automatic disarm on unexpected bursts (`81972b7`). Used for transmit tests; its safety stop can false-alarm on strong stock frames (see "First transmit test").
+- `tools/sdr/hopcap.py`: one RTL-SDR at 2.4 MS/s alternating between two views. For the first transmit test (`81972b7`): A 864.724 MHz (channels 3-13) and B 867.924 MHz (channels 19-29), hop after each channel-10 frame, an arm word written over SWD and automatic disarm on unexpected bursts; that safety stop false-alarmed on a strong stock frame (see "First transmit test"). Since 2026-11-17, for the pairing test on channel 16: A 865.924158 MHz (channels 9-19), B 867.923670 MHz (channels 19-29), A held while channel 16 is busy, no memory write; see "Pairing test (#19), plan".
 
 ## P2 receive-only image on air (2026-11-11/12) [V]
 
@@ -185,10 +185,58 @@ Not run yet. The code is in `radio-runtime.md`, "Pairing (#19)". Gates before th
 
 1. `config/local.cmake` (gitignored): `PAIR_TARGET_EUI64` = the spare device's EUI-64, in the order of `BRIDGE_EUI64` (`00 1b c5` first; the source address of its Beacon Requests in `~/ib01-captures/spare/`, read backwards). CMake refuses any other prefix and the bridge's own EUI-64.
 2. `RADIO_TX_ALLOWED` 1 in `src/cc110l.h`, locally only, as for the first transmit test.
-3. SDR before arming (`rf-bench`): channel 16 quiet, channel 26 baseline. `hopcap.py` is still built around channel 10 (centre A 864.724451 MHz, channels 3-13, and its channel-10 burst rules); retune it for channel 16 before the test (owner decision 2026-11-17, test channel 16).
+3. SDR before arming (`rf-bench`): channel 16 quiet, channel 26 baseline. Done 2026-11-17 for channel 16 ("Step 3 baseline, channel 16" below). `hopcap.py` is retuned for channel 16 (owner decision 2026-11-17, test channel 16); commands below.
 4. Owner: hold the bridge's pair button for 1 s, then put the spare device into pairing mode (the window lasts 10 minutes, the device's own about 2). The pairing LED (PB8) flashes while the window waits, is lit while the spare device is pairing (from the beacon until its 2.04, a failure or 30 s without progress), flashes again afterwards, and goes off when the window closes after 10 minutes; a pairing does not close it (owner spec 2026-11-17). The first network is created at that moment if the flash holds none (this erases the stock configuration sector at `0x102000`, owner decision 2026-11-17).
-5. Read: RTT `pair:` lines (beacon STX time, window closed, `PAIRED`), the minute counters; SDR: request-to-beacon gap (2.4-7.4 ms), the advertisement pairs (`59 e8` then `49 e8`), `d/pair` and the device's 2.04, nothing on channel 26.
+5. Read: RTT `pair:` lines (beacon STX time, window closed, `PAIRED`), the minute counters; SDR: request-to-beacon gap (2.4-7.4 ms), the advertisement pairs (`59 e8` then `49 e8`), `d/pair` and the device's 2.04, nothing on channel 26. Stock devices also send Beacon Requests on channel 16 (baseline below): every Enhanced Beacon must follow a request from the spare device, none a stock device's.
 6. Optional, scope: PB8 against GDO0 (`radio-runtime.md`, "Measuring it").
+
+**Step 3 baseline, channel 16 (2026-11-17, 21:17-21:31) [V].** Receive-only, the bridge and the ST-Link not touched. `rtl_sdr` at 2.4 MS/s, tuner gain 19.7 dB: 62 s at fc 865.924158 MHz (channels 9-19; 21:17:54-21:18:57), 32 s at fc 867.923670 MHz (channels 19-29; 21:18:57-21:19:30), then 120 s more at 865.924158 MHz (21:28:36-21:30:36) and a 45 s `hopcap.py` dry run (21:27). `demod.py` on 10-18 and 20-28, `burstscan.py` on all (427 us rows, bursts >10 dB over the channel median within +-70 kHz). Times from `demod.py` sync fits are good to well under 1 us; burst times to one 427 us row. Captures in `~/ib01-captures/pairing-baseline16/`. No address is recorded here; senders are told apart by a hash of their source address.
+
+| Item | Result |
+| :--- | :--- |
+| Noise floor, +-70 kHz | Channel 16 median -54.9 dBFS (10-90 % -55.9 to -53.9); channel 26 -54.8 dBFS; channels 9-29 -54.0 to -55.8 dBFS. No narrowband tone >6 dB over the floor at either fc |
+| Channel 16, first 62 s | 15 bursts, busy 0.15 %, all explained: 5 CRC-OK Beacon Requests from the spare device (below), 5 spill-over of its requests on channel 11 (+17 dB on channel 16), 5 its request on channel 21 folded in from beyond the view's edge (+16 to +17 dB on 16; decoded from the fold at -39.9 dBFS, CRC OK, same offset). No other transmitter, no Enhanced Beacon |
+| Channel 16, 120 s more | 4 CRC-OK Beacon Requests from **two stock devices** (2 each, -28 and -14 dBFS, +6.0 and +12.4 kHz), each 1.008 s after the same device's request on channel 11, all in the first 15 s; the same two devices that scanned at 20:22 (channel-10 baseline below). A short 8 s `hopcap.py` run at 21:28 saw one more (-29.5 dBFS, +6.1 kHz). Nothing else decoded |
+| Spare device on 16 | This run: 5 requests, 21:18:01-21:18:33, 27 bytes, 6.08 ms preamble to CRC, spacing 7.99998-8.00004 s, each 1.0078 s after its request on channel 11, -4.1 dBFS, SNR 59 dB, offset +11955 to +12233 Hz (mean +12077, std 98, falling during the 32 s), then none in the last 22 s. 2026-11-16 (`~/ib01-captures/spare/pair2`, fc 865.724 MHz): 5 requests, spacing 7.99998-8.00004 s, +10843 to +10872 Hz (mean +10853, std 10), -0.1 to +0.4 dBFS, i.e. at full scale. Offsets are against the uncalibrated dongle (+12.5 and +13.9 ppm); the stock coordinator measured +5.15 and +5.24 kHz at 868.3 MHz today (+5.2 kHz on 2026-11-11), so the dongle did not move and the spare's 1.2 kHz change is its own |
+| Spare device's scan | One channel per 1.0078 s, cycle 8.0 s, 5 cycles (about 40 s) per scan, in both sessions. 1.008 s before each request on 11 a weak frame folds into the view with the spare's offset (+12.2 kHz) but a failed CRC: its fold position fits channel 6 or 30, so the order is probably 6, 11, 16, 21, 26 **[I]** |
+| Channel 26 | 409 of 410 sync hits CRC OK in 32 s (wake-up 357, broadcast 34, Enhanced ACK 9, data 9) from 7 senders, busy 6.1 %; every burst a decoded frame or spill-over. Coordinator present (bit rate -32 ppm against its carrier, as before): uplink ACK 1.52-1.89 ms (n=4), device ACKs 332-395 us (n=5). No Beacon Request in this run. The dry run's 7 s on B at 21:27: 63 of 63 CRC OK, coordinator present |
+| Edge of the A view | Channels 17-19: bursts of 10-17 dB, up to 20 ms, about 200 kHz wide, none above 10 dB on 16: probably the non-tado users near 867.1 MHz just outside the view **[I]** |
+
+**What this means [I]:** channel 16 has no user besides tado devices that scan for a network: the spare device and, at times, two stock devices. Our bridge answers only the spare device's EUI-64, so the stock devices' requests must stay unanswered. A spill-over or fold-in of +17 dB on channel 16 is not a frame; `hopcap.py` ignores it for its hold (below), `demod.py` does not decode it. The spare device's level at the dongle varies with its position (full scale on 2026-11-16, -4 dBFS today): if `clip` in `hopcap.py`'s burst lines rises above 0, move it away from the dongle or lower `--gain`.
+
+**Step 3 baseline, channel 10 (2026-11-17, 20:21-20:23) [V], before the test channel moved to 16.** Receive-only, the bridge not touched (TX-off image). `rtl_sdr` at 2.4 MS/s, tuner gain 19.7 dB: 65 s at fc 864.724451 MHz (channels 3-13), then 60 s at fc 867.923670 MHz (channels 19-29). `demod.py` on 4-12 and 20-28 (its usable span), `burstscan.py` on all (256-point Hann FFTs, 4 averaged: 427 us rows, bursts >10 dB over the channel median within +-70 kHz). Captures in `~/ib01-captures/pairing-baseline/`.
+
+| Item | Result |
+| :--- | :--- |
+| Noise floor, +-70 kHz | Channel 10 median -55.1 dBFS (10-90 % -56.1 to -54.1); channel 26 the same, -55.1 dBFS; all channels -54.2 to -55.9 dBFS. No narrowband tone >6 dB over the floor at either fc |
+| Channel 10 | **Quiet:** 0 sync hits with CRC OK (3 noise sync hits), 10 bursts: 9 spill-over from stock Beacon Requests on channel 11 (+42 dB there), 1 of 0.43 ms at +10.3 dB that is a wideband impulse seen on channels 10-13 at the same instant. Below `hopcap.py`'s 12 dB threshold; a 25 s `hopcap.py` dry run saw 0 channel-10 bursts |
+| Channel 26 | 235 CRC-OK frames in 60 s (wake-up 151, broadcast 54, data 14, Enhanced ACK 13, Beacon Request 3) from 8 senders, busy 2.45 %; every burst a decoded frame or spill-over. The stock coordinator is back: 7 wake-up trains, uplink ACK 1.66-1.93 ms after the Data frame, device ACKs 0.36-0.39 ms. Strongest device at +0.8 dBFS: 0.15 % of samples clipped at gain 19.7 dB |
+| Beacon Requests | Two stock devices (not the spare) scanned 3, 6, 11, 21, 26, 29, one channel per 1.008 s, cycle 8.0 s, from about 20:22:11 to 20:22:52; none after. No Enhanced Beacon decoded in reply |
+| Other users | Channel 27 near -33 kHz, 70 kHz transition rate: the known non-tado neighbour ("P2 receive-only image on air") |
+
+**`hopcap.py` during the pairing test (retuned 2026-11-17).** View A at 865.924158 MHz (channel 16 at +400 kHz, channels 9-19), view B at 867.923670 MHz (channel 26 at +400 kHz, channels 19-29). The arm word and `--arm-after` are gone: the address `0x20007990` belonged to the reverted sender image and is ordinary RAM in the pairing image, and the script writes nothing to the bridge. Alerts are only logged (`ALERT`); `--halt-on-alert` adds an OpenOCD `halt` and nothing else. Channel 26 is watched on B only (from A it folds onto the centre frequency), so read the `BURST B ch26` lines and decode the B file afterwards. Hop policy (`tools/sdr/hopcap.py` docstring): A is held while channel 16 is busy, and B is visited only 5.0-5.5 s after the last channel-16 burst, or after 9 s without one, for 2.0 s, so that a visit ends before the spare device's next request 8.0 s on and never falls in the 3 s before `d/pair` or between the trains of an advertisement pair. Rows of spill-over or under +25 dB do not hold A: the +17 dB that the spare's requests on 11 and 21 put on channel 16 otherwise moved the B visit onto its next request. Replayed through the script with the channel-16 capture at five start phases, all 5 requests on channel 16 fell on A; with channel 16 quiet, A gets about 80 % of the time (9 s A, 2.0 s B, 28 ms retune and 80 ms dropped per hop; 76 % measured in the 45 s dry run with an earlier 6 s A setting). The live burst lines are good to one 427 us row.
+
+Pairing test, SDR side (start before the owner holds the pair button; captures stay outside git):
+
+```
+mkdir -p ~/ib01-captures/pair16
+# RTT with a host-time prefix, for hopcap's beacon check (tools/rtt.sh running)
+bash -c 'exec 3<>/dev/tcp/127.0.0.1/19021; cat <&3' | python3 -I -u -c 'import sys, time
+for l in sys.stdin: print("%.3f %s" % (time.time(), l.rstrip()), flush=True)' > ~/ib01-captures/pair16/rtt.log &
+python3 -I tools/sdr/hopcap.py --out ~/ib01-captures/pair16/run --seconds 900 --gain 197 \
+    --rtt-log ~/ib01-captures/pair16/rtt.log | tee ~/ib01-captures/pair16/run.log
+```
+
+900 s covers the 10-minute window plus the start; about 3.2 GB on disk. Afterwards, the request-to-beacon gap (#28) and the exchange on channel 16, then channel 26:
+
+```
+python3 -I tools/sdr/demod.py --fc 865924158 --channels 16 --file ~/ib01-captures/pair16/run.A.cu8 \
+    --redact --summary --csv ~/ib01-captures/pair16/run.A.frames.csv
+python3 -I tools/sdr/demod.py --fc 867923670 --channels 26 --file ~/ib01-captures/pair16/run.B.cu8 \
+    --redact --summary --csv ~/ib01-captures/pair16/run.B.frames.csv
+```
+
+The gap is the summary line `beacon-req end -> enh-beacon preamble start, us` (expect 3.8-4.1 ms, accept 2.4-7.4 ms; `--channels 16` alone, so that request and beacon are consecutive in the frame list). A request and its beacon never straddle two A stretches, since a hop needs 5 s without a burst. File times map to stream and host time through `run.segments.csv`. For a capture without hopping, `rtl_sdr -f 865924158 -s 2400000 -g 19.7 <file>` and the same `demod.py` line: `-f` and `--fc` must be equal, and `--channels` belongs to `demod.py`, not to `rtl_sdr`.
 
 ## Bench network
 
