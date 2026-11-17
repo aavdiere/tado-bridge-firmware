@@ -137,6 +137,7 @@ Channel 26, receive-only, 300 s capture plus 10 s and 30 s runs, `demod.py` as a
 **What this means [I]:**
 - **#16:** the stock coordinator starts its Enhanced ACK 1.5-2.0 ms after the Data frame ends, and devices accept that. The "well under 1 ms" target in `radio.md` is stricter than stock; matching stock is enough. Devices answer in about 0.37 ms.
 - **#7:** the coordinator's bit clock runs about 37 ppm slower than its carrier offset implies, while every device's two figures agree. The likeliest reading: the coordinator's crystal is far off (about -42 ppm against the devices' average bit clock), and its RF is pulled back to within about 6 ppm of the devices by a frequency trim that stock applies after the logged init, which writes `FSCTRL0=0` (`radio.md`, register table; freedo's trim: `freedo/docs/PROTOCOL.md:1670-1718`). Alternatively the coordinator does not use the logged FREQ or data-rate values. Either way a per-unit trim is probably needed on the IB01. The bench unit's own crystal is still to be measured, from our first transmissions on channel 10 (P5) with this tool.
+- `tools/sdr/hopcap.py`: one RTL-SDR at 2.4 MS/s alternating between A 864.724 MHz (channels 3-13) and B 867.924 MHz (channels 19-29), with automatic disarm on unexpected bursts (`81972b7`). Used for transmit tests; its safety stop can false-alarm on strong stock frames (see "First transmit test").
 
 ## P2 receive-only image on air (2026-11-11/12) [V]
 
@@ -151,6 +152,32 @@ Check that the P2 image (CC110L in RX on channel 26, `RADIO_TX_ALLOWED` 0, `docs
 | About 868.48 MHz (channel 27) | Every 6.103 s: a train of 19 pulses (1.97 ms each, every 6.43 ms), then 1.27 s later a short exchange between two transmitters; a weaker train from a second source runs 0.15-0.2 s earlier. 2-FSK with a comb of lines about 35 kHz apart, about 70 kHz transition rate: neither our register table nor tado's PHY. **Not ours:** same period (6.1034 s) and phase with the MCU halted, phase-continuous through the P2 flash and reset, present (looser cadence, same pulse shape) before our firmware, and it keeps going with the bridge unpowered (C: 2397 bursts in the 221 s without power, cadence about 4.9 s). 6.103 s = 200000/32768 s points to a 32.768 kHz timebase, which the bridge does not use |
 
 **Result:** no emission from the bench unit seen with the P2 image running, halted or unpowered. Every remaining burst belongs to other users of the band.
+
+## First transmit test (2026-11-17) [V]
+
+First over-the-air transmission of the bridge (#11, P5). Captures stay in `~/ib01-captures/tx1/`, outside git.
+
+**Setup.** `fw-reviewer` gave "safe to flash" for the TX-off images and for a temporary sender image (`ab6602f`). Its rules: unicast frame control 69 EC only, a made-up locally administered destination, dummy payload and MIC, listen before each frame, at least 5 s apart, at most 60 frames per 5 min, armed only by an SWD magic word. The sender was reverted in `3b4ea7a`; the tree equals `279b71a` again and the TX-off image was flashed and verified afterwards. Before: boot log showed bring-up calibration in 1 try (FSCAL3 ef, FSCAL2 2b, FSCAL1 19, PLL locked), RX on channel 10 (865124449 Hz), PATABLE 26; 60 s logs with airtime 0 of 30000 ms, stale 0, overflow 0, radio stack 376 of 640 words never used (348 on the earlier `88c7894` TX-off run), heap minimum 8976.
+
+**Pre-check.** Channel 10 quiet (0 bursts in 65 s); channel 26 baseline 244 CRC-OK frames in 60 s from 7 senders.
+
+**Run.** 5 frames sent (sequence 00-04, all "sent (ok)", 0 listen-before-transmit skips, 8311 us airtime charged each). The `hopcap.py` safety stop fired at t = 39.96 s on a +45 dB burst on channel 6; offline decoding showed a CRC-OK Beacon Request from a stock device, so it was a false alarm. The sender was disarmed over SWD; the bridge emitted nothing outside channel 10. The SDR decoded sequence 00, 01, 03, 04; 02 fell while the dongle was hopped to B (B showed nothing on 866.7-869.1 MHz then).
+
+| Item | Result |
+| :--- | :--- |
+| Frame | Frame control 69 EC, correct sequence, payload text, CRC OK, 32-bit preamble, 0 sync errors |
+| Deviation | 25.4 kHz |
+| Duration | 8.162 ms preamble to CRC (51 bytes) |
+| Spacing | 4.99994 s, 10.0999 s (two slots), 5.01196 s |
+| Level | -3.9 dBFS, SNR 59.7 dB; about 4 dB below the strongest stock device at the dongle |
+| Channel 26 | Only decoded frames from stock devices, nothing on a 5 s cadence: pass |
+| Offset | +5815 Hz (std 33 Hz, 4 frames) = +6.72 ppm above 865.1245 MHz against the uncalibrated dongle; the stock coordinator measured +6.09 ppm on the same dongle, so the bridge is about +0.6 ppm from the stock coordinator and 3-8 ppm below stock devices |
+
+**[I]** No per-unit trim appears necessary (`FSCTRL0` stays as stock); one unit, 4 frames.
+
+**Observation.** The stock coordinator was last heard at 10:11:30, before the arm at 10:18:16 (the bridge's tx frame count was 0 every minute until then). Afterwards stock devices sent Beacon Requests on channels 3, 6, 11, 21, 26, 29. Not caused by our transmissions; the owner is asked to check the stock bridge (open question 31).
+
+**Duty cycle.** 8311 us per frame; the 1 % basis in 865-868 MHz (30 s per hour budget) is still **[I]**, awaiting owner acceptance.
 
 ## Bench network
 
