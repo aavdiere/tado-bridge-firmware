@@ -64,6 +64,7 @@
 #include "log.h"
 #include "mac.h"
 #include "mx25r.h"
+#include "network.h"
 #include "provision.h"
 #include "rng.h"
 #include "spi1.h"
@@ -1519,7 +1520,7 @@ static void link_start(void) {
     if (memcmp(own + 5, mac_eui_suffix, 3) == 0) {
         link_init(own);
         cc110l_set_identity(own);
-        LOG("link: identity set, no network key yet (network record, #37): not answering");
+        LOG("link: identity set");
         return;
     }
     LOG("link: BRIDGE_EUI64 does not start 00 1b c5; no identity");
@@ -1536,6 +1537,7 @@ void radio_task_run(void) {
     watchdog_checkin(WDG_RADIO);
     flash_boot();
     link_start();
+    network_boot(); /* key and counter reservation from flash, before the radio (#37) */
     gdo_irq_setup();
 
     while (!radio_configure()) {
@@ -1650,6 +1652,7 @@ void radio_task_run(void) {
                 flash_due = false;
                 flash_check();
             }
+            network_service((uint32_t)now);
             if ((int32_t)(now - next_health) >= 0) {
                 next_health = now + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
                 health_check();

@@ -207,6 +207,9 @@ add_executable(${BINARY}
     ../src/cc110l.c
     ../src/airtime.c
     ../src/mx25r.c
+    ../src/store.c
+    ../src/store_port.c
+    ../src/network.c
     ../src/radio.c
     ../src/enc28j60.c
     ../src/net.c

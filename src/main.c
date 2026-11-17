@@ -36,7 +36,7 @@ int main(void) {
     log_init();
     /* Two lines: one log line holds 191 characters (src/log.c). The
      * transmitter state comes from the switch itself, not from this text. */
-    LOG("tado-bridge P5 #17: radio link on channel %u, transmitter %s; flash read-only",
+    LOG("tado-bridge P5 #37: radio link on channel %u, transmitter %s; network from flash",
         RADIO_CHANNEL,
         RADIO_TX_ALLOWED ? "ALLOWED (RADIO_TX_ALLOWED 1, test channel only)"
                          : "switched off (RADIO_TX_ALLOWED 0)");
