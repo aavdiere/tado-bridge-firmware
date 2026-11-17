@@ -1273,8 +1273,9 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
 /* Listen before transmit: "a packet on the air" is a sync word seen at any
  * time during the listen (GDO0 edges), a frame still being read, or a frame
  * of our own (an Enhanced ACK) on the air. The chip's frequency registers
- * are read back here, once per transaction; if they are not what was
- * written, the transaction does not start. */
+ * are read back here as well: if they are not what was written, the
+ * transaction ends as "busy" before its first frame, which the driver
+ * would refuse anyway (it reads them back again for every frame). */
 static uint32_t lbt_edges;
 static bool     lbt_busy;
 

@@ -87,6 +87,8 @@ The commercial bridge uses a random backoff of 0-6 × 640 µs and a 3.97 ms list
 
 ## P2 receive-only implementation (#9) [I]
 
+P5 changes parts of this section: the channel, `IOCFG2`, the receive loop's timing and the transmit guard. See "P5 link implementation" at the end; everything else here still holds.
+
 `src/radio.c` (task logic) and `src/cc110l.c` (register access, transmit guard). Run on the bench unit 2026-11-12 (bench RTT capture, 300 s, 2026-11-12, kept outside the repo); results below, **[V]** unless marked.
 
 - RX on channel 26 = 868323668 Hz. **Earlier image (first P2 run, `FREQEST` read after the packet, before in-packet sampling; the final-image run is in the bench result below).** Five 60 s windows: 285/127/226/242/239 frames, CRC OK 283/126/226/242/238, so **1115 of 1119 CRC OK (99.6%)**. Wake frames 188/62/150/149/149. Overflow 0, bad length 0, stale 0, rearm 0, reinit 0, SPI errors 0, status glitch 0.
@@ -128,3 +130,46 @@ The commercial bridge uses a random backoff of 0-6 × 640 µs and a 3.97 ms list
 The CC110L has no automatic acknowledgement and no wake-on-radio (`datasheets/cc110l-vs-cc1101.md`), so with `STX`, `SFSTXON` and the MCSM1 TX paths refused it has no way to transmit.
 
 **Reset.** CSn low 10 µs, high 50 µs, then `SRES` with `CHIP_RDYn` (SO low) awaited before and after, bounded at 5 ms (`cc110l.txt:2398-2407`). SCLK idles low during this, where the datasheet's power-up sequence sets it high; the chip is already past its automatic power-on reset and `SRES` resets it fully either way [I], as in freedo (`.ino:582-596`). The GDO interrupts stay off from reset until the table is loaded, because `IOCFG0`'s reset value outputs a 135 kHz clock (`cc110l.txt:2894-2896`). `PARTNUM`/`VERSION` are logged; the datasheet gives `00`/`17`, the version "subject to change" (`cc110l.txt:4419-4426`).
+
+## P5 link implementation (#17) [I]
+
+Host-tested, built, **not flashed and not reviewed yet** (2026-11-17). The image cannot transmit: `RADIO_TX_ALLOWED` is 0 (`src/cc110l.h`), and no network key is ever set (`link_set_key()` has no caller until #37 and #19), so no ACK is prepared and nothing is queued for the air.
+
+**Modules.** Hardware-independent and tested on the host: `src/mac.c`, `src/ccm.c`, `src/lowpan.c`, `src/txgate.c`, `src/csl.c`, `src/relay.c`, `src/msgq.c`, `src/link.c`. Hardware side: `src/radio.c` (task, interrupts, the coordinator's `csl_port_*` functions) and `src/cc110l.c` (the only code that can key the transmitter). Net task side: `src/session.c` moves frames between the server and the two static 4 KB queues of `src/link.c`.
+
+**Changes to the P2 radio setup.**
+
+| Item | P2 | P5 | Why |
+| :--- | :--- | :--- | :--- |
+| Channel | 26, receive-only | 10 (`RADIO_CHANNEL`) | The test network's channel (`test-bench.md`); the bridge no longer listens on the stock channel |
+| `IOCFG2` | `00` RX FIFO threshold | `07` packet received with CRC OK (`datasheets/cc110l.txt:2919`) | Its rising edge is the end of a good frame: the interrupt that sends the Enhanced ACK |
+| FIFO pump | On the threshold interrupt, else every 2 or 100 ms | Every tick (1 ms) from the sync edge to the end of the frame, else every 100 ms or sooner if the coordinator needs it | No threshold interrupt any more; 1 ms is 6 bytes of the 64-byte FIFO |
+| Work that can wait (flash ID, health check, minute log) | Any time | Only while no packet is arriving and no transaction holds the air | Nothing may sit between a frame and its ACK |
+
+**Enhanced ACK path.** Differs from the plan in `radio.md`, "ACK prebuild", in two points: the ACK bytes go into the TX FIFO in the interrupt, not during reception, and `STX` is strobed from IDLE, not from RX. From RX, `STX` only works if the channel is clear (`MCSM1` CCA_MODE 3, `datasheets/cc110l.txt:2253-2262`), which right after a packet it may not be; from IDLE no assessment applies.
+
+1. Task, while the Data frame arrives: once its 16 header bytes are out of the FIFO, `ack_consider()` (`src/radio.c`) builds the ACK. Conditions: identity and key set, the frame is a unicast Data frame addressed to our EUI-64, the coordinator is not in a train or ACK window, the uplink queue has room for the largest message, the chip's frequency registers read back as written, the GDO interrupts are on.
+2. Hand-over, with the GDO interrupts masked: `cc110l_ack_prepare()` runs the transmit gate (`src/txgate.c`) on the ACK and the header it answers, and arms it only if no GDO0 edge has come since the frame was seen arriving and GDO0 is still high. So the next CRC-OK edge is that frame's.
+3. Interrupt on the CRC-OK edge (`exti1_isr`, `cc110l_ack_fire_from_isr()`): `SIDLE`, `SFTX`, the 30 bytes, then `STX` in a second access. A new sync edge or the end of frame handling drops an ACK that was not sent.
+
+Latency, estimate only, nothing measured yet: interrupt entry a few µs; about 36 bytes at 6 MHz, 60-80 µs to the `STX`; IDLE to TX 75 µs (`datasheets/cc110l.txt`, Table 5-11). The preamble should start **0.15-0.3 ms** after the CRC-OK edge, against the 0-1 ms target and the 0.35-0.39 ms of stock devices (`test-bench.md`). The interrupt can be held off by one SPI1 access of the radio task, at most a 64-byte FIFO read, about 0.1 ms; the net task's P-256 steps do not mask it. To be measured with `tools/sdr/demod.py` (#18).
+
+**Transmit guard, from the bottom up.** Rules in `src/txgate.h`.
+
+- `guard_header()` in `src/cc110l.c` refuses `STX`, `SFTX` and the TX FIFO except inside the transmit functions, and `SFSTXON`, `SXOFF`, `SPWD`, `PATABLE` and the `MCSM1`/`PKTCTRL0` values that transmit by themselves always (as in P2).
+- `STX` is strobed in two places only: `cc110l_tx_start()` (task) and `cc110l_ack_fire_from_isr()` (interrupt). Both need `RADIO_TX_ALLOWED`, a full register table written since the last reset, and the gate's verdict on the carrier those registers give: at least 999 kHz from channel 26, on the channel plan, channel 10 only.
+- The chip's own frequency registers are read back and compared before every frame the task sends, and before every ACK is prepared; the interrupt refuses an ACK whose read-back is older than 50 ms. A chip that reset holds 800 MHz, not the table.
+- Frame rules: an Enhanced ACK only as the byte-for-byte answer to a unicast Data frame addressed to our EUI-64; other frames only with our source address and of a class a coordinator sends; a beacon only flagged as pairing, on the test channel, as the answer to a Beacon Request.
+- One transmission at a time: a new frame is refused while one of ours is on the air, and the interrupt sends no ACK then.
+- `src/radio.c` sends nothing while the GDO interrupts are off (storm guard or failed bring-up), and the TX-state watch of P2 now stops the board only for a TX state outside the airtime of a frame we started.
+
+**Host tests of the driver.** `tests/host/test_cc110l.c` compiles `src/cc110l.c` with the switch set for that one translation unit and runs it against a simulated chip (`tests/host/cc110l_model.h`) that logs every `STX` with the carrier its own registers give. `tests/host/test_cc110l_off.c` runs the driver as built. `make test`: 877294 checks in 8 programs, 0 failed (2026-11-17) **[V]** on the host.
+
+**Open, for the review and the bench.**
+
+- **Status bytes against the early `SIDLE` [I].** The interrupt strobes `SIDLE` some 10-20 µs after the CRC-OK edge. If the chip appends the two status bytes later than that, the frame never completes in the FIFO and is dropped as stale after 60 ms although it was acknowledged. The datasheet does not say. On the bench: `stale` must stay 0 in the minute log while `acks sent` counts.
+- **`GDO2` after a flush [I].** `IOCFG2 = 07` de-asserts "when the first byte is read from the RX FIFO" (`datasheets/cc110l.txt:2919`). Whether `SFRX` also de-asserts it is not stated; if not, the first good frame after a flush gets no ACK, and the device repeats it.
+- **Listen before transmit looks for sync words only** (GDO0 edges during the 3.968 ms listen), not for carrier or RSSI. Other users of the band are not detected. What the stock coordinator listens for is not known (#20).
+- **No recalibration after bring-up.** `MCSM0 = 08` (no automatic calibration) and one `SCAL` at bring-up, as in P2. Whether a transmitter needs it repeated with temperature is to be decided with the first transmissions (#11).
+- **Radio task stack:** 640 words. Deepest paths by `-fstack-usage` are about 1.0-1.2 KB (a log line from the coordinator) **[I]**; measure the unused words on the bench.
+- If the interrupt's SPI access fails after its `SIDLE`, the chip stays in IDLE until the 10 s health check re-arms it.
