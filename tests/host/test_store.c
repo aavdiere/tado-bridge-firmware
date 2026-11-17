@@ -21,16 +21,27 @@
 static uint8_t mem[FLASH_SIZE];
 
 static struct {
-    long     cut_in; /* program/erase steps until the cut; 0: none armed */
-    bool     dead;   /* power is gone: everything fails until reboot() */
-    bool     weak;   /* the next program leaves one bit unprogrammed, reports success */
-    unsigned ops;    /* program + erase steps so far */
+    long     cut_in;     /* program/erase steps until the cut; 0: none armed */
+    bool     dead;       /* power is gone: everything fails until reboot() */
+    bool     weak;       /* the next program leaves one bit unprogrammed, reports success */
+    unsigned prog_fail;  /* without a power cut, every program: see enum fail */
+    unsigned erase_fail; /* without a power cut, every erase: see enum fail */
+    uint32_t protect;    /* a sector that must never be erased (0: none) */
+    unsigned ops;        /* program + erase steps so far */
     unsigned cuts_program, cuts_erase;
     unsigned ctr_erases;        /* completed erases of a counter-log sector */
     uint32_t last_prog_addr;    /* address of the last completed program */
     unsigned slot_a_body_reads; /* reads past the magic of slot A */
     uint32_t rnd;
 } fm;
+
+/* Failures with the power on (the chip's fail flags, a verify mismatch). */
+enum fail {
+    FAIL_NONE,
+    FAIL_NOTHING, /* reports failure, nothing changed */
+    FAIL_PARTIAL, /* reports failure, part of the bits done (P_FAIL / E_FAIL) */
+    FAIL_SILENT,  /* reports success, part of the bits not done (read-back catches it) */
+};
 
 static uint32_t rnd(void) {
     /* xorshift32; a zero state would stick */
@@ -73,6 +84,24 @@ bool store_port_program(uint32_t addr, const uint8_t *src, size_t n) {
     for (size_t i = 0; i < n; i++) {
         CHECK_EQ(mem[addr + i], 0xFF); /* never programmed twice without an erase */
     }
+    if (fm.prog_fail != FAIL_NONE) {
+        fm.ops++;
+        for (size_t i = 0; fm.prog_fail != FAIL_NOTHING && i < n; i++) {
+            mem[addr + i] &= (uint8_t)(src[i] | rnd());
+        }
+        if (fm.prog_fail == FAIL_SILENT) {
+            /* At least one bit that should be 0 still reads 1 (the bytes
+             * were blank, so that bit was never programmed). */
+            for (size_t j = 0, i = rnd() % n; j < n; j++, i = (i + 1u) % n) {
+                unsigned zeros = ~(unsigned)src[i] & 0xFFu;
+                if (zeros) {
+                    mem[addr + i] |= (uint8_t)(zeros & (0u - zeros)); /* the lowest one */
+                    break;
+                }
+            }
+        }
+        return fm.prog_fail == FAIL_SILENT;
+    }
     if (cut_now()) {
         /* Torn: a prefix done, one byte with only some of its bits. */
         size_t k = rnd() % (n + 1u);
@@ -108,6 +137,19 @@ bool store_port_erase(uint32_t addr) {
     if (fm.dead) {
         return false;
     }
+    if (fm.protect != 0) {
+        CHECK(addr != fm.protect); /* the sector with the highest entry */
+    }
+    if (fm.erase_fail != FAIL_NONE) {
+        fm.ops++;
+        for (uint32_t i = 0; fm.erase_fail != FAIL_NOTHING && i < FLASH_SECTOR; i++) {
+            mem[addr + i] |= (uint8_t)rnd();
+        }
+        if (fm.erase_fail == FAIL_SILENT) {
+            mem[addr + rnd() % FLASH_SECTOR] &= 0x7F; /* at least one byte not blank */
+        }
+        return fm.erase_fail == FAIL_SILENT;
+    }
     if (cut_now()) {
         /* Torn: some bytes erased, some with random bits set, and (the
          * chip's pre-program phase) some with random bits cleared. */
@@ -138,9 +180,11 @@ bool store_port_erase(uint32_t addr) {
 
 /* Power comes back: RAM state is gone. */
 static void reboot(void) {
-    fm.dead   = false;
-    fm.cut_in = 0;
-    fm.weak   = false;
+    fm.dead      = false;
+    fm.cut_in    = 0;
+    fm.weak      = false;
+    fm.prog_fail = fm.erase_fail = FAIL_NONE;
+    fm.protect                   = 0;
     store_ctr_forget();
 }
 
@@ -497,6 +541,144 @@ static void test_counter_switch_cuts(void) {
     CHECK(cases >= 2u * 2u * 16u);
 }
 
+/* The log's highest valid entry, read straight from the model: false if
+ * there is none; *sector is the sector it is in. */
+static bool mem_ctr_max(uint32_t *max, uint32_t *sector) {
+    bool found = false;
+    for (uint32_t a = FLASH_CTR_A; a < FLASH_CTR_B + FLASH_SECTOR; a += STORE_CTR_ENTRY) {
+        uint32_t v = (uint32_t)mem[a] | (uint32_t)mem[a + 1] << 8 | (uint32_t)mem[a + 2] << 16
+                     | (uint32_t)mem[a + 3] << 24;
+        uint32_t w = (uint32_t)mem[a + 4] | (uint32_t)mem[a + 5] << 8 | (uint32_t)mem[a + 6] << 16
+                     | (uint32_t)mem[a + 7] << 24;
+        if (v == ~w && (!found || v > *max)) {
+            found   = true;
+            *max    = v;
+            *sector = a < FLASH_CTR_B ? FLASH_CTR_A : FLASH_CTR_B;
+        }
+    }
+    return found;
+}
+
+/* Every counter-log program fails with the power on (fail flag with nothing
+ * or part done, or a silent miss the read-back catches), starting at
+ * several fill levels: the extends fail, the limit stays, the sector with
+ * the highest entry is never erased (the model checks every erase), the
+ * log's highest entry never falls below the last reservation reported
+ * written, and once the slots run out nothing more is tried until the next
+ * boot, which starts above that reservation. */
+static void test_counter_failing_programs(void) {
+    /* Successful extends after the boot entry, before the failures. */
+    static const unsigned before[] = {0, 1, 300, 510, 511, 512, 700, 1023};
+    unsigned              cases    = 0;
+    for (unsigned mode = FAIL_NOTHING; mode <= FAIL_SILENT; mode++) {
+        for (unsigned b = 0; b < sizeof before / sizeof before[0]; b++) {
+            flash_stock();
+            reboot();
+            fm.rnd       = mode * 101u + b + 1u;
+            uint32_t sum = outside_sum();
+            uint32_t first, limit, max, sector, max_sector;
+            CHECK(store_counter_boot(1000, &first, &limit));
+            for (unsigned i = 0; i < before[b]; i++) {
+                CHECK(store_counter_extend(limit - STORE_CTR_LOW + 1u, &limit));
+            }
+            uint32_t committed = limit;
+            (void)last_entry(&sector);
+            CHECK(mem_ctr_max(&max, &max_sector));
+            CHECK(max == committed && max_sector == sector);
+            fm.protect       = sector;
+            fm.prog_fail     = mode;
+            unsigned erases0 = fm.ctr_erases;
+            bool     stuck   = false;
+            for (unsigned call = 0; call < 3u * STORE_CTR_ENTRIES; call++) {
+                uint32_t lim2 = limit;
+                unsigned ops0 = fm.ops;
+                CHECK(!store_counter_extend(limit - STORE_CTR_LOW + 1u, &lim2));
+                CHECK_EQ(lim2, limit);
+                CHECK(mem_ctr_max(&max, &max_sector));
+                CHECK(max >= committed);
+                if (fm.ops == ops0) {
+                    stuck = true; /* nothing tried */
+                } else {
+                    CHECK(!stuck); /* and it stays so */
+                }
+            }
+            CHECK(stuck);
+            CHECK(fm.ctr_erases - erases0 <= 1u); /* at most the change to the next sector */
+            /* Programs work again: still closed until the next boot. */
+            fm.prog_fail  = FAIL_NONE;
+            uint32_t lim2 = limit;
+            CHECK(!store_counter_extend(limit - STORE_CTR_LOW + 1u, &lim2));
+            CHECK_EQ(lim2, limit);
+
+            reboot();
+            CHECK(mem_ctr_max(&max, &max_sector));
+            fm.protect = max_sector;
+            uint32_t f2, l2;
+            CHECK(store_counter_boot(0, &f2, &l2));
+            CHECK(f2 >= committed);
+            CHECK(mem_ctr_max(&max, &max_sector));
+            CHECK_EQ(max, l2);
+            CHECK_EQ(outside_sum(), sum);
+            cases++;
+        }
+    }
+    printf("test_store: counter log with every program failing: %u cases\n", cases);
+    CHECK_EQ(cases, 3u * sizeof before / sizeof before[0]);
+}
+
+/* The sector change meets failing erases (fail flag with nothing or part
+ * done, or a silent miss the blank check catches), to a blank and to a
+ * stale sector: the extends fail, the full sector with the highest entry is
+ * left exactly as it was, and once erases work the next extend goes to the
+ * first slot of the other sector. */
+static void test_counter_failing_erases(void) {
+    static uint8_t keep[FLASH_SECTOR];
+    unsigned       cases = 0;
+    for (unsigned mode = FAIL_NOTHING; mode <= FAIL_SILENT; mode++) {
+        for (unsigned full = 1; full <= 2; full++) {
+            flash_stock();
+            reboot();
+            fm.rnd = mode * 7u + full;
+            uint32_t first, limit, sector, max, max_sector;
+            CHECK(store_counter_boot(1000, &first, &limit));
+            unsigned filled = 0;
+            for (unsigned guard = 0; guard < 4u * STORE_CTR_ENTRIES && filled < full; guard++) {
+                CHECK(store_counter_extend(limit - STORE_CTR_LOW + 1u, &limit));
+                if (last_entry(&sector) == STORE_CTR_ENTRIES - 1u) {
+                    filled++;
+                }
+            }
+            CHECK_EQ(filled, full);
+            uint32_t committed = limit;
+            memcpy(keep, mem + sector, sizeof keep);
+            fm.protect    = sector;
+            fm.erase_fail = mode;
+            for (unsigned call = 0; call < 50; call++) {
+                uint32_t lim2 = limit;
+                CHECK(!store_counter_extend(limit - STORE_CTR_LOW + 1u, &lim2));
+                CHECK_EQ(lim2, limit);
+                CHECK(memcmp(keep, mem + sector, sizeof keep) == 0);
+                CHECK(mem_ctr_max(&max, &max_sector));
+                CHECK(max == committed && max_sector == sector);
+            }
+            fm.erase_fail = FAIL_NONE;
+            uint32_t lim2 = limit;
+            CHECK(store_counter_extend(limit - STORE_CTR_LOW + 1u, &lim2));
+            CHECK(lim2 > limit);
+            uint32_t now_sector;
+            CHECK_EQ(last_entry(&now_sector), 0);
+            CHECK(now_sector != sector);
+            reboot();
+            uint32_t f2, l2;
+            CHECK(store_counter_boot(0, &f2, &l2));
+            CHECK_EQ(f2, lim2);
+            cases++;
+        }
+    }
+    printf("test_store: counter sector change with failing erases: %u cases\n", cases);
+    CHECK_EQ(cases, 3u * 2u);
+}
+
 /* A network written with a floor, then the counter boot honours the floor
  * when the log is empty, and the log when it is higher. */
 static void test_counter_floor(void) {
@@ -606,6 +788,8 @@ int main(void) {
     test_counter_floor();
     test_counter_garbage();
     test_counter_switch_cuts();
+    test_counter_failing_programs();
+    test_counter_failing_erases();
     test_counter_run();
     test_network_flow_cuts();
     return TEST_REPORT("test_store");

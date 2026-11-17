@@ -17,7 +17,9 @@
  *     only clears bits, so a torn entry never has a matching pair; the
  *     highest valid entry is the reservation. A full sector moves on to the
  *     other one, which is erased first; the full one keeps the highest
- *     value until the first entry of the new one is written.
+ *     value until the first entry of the new one is written. The sector
+ *     holding the highest valid entry is never erased: if every slot of
+ *     the new sector fails, appends fail until the next boot.
  *
  * Nothing here logs, and no key byte leaves the structs the caller passes. */
 
@@ -100,7 +102,8 @@ bool store_counter_boot(uint32_t floor, uint32_t *first, uint32_t *limit);
 /* Running: next is the next counter the coordinator would use (<= *limit).
  * Once less than STORE_CTR_LOW remains, persists next + STORE_CTR_AHEAD and
  * moves *limit there. False if that write failed (*limit unchanged; try
- * again later). */
+ * again later; once failed writes have used up the slots of the sector
+ * after the highest entry's, it stays false until the next boot). */
 bool store_counter_extend(uint32_t next, uint32_t *limit);
 
 #endif

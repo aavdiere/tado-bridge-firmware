@@ -222,9 +222,10 @@ static const uint32_t ctr_sector[2] = {FLASH_CTR_A, FLASH_CTR_B};
 
 static struct {
     bool     scanned, found;
-    uint32_t max;  /* highest valid entry */
-    unsigned cur;  /* sector it is in (or A) */
-    unsigned next; /* first slot after the last one not blank in cur */
+    uint32_t max;     /* highest valid entry */
+    unsigned max_sec; /* sector holding it (meaningful if found): never erased */
+    unsigned cur;     /* sector being appended to (after a scan: max_sec, or A) */
+    unsigned next;    /* first slot after the last one not blank in cur */
 } ctr;
 
 void store_ctr_forget(void) {
@@ -248,9 +249,10 @@ static bool ctr_scan(void) {
                 }
                 last[s] = i + k + 1u;
                 if (v == ~w && (!ctr.found || v > ctr.max)) {
-                    ctr.found = true;
-                    ctr.max   = v;
-                    ctr.cur   = s;
+                    ctr.found   = true;
+                    ctr.max     = v;
+                    ctr.max_sec = s;
+                    ctr.cur     = s;
                 }
             }
         }
@@ -279,8 +281,16 @@ static bool ctr_append(uint32_t value) {
     }
     if (ctr.next >= STORE_CTR_ENTRIES) {
         /* Full: continue in the other sector. Until its first entry is
-         * written, the highest one stays readable in this one. */
+         * written, the highest one stays readable in this one. If the
+         * highest entry is in the other sector (every slot here failed after
+         * the last change), erasing it would lose the reservation and let a
+         * reboot reuse counters: fail closed instead. The coordinator stops
+         * at its limit; the next boot's scan returns to the highest entry's
+         * sector, which is full, and erases this one. */
         unsigned other = ctr.cur ^ 1u;
+        if (ctr.found && other == ctr.max_sec) {
+            return false;
+        }
         if (!erase_verified(ctr_sector[other])) {
             return false;
         }
@@ -295,8 +305,9 @@ static bool ctr_append(uint32_t value) {
     if (!program_verified(addr, e, sizeof e)) {
         return false;
     }
-    ctr.found = true;
-    ctr.max   = value;
+    ctr.found   = true;
+    ctr.max     = value;
+    ctr.max_sec = ctr.cur;
     return true;
 }
 
