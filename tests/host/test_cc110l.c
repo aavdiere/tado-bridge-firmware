@@ -725,6 +725,17 @@ static void test_guard(void) {
     CHECK(p);
     PANICS(cc110l_write_reg(CC_PKTCTRL0, 0x35), p); /* random TX mode */
     CHECK(p);
+    PANICS(cc110l_write_reg(CC_PKTCTRL0, 0x06), p); /* infinite length */
+    CHECK(p);
+    PANICS(cc110l_write_reg(CC_PKTCTRL0, 0x04), p); /* fixed length */
+    CHECK(p);
+    PANICS(cc110l_write_reg(CC_PKTCTRL0, 0x07), p); /* reserved length mode */
+    CHECK(p);
+    PANICS(cc110l_write_reg(CC_PKTCTRL0, 0x45), p); /* reset value: variable length */
+    CHECK(!p);
+    PANICS(cc110l_write_reg(CC_PKTCTRL0, 0x05), p); /* the table's value */
+    CHECK(!p);
+    bring_up(TXGATE_TEST_CHANNEL); /* those writes cleared the PLL lock */
     PANICS(cc110l_write_reg(0x3E, 0xC0), p); /* PATABLE */
     CHECK(p);
     PANICS(cc110l_write_burst(0x2E, table, 2), p); /* runs past 0x2E */

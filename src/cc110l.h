@@ -163,7 +163,9 @@ bool cc110l_take_tx_state_flag(void);
  * (cc110l.txt:2740-2761). With the chip in IDLE: up to 3 times SCAL, wait
  * for IDLE, read FSCAL3-1; FSCAL1 = 0x3F is no lock. On lock the carrier
  * registers are read back against the table. Task context, busy-waits at
- * most about 16 ms (3 tries of 0.75 ms plus a 5 ms timeout each).
+ * most about 18 ms (3 tries of 0.75 ms plus at most 5 ms waiting for IDLE
+ * each); about 0.8 ms per try, 2.4 ms for all three, when the chip answers
+ * as documented.
  *   LOCKED:  the transmitter may be used, unless an earlier calibration
  *            since the last reset gave NO_LOCK (cc110l_cal_ok());
  *   NO_LOCK: 3 tries without lock. Latched until the next cc110l_reset():

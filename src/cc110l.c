@@ -25,7 +25,9 @@
  *     in TX" (cc110l.txt:3929-3955): the only ways the state machine enters
  *     TX without an STX strobe;
  *   - PKTCTRL0 with PKT_FORMAT other than normal FIFO mode
- *     (cc110l.txt:3641-3660: random TX and serial modes).
+ *     (cc110l.txt:3641-3660: random TX and serial modes), or with
+ *     LENGTH_CONFIG other than variable length (cc110l.txt:3673-3684:
+ *     infinite length transmits until stopped by hand).
  * The CC110L has no automatic acknowledgement and no wake-on-radio
  * (docs/datasheets/cc110l-vs-cc1101.md), so with these refused it cannot
  * transmit.
@@ -184,6 +186,12 @@ static void guard_write(uint8_t addr, uint8_t val) {
     }
     if (addr == CC_PKTCTRL0 && ((val >> 4) & 3) != 0) {
         fw_panic("radio guard: PKTCTRL0 not in FIFO mode", __FILE__, __LINE__);
+    }
+    /* LENGTH_CONFIG 01 variable only: 10 (infinite) keeps transmitting
+     * until stopped by hand, 00 (fixed) sends PKTLEN bytes whatever the
+     * length byte says, 11 is reserved (cc110l.txt:1826-1828, Table 5-31). */
+    if (addr == CC_PKTCTRL0 && (val & 3u) != 1u) {
+        fw_panic("radio guard: PKTCTRL0 not in variable length mode", __FILE__, __LINE__);
     }
     if (addr == CC_FREND0 && (val & 7u) != 0) {
         fw_panic("radio guard: FREND0 PA_POWER selects PATABLE[1..]", __FILE__, __LINE__);
@@ -609,8 +617,9 @@ static bool wait_idle(uint32_t timeout_us) {
     return false;
 }
 
-/* Bounded busy waits only (at most CAL_TRIES x CAL_TIMEOUT_US, about 2.3 ms
- * when the chip answers as documented): the radio task's other work waits
+/* Bounded busy waits only: at most CAL_TRIES x (CAL_WAIT_US + CAL_TIMEOUT_US
+ * + one 50 us poll), about 18 ms; when the chip answers as documented about
+ * 0.8 ms per try, 2.4 ms for all three. The radio task's other work waits
  * meanwhile, but nothing arrives while the chip is IDLE. */
 enum cc110l_cal cc110l_calibrate(uint8_t fscal[3], unsigned *tries) {
     pll_locked = false;

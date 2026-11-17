@@ -125,7 +125,7 @@ P5 changes parts of this section: the channel, `IOCFG2`, the receive loop's timi
 **Transmit guard (receive-only image).** `RADIO_TX_ALLOWED` is 0 and `#error`s if set. Every SPI header byte goes through one check in `src/cc110l.c`:
 - Strobes: only `SRES`, `SCAL`, `SRX`, `SIDLE`, `SFRX`, `SNOP`. `STX`, `SFSTXON` (and `SXOFF`, `SPWD`, `SFTX`) call `fw_panic`. The check covers strobe headers with either R/W bit, since both execute the strobe (`cc110l.txt:1453-1456`). `radio_strobe()` is the only strobe function.
 - No TX FIFO or `PATABLE` access, and no write outside `0x00-0x2E`, including a burst that would run past `0x2E`.
-- Any write of `MCSM1` with RXOFF_MODE or TXOFF_MODE set to FSTXON or TX (`cc110l.txt:3929-3955`), and any `PKTCTRL0` other than FIFO mode, is refused.
+- Any write of `MCSM1` with RXOFF_MODE or TXOFF_MODE set to FSTXON or TX (`cc110l.txt:3929-3955`), and any `PKTCTRL0` other than FIFO mode with variable length (since 2026-11-17 also refused: fixed, infinite and the reserved length mode, `datasheets/cc110l.txt:3673-3684`), is refused.
 - Every chip status byte is checked for STATE TX or FSTXON (`cc110l.txt:1381-1405`); the radio task confirms with `MARCSTATE` and, if the chip really is in a TX state, strobes `SIDLE` and stops the board (`fw_panic`, watchdog reset). The 10 s health check does the same.
 The CC110L has no automatic acknowledgement and no wake-on-radio (`datasheets/cc110l-vs-cc1101.md`), so with `STX`, `SFSTXON` and the MCSM1 TX paths refused it has no way to transmit.
 
