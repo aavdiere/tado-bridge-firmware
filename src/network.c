@@ -114,9 +114,9 @@ bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]) {
     /* From here on, whatever happens, no second create in this boot. */
     found = NET_RECORD;
     /* Counters of an earlier network stay used: start above them. */
-    uint32_t max   = 0;
-    bool     found = false;
-    if (!store_ctr_highest(&max, &found)) {
+    uint32_t max     = 0;
+    bool     any_ctr = false; /* unused: max stays 0 on an empty log */
+    if (!store_ctr_highest(&max, &any_ctr)) {
         LOG("network: create failed: counter log unreadable");
         return false;
     }
