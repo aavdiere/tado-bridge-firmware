@@ -9,8 +9,8 @@ Enough is known to start building. What remains is gathered during the build:
 1. ~~Backup session~~ (#8, #9): done 2026-11-11, see `hardware.md` (P0 results).
 2. **Prototype** (#16, #17, #19, #28) and on-board measurements (#7; #26 noise measured 2026-11-14; TLS, WebSocket and auth to tanoclo working with RAM and handshake figures, #15, 2026-11-14; RAM budget measured and the handshake ACK delay fixed, #16, 2026-11-16).
 3. **Before building self-update** (#20): check the bootloader and image sizes fit the layout.
-3b. **Pairing (#19, 2026-11-17):** built and host-tested, transmitter still off in the committed build; needs a `fw-reviewer` verdict, the spare device's EUI-64 in `config/local.cmake` and the owner at the bench. Rows 28, 28a, 28b.
-3a. **P5 link layer (#17, 2026-11-17):** MAC, CCM*, 6LoWPAN, CSL coordinator, relay and Enhanced ACK path ported and host-tested (877202 checks, 0 failed); built, not flashed, not reviewed; transmit off. TX-off image reviewed, flashed and verified; first transmission on channel 10 done (#11, `test-bench.md`, "First transmit test"). Open items from it are rows 17a-17d below and `radio-runtime.md`.
+3b. **Pairing (#19, 2026-11-17):** built and host-tested; the committed build has the transmitter on since 2026-11-17 (owner decision; `RADIO_TX_ALLOWED` build option, default 1) but pairs only with a target named in `config/local.cmake`; needs a `fw-reviewer` verdict, the spare device's EUI-64 in `config/local.cmake` and the owner at the bench. Rows 28, 28a, 28b.
+3a. **P5 link layer (#17, 2026-11-17):** MAC, CCM*, 6LoWPAN, CSL coordinator, relay and Enhanced ACK path ported and host-tested (877202 checks, 0 failed); built, not flashed, not reviewed; transmit off in the committed build until 2026-11-17, on by default since (owner decision; `RADIO_TX_ALLOWED=0` builds a receive-only image). TX-off image reviewed, flashed and verified; first transmission on channel 10 done (#11, `test-bench.md`, "First transmit test"). Open items from it are rows 17a-17d below and `radio-runtime.md`.
 4. **Optional:** stock capture (section C); pair button pin at firmware stage.
 
 ## Todo

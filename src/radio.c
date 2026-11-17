@@ -1158,7 +1158,7 @@ static bool radio_configure_steps(void) {
         RADIO_CHANNEL,
         (unsigned long)CARRIER_HZ(RADIO_CHANNEL),
         RADIO_PA_BRINGUP,
-        !RADIO_TX_ALLOWED            ? "switched off (RADIO_TX_ALLOWED 0)"
+        !RADIO_TX_ALLOWED            ? "switched off (receive-only image)"
         : !cc110l_cal_ok()           ? "refused: no PLL lock"
         : cc110l_tx_verify_channel() ? "enabled on this channel only"
                                      : "refused: frequency registers do not read back");
@@ -1678,8 +1678,10 @@ static void beacon_answer(uint32_t fall_us, bool own_end) {
  * network blocks this task for up to about 0.8 s (fw-reviewer items 1-3 of
  * #19). The pairing trigger therefore needs, all of them: a target named in
  * config/local.cmake (PAIR_TARGET_EUI64), the transmitter built in
- * (RADIO_TX_ALLOWED), the flash read at boot, an identity, the radio up with
- * PLL lock, and the owner's hand on the button. */
+ * (RADIO_TX_ALLOWED, the CMake option), the flash read at boot, an
+ * identity, the radio up with PLL lock, and the owner's hand on the
+ * button. Without a target the code below is not even compiled: the build
+ * then holds no path to network_create() or link_pair_open(). */
 static bool flash_ready; /* flash_boot() succeeded: the records may be read and written */
 
 static void pairing_trigger(uint32_t now_ms) {
@@ -1697,7 +1699,7 @@ static void pairing_trigger(uint32_t now_ms) {
         target[i] = eui[MAC_EUI_LEN - 1u - i]; /* wire order, as link_start() */
     }
     if (!RADIO_TX_ALLOWED) {
-        LOG("pair: transmitter switched off (RADIO_TX_ALLOWED 0): no window");
+        LOG("pair: receive-only image (RADIO_TX_ALLOWED 0): no window");
         return;
     }
     if (!flash_ready || !link_own()) {

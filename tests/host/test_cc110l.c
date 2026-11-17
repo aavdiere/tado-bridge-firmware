@@ -4,18 +4,17 @@
  * an STX strobe, on which carrier by the chip's own registers, with which
  * bytes.
  *
- * The firmware's switch RADIO_TX_ALLOWED (src/cc110l.h) is 0 and has no
- * build option. This program compiles the driver's source with the switch
- * redefined for this one translation unit, so the code that will run once
- * the switch is set is tested before then. test_cc110l_off.c tests the
- * driver as the firmware builds it today. */
-#include "cc110l.h"
-#undef RADIO_TX_ALLOWED
-#define RADIO_TX_ALLOWED 1
+ * The firmware's switch RADIO_TX_ALLOWED is a build option, ON by default
+ * (cmake/CMakeLists.txt, owner decision 2026-11-17): this program tests the
+ * driver as the default firmware builds it, and tests/host/Makefile
+ * compiles it with RADIO_TX_ALLOWED=1. test_cc110l_off.c tests a
+ * receive-only build (RADIO_TX_ALLOWED=0). */
 #include "../../src/cc110l.c"
 
 #include "cc110l_model.h"
 #include "test.h"
+
+_Static_assert(RADIO_TX_ALLOWED == 1, "this program tests the driver with the transmitter built in");
 
 #define TEST_HZ 866324157ll /* the test channel 16 (src/txgate.h) */
 #define CH26_HZ 868323668ll /* the protected channel */

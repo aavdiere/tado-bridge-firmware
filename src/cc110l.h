@@ -17,11 +17,24 @@
  * frame the transmit gate (src/txgate.h) has approved against the
  * frequency registers last written to the chip. */
 
-/* Master switch for the transmitter. 0: the image cannot transmit; the
- * transmit functions refuse, and STX, SFTX and the TX FIFO panic as in the
- * receive-only images. Set to 1 only with a fw-reviewer "safe to flash"
- * verdict for the transmit path (docs/test-bench.md rule 4, CLAUDE.md). */
-#define RADIO_TX_ALLOWED 0
+/* Master switch for the transmitter, set by the build, never here: the
+ * CMake option RADIO_TX_ALLOWED (cmake/CMakeLists.txt, default ON; owner
+ * decision 2026-11-17, docs/README.md "Project decisions"), passed as a
+ * compile definition. Without it the build stops, so no file can pick up a
+ * default of its own.
+ *   1: the transmit functions below may key the transmitter, and only for
+ *      a frame the transmit gate (src/txgate.h) approves: the test channel
+ *      16 only, at least 999 kHz from channel 26, the carrier registers
+ *      read back from the chip, within the airtime budget (src/airtime.h)
+ *      and at an output power at most the reset level (cc110l_set_pa()).
+ *   0: a receive-only image (`make RADIO_TX_ALLOWED=0`): the transmit
+ *      functions refuse, and STX, SFTX and the TX FIFO panic as in the P2
+ *      images. */
+#ifndef RADIO_TX_ALLOWED
+#error "RADIO_TX_ALLOWED comes from the build: CMake option, default ON, 0 for receive-only"
+#elif RADIO_TX_ALLOWED != 0 && RADIO_TX_ALLOWED != 1
+#error "RADIO_TX_ALLOWED must be 0 or 1"
+#endif
 
 /* Output power for the bring-up on the bench (P5): PATABLE 0x26, -10 dBm
  * at 868 MHz with wire-wound inductors (cc110l.txt:2828, Table 5-14); with
@@ -213,7 +226,7 @@ bool cc110l_tx_verify_channel(void);
 
 enum cc110l_tx_result {
     CC_TX_OK,
-    CC_TX_DISABLED, /* RADIO_TX_ALLOWED is 0 */
+    CC_TX_DISABLED, /* RADIO_TX_ALLOWED is 0: a receive-only build */
     CC_TX_REFUSED,  /* by the transmit gate: cc110l_tx_verdict() says why */
     CC_TX_BUSY,     /* another frame of ours is still on the air; nothing was touched */
     CC_TX_NO_LOCK,  /* no valid calibration with PLL lock (cc110l_cal_ok()); not touched */

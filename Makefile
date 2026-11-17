@@ -3,12 +3,18 @@ DEVICE			?= STM32F411CE
 BUILD_TYPE 		?= Release
 BUILD_DIR		?= build
 FIRMWARE		?= $(BUILD_DIR)/$(BINARY).elf
+# Radio transmitter (cmake/CMakeLists.txt, owner decision 2026-11-17):
+# 1 builds it in (test channel only), 0 a receive-only image.
+RADIO_TX_ALLOWED	?= 1
+ifeq ($(filter 0 1,$(RADIO_TX_ALLOWED)),)
+$(error RADIO_TX_ALLOWED must be 0 or 1, not '$(RADIO_TX_ALLOWED)')
+endif
 
 DEVICE_LC		:= $(shell echo $(DEVICE) | tr '[:upper:]' '[:lower:]')
 FAMILY			:= $(shell echo $(DEVICE_LC) | cut -c1-7)
 FAMILY_CMAKE	:= cmake/$(FAMILY).cmake
 LINKER_SCRIPT	:= cmake/$(DEVICE_LC).ld
-DEVICE_STAMP	:= $(BUILD_DIR)/.device-$(DEVICE_LC)-$(BUILD_TYPE)
+DEVICE_STAMP	:= $(BUILD_DIR)/.device-$(DEVICE_LC)-$(BUILD_TYPE)-tx$(RADIO_TX_ALLOWED)
 OPENCM3_LIB		:= vendor/libopencm3/lib/libopencm3_$(FAMILY).a
 
 .PHONY: all format build cmake clean flash rtt size test
@@ -34,9 +40,11 @@ cmake: $(BUILD_DIR)/Makefile
 
 $(BUILD_DIR)/Makefile: cmake/CMakeLists.txt $(FAMILY_CMAKE) $(LINKER_SCRIPT) cmake/toolchain-arm-none-eabi.cmake $(DEVICE_STAMP)
 	cmake -G "Unix Makefiles" -B$(BUILD_DIR) -DBINARY=$(BINARY) \
-		-DDEVICE=$(DEVICE) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) cmake/
+		-DDEVICE=$(DEVICE) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
+		-DRADIO_TX_ALLOWED=$(RADIO_TX_ALLOWED) cmake/
 
-# Start from a clean build directory whenever DEVICE or BUILD_TYPE changes
+# Start from a clean build directory whenever DEVICE, BUILD_TYPE or
+# RADIO_TX_ALLOWED changes, so a cached value can never pick the variant
 $(DEVICE_STAMP):
 	rm -rf $(BUILD_DIR)
 	mkdir -p $(BUILD_DIR)

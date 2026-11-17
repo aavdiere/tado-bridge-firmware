@@ -7,6 +7,7 @@
 #include "clock.h"
 #include "faults.h"
 #include "log.h"
+#include "provision.h"
 #include "radio.h"
 #include "spi1.h"
 #include "timebase.h"
@@ -18,6 +19,13 @@
 #include <libopencm3/stm32/flash.h>
 #include <libopencm3/stm32/pwr.h>
 #include <libopencm3/stm32/rcc.h>
+
+/* For the boot banner: the same test as pairing_trigger() in src/radio.c. */
+#ifdef PROVISION_PAIR_EUI64
+#define PAIR_TARGET_NAMED 1
+#else
+#define PAIR_TARGET_NAMED 0
+#endif
 
 int main(void) {
     /* Radio CSn and flash CS# high before the delay (#28): otherwise PA4 and
@@ -34,12 +42,20 @@ int main(void) {
     timebase_init();
     faults_init();
     log_init();
-    /* Two lines: one log line holds 191 characters (src/log.c). The
-     * transmitter state comes from the switch itself, not from this text. */
-    LOG("tado-bridge P5 #37: radio link on channel %u, transmitter %s; network from flash",
+    /* One log line holds 191 characters (src/log.c). The variant comes from
+     * the build's switches themselves (RADIO_TX_ALLOWED, the CMake option;
+     * PROVISION_PAIR_EUI64 from config/local.cmake), not from this text. */
+    LOG("tado-bridge P5 #19: %s image (RADIO_TX_ALLOWED %d): radio link on channel %u, "
+        "transmitter %s; network from flash",
+        RADIO_TX_ALLOWED ? "TRANSMIT" : "RECEIVE-ONLY",
+        RADIO_TX_ALLOWED,
         RADIO_CHANNEL,
-        RADIO_TX_ALLOWED ? "ALLOWED (RADIO_TX_ALLOWED 1, test channel only)"
-                         : "switched off (RADIO_TX_ALLOWED 0)");
+        RADIO_TX_ALLOWED ? "on, test channel only" : "switched off");
+    LOG("tado-bridge: pairing %s",
+        !RADIO_TX_ALLOWED ? "off (receive-only image): the pair button opens no window"
+        : PAIR_TARGET_NAMED
+            ? "for the device named in the build only (PAIR_TARGET_EUI64)"
+            : "off (no PAIR_TARGET_EUI64 in the build): the pair button opens no window");
     LOG("tado-bridge: Ethernet with lwIP (DHCP, DNS), PA3 entropy and CTR_DRBG, TLS and "
         "WebSocket to tanoclo");
     watchdog_log_reset_cause();

@@ -8,11 +8,11 @@
 
 /* The bridge's channel: the test network's channel 16 (866.3242 MHz), owner
  * decision of 2026-11-17 (channel 10 before; docs/README.md "Project
- * decisions", src/txgate.h). The
- * radio receives and, once RADIO_TX_ALLOWED is set (src/cc110l.h),
- * transmits there. Until P5 the receive-only images listened on the stock
- * network's channel 26 instead. P6 takes the channel from the network
- * record (docs/design.md "Persistent storage"). */
+ * decisions", src/txgate.h). The radio receives and, unless the image is
+ * built receive-only (RADIO_TX_ALLOWED=0, src/cc110l.h), transmits there.
+ * Until P5 the receive-only images listened on the stock network's channel
+ * 26 instead. P6 takes the channel from the network record (docs/design.md
+ * "Persistent storage"). */
 #define RADIO_CHANNEL TXGATE_TEST_CHANNEL
 
 /* Protected channel: the owner's stock network, channel 26 (868.3237 MHz,

@@ -27,7 +27,7 @@ Claude may flash the bench bridge and run tests on it, within these gates:
 1. **P0 first.** No new firmware until the backup is done twice and compared, read protection is confirmed at level 0, and the restore has been rehearsed. Claude may run P0 itself once the hardware is connected.
 2. **Never change option bytes** (read protection, write protection, brown-out level) without asking. A wrong read-protection change can erase the chip or lock it permanently (`design.md`).
 3. **Flash with OpenOCD and verify** every write. Keep the backup images ready for a restore.
-4. **Review first:** `fw-reviewer` must give a "safe to flash" verdict before radio transmit code (P5) or bootloader code (P7) goes onto the board.
+4. **Review first:** `fw-reviewer` must give a "safe to flash" verdict before radio transmit code (P5) or bootloader code (P7) goes onto the board. Since 2026-11-17 the default build has the transmitter in (`RADIO_TX_ALLOWED` 1, owner decision, `README.md`, "Project decisions"), so every default image is radio transmit code; an image for work that does not need the transmitter can be built receive-only with `make RADIO_TX_ALLOWED=0` (`build.md`, "Build options").
 5. **Never reconfigure PA13 or PA14** (SWD). Without NRST on the test points, losing SWD makes recovery hard.
 6. **Hardware steps still belong to the owner:** plugging cables, pressing buttons, probing. Ask for them.
 
@@ -181,10 +181,10 @@ First over-the-air transmission of the bridge (#11, P5). Captures stay in `~/ib0
 
 ## Pairing test (#19), plan [I]
 
-Not run yet. The code is in `radio-runtime.md`, "Pairing (#19)". Gates before the image goes onto the bench bridge: a `fw-reviewer` "safe to flash" verdict on the pairing code (rule 4), then a local image that is never committed:
+Not run yet. The code is in `radio-runtime.md`, "Pairing (#19)". Gates before the image goes onto the bench bridge: a `fw-reviewer` "safe to flash" verdict on the pairing code (rule 4), then a local image whose target is never committed:
 
 1. `config/local.cmake` (gitignored): `PAIR_TARGET_EUI64` = the spare device's EUI-64, in the order of `BRIDGE_EUI64` (`00 1b c5` first; the source address of its Beacon Requests in `~/ib01-captures/spare/`, read backwards). CMake refuses any other prefix and the bridge's own EUI-64.
-2. `RADIO_TX_ALLOWED` 1 in `src/cc110l.h`, locally only, as for the first transmit test.
+2. The transmitter is built in by default since 2026-11-17 (`RADIO_TX_ALLOWED`, CMake option, default 1; owner decision, `README.md`, "Project decisions"); nothing to edit. Check that the boot log's first line says `TRANSMIT image (RADIO_TX_ALLOWED 1)` and the second `pairing for the device named in the build only`. (Until 2026-11-17 this step was editing `RADIO_TX_ALLOWED` to 1 in `src/cc110l.h`, locally only, as for the first transmit test.)
 3. SDR before arming (`rf-bench`): channel 16 quiet, channel 26 baseline. Done 2026-11-17 for channel 16 ("Step 3 baseline, channel 16" below). `hopcap.py` is retuned for channel 16 (owner decision 2026-11-17, test channel 16); commands below.
 4. Owner: hold the bridge's pair button for 1 s, then put the spare device into pairing mode (the window lasts 10 minutes, the device's own about 2). The pairing LED (PB8) flashes while the window waits, is lit while the spare device is pairing (from the beacon until its 2.04, a failure or 30 s without progress), flashes again afterwards, and goes off when the window closes after 10 minutes; a pairing does not close it (owner spec 2026-11-17). The first network is created at that moment if the flash holds none (this erases the stock configuration sector at `0x102000`, owner decision 2026-11-17).
 5. Read: RTT `pair:` lines (beacon STX time, window closed, `PAIRED`), the minute counters; SDR: request-to-beacon gap (2.4-7.4 ms), the advertisement pairs (`59 e8` then `49 e8`), `d/pair` and the device's 2.04, nothing on channel 26. Stock devices also send Beacon Requests on channel 16 (baseline below): every Enhanced Beacon must follow a request from the spare device, none a stock device's.

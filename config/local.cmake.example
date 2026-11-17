@@ -21,6 +21,10 @@ set(BRIDGE_EUI64 "00 1b c5 00 00 00 00 00")
 # backwards). Without it the pair button opens no window.
 # set(PAIR_TARGET_EUI64 "00 1b c5 00 00 00 00 00")
 
+# The radio transmitter is not set here: it is the build option
+# RADIO_TX_ALLOWED (default ON; `make RADIO_TX_ALLOWED=0` for a receive-only
+# image, docs/build.md "Build options"). A set() here has no effect.
+
 # Trust anchor for the server certificate: the public CA certificate only,
 # never a key. The bench CA: docs/test-bench.md "Bench certificate".
 set(SERVER_CA_PEM "$ENV{HOME}/tanoclo-bench/certs/bench-ca.pem")

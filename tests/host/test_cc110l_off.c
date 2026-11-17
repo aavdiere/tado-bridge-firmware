@@ -1,7 +1,10 @@
-/* Host tests for the radio driver, src/cc110l.c, exactly as the firmware
- * builds it today: RADIO_TX_ALLOWED 0 (#17). Whatever is called, the
- * simulated chip (cc110l_model.h) must never see a transmit strobe or a
- * byte for its TX FIFO. test_cc110l.c tests the driver with the switch on. */
+/* Host tests for the radio driver, src/cc110l.c, as a receive-only build
+ * compiles it: RADIO_TX_ALLOWED=0 (`make RADIO_TX_ALLOWED=0`; the option
+ * defaults to ON since 2026-11-17). tests/host/Makefile builds this
+ * program and every source it links with RADIO_TX_ALLOWED=0. Whatever is
+ * called, the simulated chip (cc110l_model.h) must never see a transmit
+ * strobe or a byte for its TX FIFO. test_cc110l.c tests the default
+ * build, transmitter on. */
 #include "../../src/cc110l.c"
 
 #include "cc110l_model.h"

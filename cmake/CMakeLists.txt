@@ -23,6 +23,26 @@ set(NET_SERVER_HOST "10.42.0.1" CACHE STRING "tanoclo server host name or IPv4 a
 set(NET_SERVER_PORT 988 CACHE STRING "tanoclo WebSocket TLS port")
 
 ################################################################################
+# Radio transmitter (owner decision 2026-11-17, docs/README.md "Project
+# decisions"): ON by default, so the committed build transmits on the test
+# channel, within the transmit gate (src/txgate.h), the airtime budget and
+# the PATABLE cap (src/cc110l.c). OFF builds a receive-only image: the
+# transmit functions refuse and STX, SFTX and the TX FIFO panic. Passed to
+# every source as RADIO_TX_ALLOWED=1 or 0; src/cc110l.h stops a build
+# without it. From the top-level Makefile: `make RADIO_TX_ALLOWED=0`.
+option(RADIO_TX_ALLOWED "Build the radio transmitter in (test channel only); OFF for a receive-only image" ON)
+string(TOUPPER "${RADIO_TX_ALLOWED}" tx_allowed)
+if(tx_allowed MATCHES "^(1|ON|TRUE|YES)$")
+    set(RADIO_TX_ALLOWED_DEF 1)
+    message("Radio: transmitter ON (RADIO_TX_ALLOWED=1, test channel only)")
+elseif(tx_allowed MATCHES "^(0|OFF|FALSE|NO)$")
+    set(RADIO_TX_ALLOWED_DEF 0)
+    message("Radio: receive-only build (RADIO_TX_ALLOWED=0)")
+else()
+    message(FATAL_ERROR "RADIO_TX_ALLOWED '${RADIO_TX_ALLOWED}' must be ON or OFF (1 or 0)")
+endif()
+
+################################################################################
 # Provisioning (#15): the bridge's serial and EUI-64, and the trust anchor
 # for the server certificate. Device values must not enter git
 # (CLAUDE.md), so they come from config/local.cmake, which is gitignored;
@@ -275,6 +295,7 @@ target_compile_definitions(${BINARY} PRIVATE
     ${MCU_FAMILY}
     NET_SERVER_HOST="${NET_SERVER_HOST}"
     NET_SERVER_PORT=${NET_SERVER_PORT}
+    RADIO_TX_ALLOWED=${RADIO_TX_ALLOWED_DEF}
     MBEDTLS_CONFIG_FILE="tado_mbedtls_config.h"
 )
 
