@@ -205,6 +205,7 @@ add_executable(${BINARY}
     ../src/timebase.c
     ../src/spi1.c
     ../src/cc110l.c
+    ../src/airtime.c
     ../src/mx25r.c
     ../src/radio.c
     ../src/enc28j60.c

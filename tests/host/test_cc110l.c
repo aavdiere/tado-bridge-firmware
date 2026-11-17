@@ -728,6 +728,97 @@ static void test_calibration(void) {
     check_clean();
 }
 
+/* --- Airtime budget (duty cycle) ----------------------------------------------------- */
+#define MIN_US 60000000u
+
+/* Re-calibrate as the radio task does every 5 minutes, and let time pass. */
+static void wait_minutes(unsigned minutes) {
+    for (unsigned m = 0; m < minutes; m++) {
+        delay_us(MIN_US);
+        if (m % 5u == 4u) {
+            bring_up(TXGATE_TEST_CHANNEL);
+        }
+    }
+    bring_up(TXGATE_TEST_CHANNEL);
+}
+
+static void test_duty(void) {
+    uint8_t f[MAC_FRAME_MAX], ackf[MAC_ACK_LEN], up[MAC_FRAME_MAX];
+    size_t  n = wake_frame(f);
+    CHECK(data_frame(up, own, device, 10) > 0);
+    CHECK(mac_ack_for_data(ackf, up, own, 0));
+
+    /* The airtime of earlier tests leaves the window first. */
+    model_init();
+    wait_minutes(62);
+    CHECK_EQ(cc110l_airtime_used_us(), 0);
+
+    /* Wake-up frames back to back, as a train sends them, until the budget
+     * is spent: exactly as many as fit in 30 s. */
+    unsigned frames = 0;
+    for (;;) {
+        if (chip.stx_count >= MODEL_MAX_STX) {
+            check_chip();
+            chip.stx_count = 0; /* the model logs 64 at a time */
+        }
+        enum cc110l_tx_result r = cc110l_tx_start(f, n, 0);
+        if (r != CC_TX_OK) {
+            CHECK_EQ(r, CC_TX_DUTY);
+            break;
+        }
+        finish_frame();
+        frames++;
+        CHECK(frames < 100000u);
+    }
+    CHECK_EQ(frames, AIRTIME_BUDGET_US / AIRTIME_FRAME_US(MAC_WAKE_LEN));
+    CHECK(cc110l_airtime_used_us() <= AIRTIME_BUDGET_US);
+    CHECK(cc110l_airtime_used_us() + AIRTIME_FRAME_US(MAC_WAKE_LEN) > AIRTIME_BUDGET_US);
+
+    /* Refused without touching the chip, by both paths. */
+    unsigned stx = chip.stx_count, writes = chip.tx_fifo_writes, bytes = chip.spi_bytes;
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_DUTY);
+    CHECK(cc110l_tx_verify_channel());
+    bytes = chip.spi_bytes;
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_DUTY);
+    CHECK_EQ(chip.spi_bytes, bytes);
+    CHECK(!cc110l_ack_fire_from_isr());
+    CHECK_EQ(chip.stx_count, stx);
+    CHECK_EQ(chip.tx_fifo_writes, writes);
+    CHECK_EQ(chip.st, M_RX);
+
+    /* A reset and new bring-up of the chip do not give the budget back. */
+    bring_up(TXGATE_TEST_CHANNEL);
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_DUTY);
+
+    /* Still refused 59 minutes later; after 61, the hour's frames have left
+     * the window. */
+    wait_minutes(59);
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_DUTY);
+    CHECK(cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_DUTY);
+    wait_minutes(2);
+    CHECK_EQ(cc110l_airtime_used_us(), 0);
+    CHECK(cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
+    CHECK(cc110l_ack_fire_from_isr());
+    model_air(300);
+    CHECK_EQ(cc110l_airtime_used_us(), AIRTIME_FRAME_US(MAC_ACK_LEN));
+    delay_us(10000);
+
+    /* A prepared ACK that is never sent stays charged (conservative). */
+    CHECK(cc110l_tx_verify_channel());
+    CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_OK);
+    cc110l_ack_cancel();
+    CHECK_EQ(cc110l_airtime_used_us(), 2u * AIRTIME_FRAME_US(MAC_ACK_LEN));
+
+    /* A frame refused by the gate costs nothing. */
+    uint8_t bad[MAC_FRAME_MAX];
+    size_t  bn = data_frame(bad, device, another, 20);
+    CHECK_EQ(cc110l_tx_start(bad, bn, 0), CC_TX_REFUSED);
+    CHECK_EQ(cc110l_airtime_used_us(), 2u * AIRTIME_FRAME_US(MAC_ACK_LEN));
+    check_clean();
+}
+
 /* --- Random use: whatever the caller does, the chip only sends on channel 10 -------- */
 static uint32_t rnd_state = 0x1234567u;
 
@@ -753,12 +844,70 @@ static bool chip_on_test_channel(void) {
            && chip.reg[CC_MDMCFG0] == 0xF8 && trim <= TXGATE_MAX_TRIM && trim >= -TXGATE_MAX_TRIM;
 }
 
+/* Every STX of the random test with its time and airtime, for the duty
+ * cycle check: the airtime keyed in any hour, by the chip's own STX log. */
+#define EMIT_MAX 32768u
+static struct {
+    uint64_t t;
+    uint32_t cost;
+} emit[EMIT_MAX];
+static unsigned emit_head, emit_n;
+static uint64_t emit_sum, emit_max;
+
+static void emitted(size_t len) {
+    while (emit_n && model_now_us - emit[emit_head].t >= 3600000000ull) {
+        emit_sum -= emit[emit_head].cost;
+        emit_head = (emit_head + 1u) % EMIT_MAX;
+        emit_n--;
+    }
+    CHECK(emit_n < EMIT_MAX);
+    unsigned i  = (emit_head + emit_n++) % EMIT_MAX;
+    emit[i].t    = model_now_us;
+    emit[i].cost = AIRTIME_FRAME_US(len);
+    emit_sum += emit[i].cost;
+    emit_max = emit_sum > emit_max ? emit_sum : emit_max;
+    /* The budget, plus what an ACK charged at most 50 ms before its STX
+     * can add at the edge of the hour; far below 1 % (36 s). */
+    CHECK(emit_sum <= AIRTIME_BUDGET_US + 2u * AIRTIME_FRAME_US(MAC_FRAME_MAX));
+    CHECK(emit_sum <= 36000000u);
+}
+
+/* A whole wake-up train, up to 250 frames back to back (about 1 s on the
+ * air), until the driver refuses one. Returns 1 if that was for airtime. */
+static unsigned train_burst(void) {
+    uint8_t w[MAC_WAKE_LEN];
+    wake_frame(w);
+    for (unsigned i = 0; i < 250; i++) {
+        if (chip.stx_count >= MODEL_MAX_STX) {
+            check_chip();
+            chip.stx_count = 0;
+        }
+        bool                  on_plan = chip_on_test_channel();
+        bool                  busy    = cc110l_tx_expected();
+        enum cc110l_tx_result r       = cc110l_tx_start(w, sizeof w, 0);
+        if (r != CC_TX_OK) {
+            return r == CC_TX_DUTY;
+        }
+        CHECK(on_plan && !busy);
+        emitted(sizeof w);
+        model_air(300);
+        if (chip.st != M_RX) {
+            return 0;
+        }
+        cc110l_tx_done();
+    }
+    return 0;
+}
+
 static void test_random(void) {
     uint8_t f[MAC_FRAME_MAX], ackf[MAC_ACK_LEN], up[MAC_FRAME_MAX];
     model_init();
     bring_up(TXGATE_TEST_CHANNEL);
-    unsigned sent = 0, refused = 0;
+    unsigned sent = 0, refused = 0, duty = 0;
     for (unsigned step = 0; step < 200000; step++) {
+        if (rnd() % 64u == 0) {
+            duty += train_burst();
+        }
         if (chip.stx_count >= MODEL_MAX_STX) {
             check_chip();
             chip.stx_count = 0;
@@ -811,6 +960,10 @@ static void test_random(void) {
                 enum cc110l_tx_result r       = cc110l_tx_start(f, n, 0);
                 started                       = r == CC_TX_OK;
                 CHECK(!started || (legit && on_plan && !busy));
+                duty += r == CC_TX_DUTY;
+                if (started) {
+                    emitted(n);
+                }
                 break;
             }
             case 5:
@@ -827,6 +980,9 @@ static void test_random(void) {
                 }
                 started = cc110l_ack_fire_from_isr();
                 CHECK(!started || prepared);
+                if (started) {
+                    emitted(MAC_ACK_LEN);
+                }
                 break;
             }
             case 7: /* the interrupt with nothing new prepared */
@@ -842,6 +998,9 @@ static void test_random(void) {
                 break;
             case 10:
                 pass_time(rnd() % 30000u);
+                if (rnd() % 1024u == 0) {
+                    pass_time(20u * MIN_US); /* a quiet spell: the window rolls on */
+                }
                 break;
             default: {
                 size_t left;
@@ -868,6 +1027,14 @@ static void test_random(void) {
     check_chip();
     CHECK(sent > 1000);
     CHECK(refused > 1000);
+    CHECK(duty > 1000);                       /* the budget ran out, more than once */
+    CHECK(emit_max > AIRTIME_BUDGET_US - 1000000u); /* and was used up to its end */
+    printf("test_cc110l random: %u sent, %u refused (%u for airtime), max %llu us keyed in an "
+           "hour\n",
+           sent,
+           refused,
+           duty,
+           (unsigned long long)emit_max);
 }
 
 int main(void) {
@@ -882,6 +1049,7 @@ int main(void) {
     test_long_and_abort();
     test_guard();
     test_calibration();
+    test_duty();
     test_random();
     return TEST_REPORT("test_cc110l");
 }

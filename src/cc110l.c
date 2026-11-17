@@ -41,11 +41,16 @@
  *   - the transmit gate (src/txgate.c) has approved the frame against those
  *     registers: off the protected channel, on the test channel, our own
  *     source address, an ACK only as the answer to a frame addressed to us;
- *   - no other transmission of ours is on the air.
+ *   - no other transmission of ours is on the air;
+ *   - the frame's airtime fits in the rolling one-hour budget (airtime.h:
+ *     30 s per hour against the band's 1 %). Every frame is charged here,
+ *     before it is keyed: an Enhanced ACK when it is prepared, any other
+ *     frame in cc110l_tx_start().
  * The bytes that go into the TX FIFO are the driver's own copy of the
  * approved frame. */
 #include "cc110l.h"
 
+#include "airtime.h"
 #include "log.h"
 #include "mac.h"
 #include "spi1.h"
@@ -233,6 +238,16 @@ static struct {
 } ack;
 
 static enum txgate_verdict last_verdict = TXGATE_NO_IDENTITY;
+
+/* Airtime charged in the last hour. Radio task only: cc110l_tx_start() and
+ * cc110l_ack_prepare() charge it, the interrupt only sends an ACK that was
+ * charged when it was prepared. An ACK prepared and then not sent stays
+ * charged. */
+static struct airtime air;
+
+uint32_t cc110l_airtime_used_us(void) {
+    return airtime_used_us(&air, timebase_us());
+}
 
 /* The chip status byte that came back with an SIDLE header shows the state
  * the strobe found. From TX the chip needs a quarter bit to reach IDLE,
@@ -566,6 +581,9 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
     if (last_verdict != TXGATE_OK) {
         return CC_TX_REFUSED;
     }
+    if (!airtime_charge(&air, timebase_us(), AIRTIME_FRAME_US(len))) {
+        return CC_TX_DUTY;
+    }
     tx.buf[0] = (uint8_t)len;
     memcpy(tx.buf + 1, frame, len);
     tx.total     = (uint16_t)(len + 1u);
@@ -685,6 +703,9 @@ enum cc110l_tx_result cc110l_ack_prepare(const uint8_t a[MAC_ACK_LEN],
     last_verdict = judge(a, MAC_ACK_LEN, answered, 0);
     if (last_verdict != TXGATE_OK) {
         return CC_TX_REFUSED;
+    }
+    if (!airtime_charge(&air, timebase_us(), AIRTIME_FRAME_US(MAC_ACK_LEN))) {
+        return CC_TX_DUTY;
     }
     ack.buf[0] = MAC_ACK_LEN;
     memcpy(ack.buf + 1, a, MAC_ACK_LEN);

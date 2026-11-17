@@ -57,6 +57,7 @@
  * caused it. */
 #include "radio.h"
 
+#include "airtime.h"
 #include "cc110l.h"
 #include "csl.h"
 #include "link.h"
@@ -357,7 +358,8 @@ struct counters {
     uint32_t flash_ok, flash_bad, flash_in_frame, status_glitch, storm;
     uint32_t fe_pkt, fe_none, fe_stale, fe_rssi_diff; /* #11, see fe_sample */
     uint32_t ack_prepared, ack_sent, ack_late, tx_frames, tx_fail, tx_refused;
-    uint32_t tx_no_lock; /* of tx_refused: no calibration with PLL lock */
+    uint32_t tx_no_lock;        /* of tx_refused: no calibration with PLL lock */
+    uint32_t tx_duty, ack_duty; /* refused: the hour's airtime budget is spent */
 };
 static struct counters minute, total;
 
@@ -699,13 +701,15 @@ static void ack_consider(const uint8_t *hdr, uint32_t edges, bool arriving) {
         return;
     }
     taskENTER_CRITICAL();
-    bool same     = gdo0_edges == edges && gpio_get(GPIOA, BOARD_GDO0_PIN);
-    bool prepared = same && cc110l_ack_prepare(ack, hdr) == CC_TX_OK;
+    bool                  same = gdo0_edges == edges && gpio_get(GPIOA, BOARD_GDO0_PIN);
+    enum cc110l_tx_result r    = same ? cc110l_ack_prepare(ack, hdr) : CC_TX_REFUSED;
     taskEXIT_CRITICAL();
-    if (prepared) {
+    if (r == CC_TX_OK) {
         COUNT(ack_prepared);
     } else if (!same) {
         COUNT(ack_late);
+    } else if (r == CC_TX_DUTY) {
+        COUNT(ack_duty); /* no ACK: the device sends the frame again */
     }
 }
 
@@ -1220,6 +1224,11 @@ static void log_minute(void) {
         (unsigned long)minute.tx_fail,
         (unsigned long)minute.tx_refused,
         (unsigned long)minute.tx_no_lock);
+    LOG("link: airtime last hour %lu ms of %lu ms; 60 s: refused for airtime %lu frames, %lu acks",
+        (unsigned long)(cc110l_airtime_used_us() / 1000u),
+        (unsigned long)(AIRTIME_BUDGET_US / 1000u),
+        (unsigned long)minute.tx_duty,
+        (unsigned long)minute.ack_duty);
     LOG("link: totals: to server %lu, dup %lu, mic fail %lu, dropped %lu, downlinks %lu refused "
         "%lu, RA %lu",
         (unsigned long)ls->rx[LINK_RX_FORWARDED],
@@ -1290,12 +1299,18 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
         tx_wait_tick();
     }
     enum cc110l_tx_result r = cc110l_tx_start(frame, len, flags);
-    if (r == CC_TX_DISABLED || r == CC_TX_REFUSED || r == CC_TX_BUSY || r == CC_TX_NO_LOCK) {
+    if (r == CC_TX_DISABLED || r == CC_TX_REFUSED || r == CC_TX_BUSY || r == CC_TX_NO_LOCK
+        || r == CC_TX_DUTY) {
+        /* The chip was not touched: still receiving. A frame refused for
+         * airtime fails its transaction; the coordinator gives up on the
+         * datagram after CSL_ATTEMPTS (src/csl.h), it does not wait. */
         COUNT(tx_refused);
         if (r == CC_TX_NO_LOCK) {
             COUNT(tx_no_lock);
+        } else if (r == CC_TX_DUTY) {
+            COUNT(tx_duty);
         }
-        return false; /* the chip was not touched: still receiving */
+        return false;
     }
     /* cc110l_tx_start() emptied the RX FIFO. */
     rx.assembling   = false;

@@ -60,7 +60,7 @@ static struct {
     bool    cs_low, in_data, read, burst;
     uint8_t addr;
 
-    uint32_t strobes_dropped_until; /* after SIDLE */
+    uint64_t strobes_dropped_until; /* after SIDLE */
     bool     dropping;
     bool     lie_once; /* the next status byte reports TX, whatever the state */
 
@@ -78,7 +78,9 @@ static struct {
     bool             locked;
 } chip;
 
-static uint32_t model_now_us;
+/* Microseconds, 64 bits so that a test can look at hours of airtime; the
+ * driver sees the low 32 bits, as it sees TIM2. */
+static uint64_t model_now_us;
 
 /* Reset values of the registers that set the carrier: FREQ 0x1EC4EC
  * (800 MHz), CHANNR 0, MDMCFG1 0x22, MDMCFG0 0xF8, FSCTRL0 0
@@ -138,7 +140,7 @@ __attribute__((unused)) static void model_air(unsigned n) {
 }
 
 static void model_strobe(uint8_t s) {
-    if (chip.dropping && (int32_t)(model_now_us - chip.strobes_dropped_until) < 0) {
+    if (chip.dropping && model_now_us < chip.strobes_dropped_until) {
         if (s != CC_SIDLE) {
             chip.dropped++;
             return;
@@ -357,7 +359,7 @@ uint8_t spi1_xfer(uint8_t out) {
 
 /* --- Clock, log and panic ------------------------------------------------------ */
 uint32_t timebase_us(void) {
-    return model_now_us;
+    return (uint32_t)model_now_us;
 }
 
 void delay_us(uint32_t us) {

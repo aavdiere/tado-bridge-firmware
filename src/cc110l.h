@@ -195,10 +195,15 @@ enum cc110l_tx_result {
     CC_TX_REFUSED,  /* by the transmit gate: cc110l_tx_verdict() says why */
     CC_TX_BUSY,     /* another frame of ours is still on the air; nothing was touched */
     CC_TX_NO_LOCK,  /* no valid calibration with PLL lock (cc110l_cal_ok()); not touched */
+    CC_TX_DUTY,     /* the hour's airtime budget is spent (src/airtime.h); not touched */
     CC_TX_STATE,    /* the chip was found in a transmit state; abort and re-arm */
     CC_TX_SPI,      /* the chip did not answer; abort and re-arm */
 };
 enum txgate_verdict cc110l_tx_verdict(void);
+
+/* Airtime charged in the last hour, at most AIRTIME_BUDGET_US (30 s).
+ * Radio task only. */
+uint32_t cc110l_airtime_used_us(void);
 
 /* Task context. Drops a prepared Enhanced ACK, refuses while another frame
  * of ours is on the air, reads the frequency registers back, checks the
