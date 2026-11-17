@@ -19,9 +19,15 @@
 #define PRIO_RADIO        (tskIDLE_PRIORITY + 3)
 
 #define STACK_WORDS 512 /* 2 KB each; LOG() needs about 1 KB of it */
-/* 2.5 KB: the coordinator logs from four calls deep, and sealing a frame
- * takes about 0.5 KB (#17). To be measured on the bench ("alive:" line). */
-#define RADIO_STACK_WORDS 640
+/* 3.5 KB. Deepest path (#19): the pair button creates a network, whose key
+ * draw may reseed the DRBG: radio_task_run 224 + network_create 88 +
+ * rng_random 24 + mbedtls_ctr_drbg_random(_with_add) 104 + reseed 416 +
+ * block_cipher_df 832 + AES 124 bytes = about 1.8 KB by -fstack-usage
+ * (without LTO), plus an exception frame of up to 104 bytes with the FPU:
+ * about 1.9 KB, against about 1.1 KB on the receive and coordinator paths
+ * (#17). 896 words leave about 1.6 KB. To be measured on the bench
+ * ("alive:" line, after a window opened on a bridge without a network). */
+#define RADIO_STACK_WORDS 896
 #define NET_STACK_WORDS   1536 /* 6 KB: lwIP input down to the driver (#13), then TLS (#15) */
 
 static TaskHandle_t h_radio, h_net, h_hk;
