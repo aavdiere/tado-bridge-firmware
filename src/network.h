@@ -1,6 +1,8 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#include "ccm.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -18,12 +20,18 @@
 void network_boot(void);
 
 /* A fresh network on `channel` (only the test channel 10; never 26) with a
- * new key from the CTR_DRBG, written to the network record, then set as in
- * network_boot(). Replaces any earlier network: devices paired to it must
- * be paired again. The key is never logged and never leaves the bridge.
- * False if refused or if any step failed. May wait for a DRBG reseed
- * (about 45 ms) and for a sector erase (up to 240 ms). */
-bool network_create(uint8_t channel);
+ * new key from the CTR_DRBG, written to the network record and read back
+ * as a boot would read it, then set as in network_boot(). Replaces any
+ * earlier network: devices paired to it must be paired again. True only
+ * if the record read back is the one just written (its seq and contents);
+ * then key_out (if not NULL) receives the key read back, which is the one
+ * now in use, for pairing to send to a device under the pairing key
+ * (docs/radio.md "Link security and pairing"). The key is never logged.
+ * False if refused or if any step failed; once the write has started, a
+ * failure also leaves no key set until the next boot, which loads the
+ * newest valid record. May wait for a DRBG reseed (about 45 ms) and for a
+ * sector erase (up to 240 ms). */
+bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]);
 
 /* Radio task, at a quiet moment (no frame arriving, no transaction on the
  * air): moves the counter reservation up once less than 2048 remains. */

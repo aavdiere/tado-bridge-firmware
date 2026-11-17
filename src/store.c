@@ -136,8 +136,12 @@ bool store_slot_load(uint32_t  slot_a,
     return va || vb;
 }
 
-bool store_slot_write(
-    uint32_t slot_a, uint32_t magic, uint16_t version, const uint8_t *payload, uint16_t len) {
+bool store_slot_write(uint32_t       slot_a,
+                      uint32_t       magic,
+                      uint16_t       version,
+                      const uint8_t *payload,
+                      uint16_t       len,
+                      uint32_t      *written) {
     if (len > STORE_REC_PAYLOAD || magic == 0xFFFFFFFFu) {
         return false;
     }
@@ -173,6 +177,9 @@ bool store_slot_write(
     ok           = slot_read(target, magic, version, scratch, len, &seq) && seq == newest + 1u
                    && memcmp(scratch, payload, len) == 0;
     wipe(scratch, sizeof scratch);
+    if (ok && written) {
+        *written = seq;
+    }
     return ok;
 }
 
@@ -202,7 +209,7 @@ bool store_net_load(struct store_net *out, uint32_t *seq) {
     return ok;
 }
 
-bool store_net_write(const struct store_net *n) {
+bool store_net_write(const struct store_net *n, uint32_t *seq) {
     if (!store_net_allowed(n)) {
         return false;
     }
@@ -212,8 +219,20 @@ bool store_net_write(const struct store_net *n) {
     p[3] = 0;
     memcpy(p + 4, n->key, CCM_KEY_LEN);
     put32(p + 4 + CCM_KEY_LEN, n->counter_floor);
-    bool ok = store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p);
+    bool ok = store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, seq);
     wipe(p, sizeof p);
+    return ok;
+}
+
+bool store_net_commit(const struct store_net *n, struct store_net *out, uint32_t *seq) {
+    uint32_t written = 0;
+    bool     ok      = store_net_write(n, &written) && store_net_load(out, seq) && *seq == written
+                       && out->pan_id == n->pan_id && out->channel == n->channel
+                       && memcmp(out->key, n->key, CCM_KEY_LEN) == 0
+                       && out->counter_floor == n->counter_floor;
+    if (!ok) {
+        wipe(out, sizeof *out);
+    }
     return ok;
 }
 

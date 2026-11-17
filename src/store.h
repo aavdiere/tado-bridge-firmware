@@ -54,9 +54,14 @@ bool store_slot_load(uint32_t  slot_a,
                      uint8_t  *payload,
                      uint16_t  len,
                      uint32_t *seq);
-/* Writes a new generation into the older or invalid slot. */
-bool store_slot_write(
-    uint32_t slot_a, uint32_t magic, uint16_t version, const uint8_t *payload, uint16_t len);
+/* Writes a new generation into the older or invalid slot; *written (if
+ * not NULL) is its seq. */
+bool store_slot_write(uint32_t       slot_a,
+                      uint32_t       magic,
+                      uint16_t       version,
+                      const uint8_t *payload,
+                      uint16_t       len,
+                      uint32_t      *written);
 
 uint32_t store_crc32(const uint8_t *p, size_t n);
 
@@ -78,8 +83,13 @@ bool store_net_allowed(const struct store_net *n);
 
 /* The newest valid network record that store_net_allowed() accepts. */
 bool store_net_load(struct store_net *out, uint32_t *seq);
-/* Refuses a network store_net_allowed() rejects. */
-bool store_net_write(const struct store_net *n);
+/* Refuses a network store_net_allowed() rejects. *seq (if not NULL): the
+ * seq written. */
+bool store_net_write(const struct store_net *n, uint32_t *seq);
+/* Writes n, then loads the network as a boot would: true only if the
+ * newest valid record is the one just written (its seq) and equal to n.
+ * *out is the record read back (wiped on false), *seq its seq. */
+bool store_net_commit(const struct store_net *n, struct store_net *out, uint32_t *seq);
 
 /* --- Counter log ----------------------------------------------------------- */
 #define STORE_CTR_ENTRY   8u

@@ -27,7 +27,13 @@ static struct {
     unsigned prog_fail;  /* without a power cut, every program: see enum fail */
     unsigned erase_fail; /* without a power cut, every erase: see enum fail */
     uint32_t protect;    /* a sector that must never be erased (0: none) */
-    unsigned ops;        /* program + erase steps so far */
+    /* A weak bit: once a program covers fade_addr, fade_after more reads of
+     * that byte see it programmed, then fade_mask reads 1 again. */
+    uint32_t fade_addr; /* 0: none */
+    uint8_t  fade_mask;
+    unsigned fade_after;
+    bool     fade_armed, fade_done;
+    unsigned ops; /* program + erase steps so far */
     unsigned cuts_program, cuts_erase;
     unsigned ctr_erases;        /* completed erases of a counter-log sector */
     uint32_t last_prog_addr;    /* address of the last completed program */
@@ -69,6 +75,15 @@ bool store_port_read(uint32_t addr, uint8_t *dst, size_t n) {
     }
     if (addr < FLASH_NET_A + FLASH_SECTOR && addr + n > FLASH_NET_A + 4u) {
         fm.slot_a_body_reads++;
+    }
+    if (fm.fade_armed && addr <= fm.fade_addr && fm.fade_addr < addr + n) {
+        if (fm.fade_after == 0) {
+            mem[fm.fade_addr] |= fm.fade_mask;
+            fm.fade_armed = false;
+            fm.fade_done  = true;
+        } else {
+            fm.fade_after--;
+        }
     }
     memcpy(dst, mem + addr, n);
     return true;
@@ -118,6 +133,9 @@ bool store_port_program(uint32_t addr, const uint8_t *src, size_t n) {
         mem[addr + i] &= src[i];
     }
     fm.last_prog_addr = addr;
+    if (fm.fade_addr && !fm.fade_done && addr <= fm.fade_addr && fm.fade_addr < addr + n) {
+        fm.fade_armed = true;
+    }
     if (fm.weak) {
         fm.weak  = false;
         size_t i = rnd() % n;
@@ -185,6 +203,8 @@ static void reboot(void) {
     fm.weak      = false;
     fm.prog_fail = fm.erase_fail = FAIL_NONE;
     fm.protect                   = 0;
+    fm.fade_addr                 = 0;
+    fm.fade_armed = fm.fade_done = false;
     store_ctr_forget();
 }
 
@@ -230,7 +250,7 @@ static bool same_net(const struct store_net *a, const struct store_net *b) {
 /* Steps (programs + erases) of one uncut call. */
 static unsigned steps_of_net_write(const struct store_net *n) {
     unsigned before = fm.ops;
-    CHECK(store_net_write(n));
+    CHECK(store_net_write(n, NULL));
     return fm.ops - before;
 }
 
@@ -254,19 +274,19 @@ static void test_record_basic(void) {
     CHECK_EQ(fm.slot_a_body_reads, 0);
 
     struct store_net a = make_net(1, 0), b = make_net(2, 4096), c = make_net(3, 8192);
-    CHECK(store_net_write(&a));
+    CHECK(store_net_write(&a, NULL));
     CHECK(store_net_load(&got, &seq));
     CHECK_EQ(seq, 1);
     CHECK(same_net(&got, &a));
     /* Slot A held the stock data, so it was the invalid one and got the
      * first record; the next goes to B, then A again. */
     CHECK_EQ(mem[FLASH_NET_A], 0x4E);
-    CHECK(store_net_write(&b));
+    CHECK(store_net_write(&b, NULL));
     CHECK(store_net_load(&got, &seq));
     CHECK_EQ(seq, 2);
     CHECK(same_net(&got, &b));
     CHECK_EQ(mem[FLASH_NET_B], 0x4E);
-    CHECK(store_net_write(&c));
+    CHECK(store_net_write(&c, NULL));
     CHECK(store_net_load(&got, &seq));
     CHECK_EQ(seq, 3);
     CHECK(same_net(&got, &c));
@@ -287,13 +307,13 @@ static void test_record_basic(void) {
     struct store_net d = make_net(4, 0);
     for (unsigned t = 0; t < 20; t++) {
         fm.weak = true;
-        CHECK(!store_net_write(&d));
+        CHECK(!store_net_write(&d, NULL));
         fm.weak = false;
         CHECK(store_net_load(&got, &seq));
         CHECK_EQ(seq, 3);
         CHECK(same_net(&got, &c));
     }
-    CHECK(store_net_write(&d));
+    CHECK(store_net_write(&d, NULL));
     CHECK(store_net_load(&got, &seq));
     CHECK_EQ(seq, 4);
     CHECK(same_net(&got, &d));
@@ -306,27 +326,27 @@ static void test_record_policy(void) {
     uint32_t         seq;
     unsigned         ops_start = fm.ops;
     n.channel                  = TXGATE_PROTECTED_CHANNEL;
-    CHECK(!store_net_write(&n));
+    CHECK(!store_net_write(&n, NULL));
     n.channel = TXGATE_TEST_CHANNEL - 1u;
-    CHECK(!store_net_write(&n));
+    CHECK(!store_net_write(&n, NULL));
     n.channel     = TXGATE_TEST_CHANNEL;
     n.pan_id      = 0xFFFF;
     unsigned ops0 = fm.ops;
-    CHECK(!store_net_write(&n));
+    CHECK(!store_net_write(&n, NULL));
     CHECK_EQ(fm.ops, ops0); /* refused before touching the flash */
     CHECK_EQ(fm.ops, ops_start);
 
     /* A well-formed record for channel 26 (written around the policy) is
      * never loaded. */
     uint8_t p[STORE_NET_LEN] = {0xCD, 0xAB, TXGATE_PROTECTED_CHANNEL, 0};
-    CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p));
+    CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
     CHECK(!store_net_load(&got, &seq));
     p[2] = TXGATE_TEST_CHANNEL;
-    CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p));
+    CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
     CHECK(store_net_load(&got, &seq));
     CHECK_EQ(seq, 2);
     p[2] = TXGATE_PROTECTED_CHANNEL;
-    CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p));
+    CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
     CHECK(!store_net_load(&got, &seq)); /* the newest is refused, not an older one taken */
 }
 
@@ -345,12 +365,12 @@ static void test_record_cuts(void) {
                 uint32_t         seq = 0, old_seq = 0;
                 for (unsigned h = 0; h < history; h++) {
                     old = make_net((uint8_t)(20 + h), h);
-                    CHECK(store_net_write(&old));
+                    CHECK(store_net_write(&old, NULL));
                     old_seq = h + 1u;
                 }
                 fm.rnd    = seed * 7919u + k;
                 fm.cut_in = k;
-                bool ok   = store_net_write(&neu);
+                bool ok   = store_net_write(&neu, NULL);
                 if (fm.cut_in != 0) {
                     /* Fewer than k steps: the write finished uncut. */
                     CHECK(ok);
@@ -370,7 +390,7 @@ static void test_record_cuts(void) {
                 }
                 /* And the store works on after the cut. */
                 uint32_t before = loaded ? seq : 0;
-                CHECK(store_net_write(&neu));
+                CHECK(store_net_write(&neu, NULL));
                 CHECK(store_net_load(&got, &seq));
                 CHECK_EQ(seq, before + 1u);
                 CHECK(same_net(&got, &neu));
@@ -383,6 +403,86 @@ static void test_record_cuts(void) {
     }
     printf("test_store: record write cut at every step: %u cases\n", cases);
     CHECK(cases >= 3u * 8u * 3u);
+}
+
+static bool all_zero(const void *p, size_t n) {
+    const uint8_t *b = p;
+    while (n--) {
+        if (*b++) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* store_net_commit(): true only if the network read back as a boot would
+ * read it is the one just written. A magic bit that reads right while the
+ * record is written and verified and then fades (a weak bit) leaves the
+ * older record as the newest valid one: the commit fails instead of
+ * handing back the older network's key. Swept over when the bit fades. */
+static void test_net_commit(void) {
+    struct store_net a = make_net(1, 0), b = make_net(2, 100), c = make_net(3, 200), got;
+    uint32_t         seq = 0;
+    flash_stock();
+    reboot();
+    CHECK(store_net_write(&a, &seq));
+    CHECK_EQ(seq, 1);
+    CHECK(store_net_commit(&b, &got, &seq));
+    CHECK_EQ(seq, 2);
+    CHECK(same_net(&got, &b));
+    /* A bit the write's own read-back catches. */
+    fm.weak = true;
+    CHECK(!store_net_commit(&c, &got, &seq));
+    CHECK(all_zero(&got, sizeof got));
+
+    unsigned by_write = 0, by_reload = 0, held = 0;
+    for (unsigned after = 0; after < 12; after++) {
+        bool     write_alone = false;
+        uint32_t wseq        = 0;
+        for (unsigned pass = 0; pass < 2; pass++) {
+            flash_stock();
+            reboot();
+            CHECK(store_net_write(&a, NULL));
+            CHECK(store_net_write(&b, NULL)); /* seq 1 in A, 2 in B: the next goes to A */
+            fm.fade_addr  = FLASH_NET_A;      /* magic byte 0x4E: bit 0 programmed */
+            fm.fade_mask  = 0x01;
+            fm.fade_after = after;
+            if (pass == 0) {
+                write_alone = store_net_write(&c, &wseq); /* what the write itself sees */
+                continue;
+            }
+            bool ok    = store_net_commit(&c, &got, &seq);
+            bool faded = fm.fade_done;
+            reboot();
+            struct store_net now;
+            uint32_t         now_seq = 0;
+            CHECK(store_net_load(&now, &now_seq));
+            if (ok) {
+                CHECK(write_alone && wseq == 3);
+                CHECK_EQ(seq, 3);
+                CHECK(same_net(&got, &c));
+                CHECK(!faded);
+                held++;
+            } else {
+                CHECK(all_zero(&got, sizeof got));
+                CHECK(faded);
+                /* The older network is what a boot would run. */
+                CHECK_EQ(now_seq, 2);
+                CHECK(same_net(&now, &b));
+                if (write_alone) {
+                    by_reload++; /* reported written, gone at the read-back */
+                } else {
+                    by_write++;
+                }
+            }
+        }
+    }
+    printf("test_store: network commit with a fading magic bit: caught by the write %u, by the "
+           "read-back %u, held %u\n",
+           by_write,
+           by_reload,
+           held);
+    CHECK(by_write > 0 && by_reload > 0 && held > 0);
 }
 
 /* Counter log: boot, use counters, extend; cuts at random steps, many
@@ -755,7 +855,7 @@ static void test_network_flow_cuts(void) {
         reboot();
         fm.rnd         = k * 13u;
         fm.cut_in      = k;
-        bool     wrote = store_net_write(&net);
+        bool     wrote = store_net_write(&net, NULL);
         uint32_t first = 0, limit = 0;
         bool     reserved = wrote && store_counter_boot(net.counter_floor, &first, &limit);
         bool     cut      = fm.cut_in == 0;
@@ -785,6 +885,7 @@ int main(void) {
     test_record_basic();
     test_record_policy();
     test_record_cuts();
+    test_net_commit();
     test_counter_floor();
     test_counter_garbage();
     test_counter_switch_cuts();

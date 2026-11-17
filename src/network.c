@@ -12,6 +12,8 @@
 
 #include "mbedtls/platform_util.h"
 
+#include <string.h>
+
 _Static_assert(RADIO_CHANNEL == TXGATE_TEST_CHANNEL, "the record holds the test channel only");
 
 #define RETRY_MS 10000u /* after a failed counter-log write */
@@ -65,7 +67,7 @@ void network_boot(void) {
     mbedtls_platform_zeroize(&n, sizeof n);
 }
 
-bool network_create(uint8_t channel) {
+bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]) {
     if (channel != TXGATE_TEST_CHANNEL || channel == TXGATE_PROTECTED_CHANNEL) {
         LOG("network: create on channel %u refused (test channel %u only)",
             channel,
@@ -83,26 +85,30 @@ bool network_create(uint8_t channel) {
         LOG("network: create failed: counter log unreadable");
         return false;
     }
-    struct store_net n  = {.pan_id = MAC_PAN_ID, .channel = channel, .counter_floor = max};
-    bool             ok = rng_random(NULL, n.key, sizeof n.key) == 0;
-    if (!ok) {
+    struct store_net n = {.pan_id = MAC_PAN_ID, .channel = channel, .counter_floor = max};
+    struct store_net got;
+    uint32_t         seq = 0;
+    if (rng_random(NULL, n.key, sizeof n.key) != 0) {
+        mbedtls_platform_zeroize(&n, sizeof n);
         LOG("network: create failed: no random numbers");
-    } else if (!(ok = store_net_write(&n))) {
-        LOG("network: create failed: network record not written");
-    }
-    mbedtls_platform_zeroize(&n, sizeof n);
-    if (!ok) {
         return false;
     }
-    /* Use what a boot would read. */
+    /* From here the flash may hold the new record or the old one: run
+     * neither until it is read back as a boot would read it. */
     link_clear_key();
-    active       = false;
-    uint32_t seq = 0;
-    ok           = store_net_load(&n, &seq) && activate(&n, seq);
+    active  = false;
+    bool ok = store_net_commit(&n, &got, &seq);
     mbedtls_platform_zeroize(&n, sizeof n);
-    if (ok) {
+    if (!ok) {
+        LOG("network: create failed: record not written or not read back: no key until the next "
+            "boot");
+    } else if ((ok = activate(&got, seq))) {
+        if (key_out) {
+            memcpy(key_out, got.key, CCM_KEY_LEN); /* the key now in use, as read back */
+        }
         LOG("network: created on channel %u", channel);
     }
+    mbedtls_platform_zeroize(&got, sizeof got);
     return ok;
 }
 
