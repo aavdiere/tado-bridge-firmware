@@ -35,9 +35,9 @@ Pick the subagent by the task, not by the stage. Each one has its own model and 
 | :--- | :--- | :--- |
 | Project setup from `stm-template`, CMake, build scripts, simple GPIO (LEDs, button), routine code | `fw-routine` | Sonnet, medium |
 | Clock tree, CC110L driver, ENC28J60 driver, lwIP port, mbedTLS config, entropy, storage records | `fw-driver` | Opus, high |
-| freedo MAC and 6LoWPAN port, ACK timing, pairing, wake trains; bootloader, self-update, rollback | `fw-critical` | Fable, high |
-| Behaviour-preserving clean-up of the whole repository (P8), in small commits | `fw-critical` (reviewed by `fw-reviewer`) | Fable, high |
-| Review before anything is flashed, and of any change to bootloader, storage format or radio timing | `fw-reviewer` | Fable, high, read-only |
+| freedo MAC and 6LoWPAN port, ACK timing, pairing, wake trains; bootloader, self-update, rollback | `fw-critical` | Opus, high |
+| Behaviour-preserving clean-up of the whole repository (P8), in small commits | `fw-critical` (reviewed by `fw-reviewer`) | Opus, high |
+| Review before anything is flashed, and of any change to bootloader, storage format or radio timing | `fw-reviewer` | Opus, high, read-only |
 | RTL-SDR: channel scans, GFSK demodulation, frequency offset, ACK and beacon timing over the air | `rf-bench` | Opus, high |
 | Reading long RTT logs, OpenOCD output, logic captures, size reports | `log-reader` | Haiku, low, read-only |
 | Docs upkeep, issue and milestone updates, commit messages | `docs-keeper` | Sonnet, low |

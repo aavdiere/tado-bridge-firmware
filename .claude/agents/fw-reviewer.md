@@ -1,7 +1,7 @@
 ---
 name: fw-reviewer
 description: Independent read-only review for the IB01 bridge firmware. Use proactively before anything is flashed onto a bridge, and for any change to the bootloader, storage format, radio timing or flash layout.
-model: fable
+model: opus
 effort: high
 tools: Read, Grep, Glob, Bash
 color: purple

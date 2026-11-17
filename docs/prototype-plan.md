@@ -73,7 +73,7 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 | P5 Radio link to devices | `fw-critical` | `rf-bench` for over-the-air timing; `fw-reviewer` before flashing |
 | P6 Storage | `fw-driver` | `fw-reviewer` for power-cut safety |
 | P7 Size check, bootloader, self-update | `fw-critical` | `fw-reviewer` before flashing; `log-reader` for size reports |
-| P8 Code clean-up | `fw-critical` (Fable, high) | `fw-reviewer`; `log-reader` for size reports |
+| P8 Code clean-up | `fw-critical` (Opus, high) | `fw-reviewer`; `log-reader` for size reports |
 | Any stage | `docs-keeper` for docs, issues and commits | `fw-reviewer` before anything goes onto a board |
 
 ## Stages
@@ -217,14 +217,14 @@ Restructured in the 2026-11-16 review. The steps run in this order, because each
 
 ### P8: Code clean-up checkpoint
 
-Owner request, 2026-11-14 (`docs/README.md`, "Project decisions"). Runs after P7. Fable skims the whole repository and rewrites messy or unclear code without changing functionality. Issues: #32 (survey and progress list), #33 (per-module clean-up), #34 (proposal for major changes).
+Owner request, 2026-11-14 (`docs/README.md`, "Project decisions"). Runs after P7. Opus skims the whole repository and rewrites messy or unclear code without changing functionality. Issues: #32 (survey and progress list), #33 (per-module clean-up), #34 (proposal for major changes).
 
 - **Behaviour-preserving only.** No functional change. Verify each step with the build and the size report, and where hardware is involved with the existing bench checks within `test-bench.md`. Any change touching the bootloader, the storage format or radio timing still needs a `fw-reviewer` "safe to flash" verdict before it is flashed.
 - **Test-only code:** remove none that the owner wants kept; otherwise the existing rule applies, no test-only code is left in (`docs/README.md`, "Project decisions", 2026-11-11).
-- **Small steps, frequent checkpoints.** One commit per file or module, with the build passing, so work can resume from the last commit if Fable usage runs out. On a Fable limit, rerun on Opus high (owner's standing fallback rule).
+- **Small steps, frequent checkpoints.** One commit per file or module, with the build passing, so work can resume from the last commit if usage runs out.
 - **Progress list:** a checklist of files and modules (done, todo, needs proposal) lives in #32 and is ticked after each commit, so a later session can continue.
 - **Major changes are not made directly.** Architecture, module boundaries, API changes and renames across modules are written up as a plan and proposed to the owner for approval first (#34).
-- **Subagents:** `fw-critical` (Fable, high) does the rewriting; `fw-reviewer` reviews.
+- **Subagents:** `fw-critical` (Opus, high) does the rewriting; `fw-reviewer` reviews.
 - **Done when:** every module on the progress list is done or moved to an approved proposal, the build and size report match the pre-clean-up behaviour, and the bench checks still pass.
 
 ## Equipment

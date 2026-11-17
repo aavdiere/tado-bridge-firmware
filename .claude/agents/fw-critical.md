@@ -1,7 +1,7 @@
 ---
 name: fw-critical
 description: The hardest and riskiest firmware work for the IB01 bridge. Use for porting freedo's MAC and 6LoWPAN layer from Go to C, Enhanced ACK timing, wake trains and anchors, listen-before-transmit, pairing and the beacon answer, and for the bootloader, self-update and rollback.
-model: fable
+model: opus
 effort: high
 color: red
 ---
