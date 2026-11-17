@@ -262,10 +262,11 @@ const uint8_t *link_beacon(size_t *len, const uint8_t **answered) {
     return beacon_len ? beacon : NULL;
 }
 
-void link_beacon_done(bool sent) {
+void link_beacon_done(bool sent, uint32_t now_ms) {
     if (beacon_len) {
         if (sent) {
             stats.beacons_sent++;
+            pair_beacon_sent(now_ms);
         } else {
             stats.beacons_dropped++;
         }
@@ -322,13 +323,16 @@ static void router_advertisement(uint32_t now_ms, uint32_t rnd) {
         return;
     }
     ra_due_ms = now_ms + RA_MIN_MS + rnd % RA_SPAN_MS;
-    /* In a pairing window with an advertisement pair left, every
-     * advertisement goes as a pair, or waits until one fits: never as a
-     * lone copy that the joiner cannot read, so a window sends at most
-     * PAIR_RA_PAIRS_MAX pairs and nothing else in their place. */
-    bool pairing = pair_ra_pairs_left(now_ms);
+    /* In a pairing window with an advertisement pair left, the window's
+     * first advertisement and every one during an exchange with the target
+     * go as a pair, or wait until one fits: never as a lone copy that the
+     * joiner cannot read, so a window sends at most PAIR_RA_PAIRS_MAX pairs
+     * and nothing else in their place. Between exchanges the periodic ones
+     * go as outside a window (pair_ra_pair_wanted()), so that the 10-minute
+     * window keeps its pairs for the target. */
+    bool pairing = pair_ra_pair_wanted(now_ms);
     if (!pairing && (!heard || (uint32_t)(now_ms - heard_ms) > RA_LISTENER_MS)) {
-        return; /* nobody to hear it; in a pairing window the joiner does */
+        return; /* nobody to hear it; a pair is for the joiner */
     }
     if (pairing && (csl_broadcasts_queued() != 0 || !csl_room_for_broadcasts(2))) {
         ra_due_ms = now_ms + RA_SOLICITED_MS; /* the one before is still queued: try again */
@@ -456,6 +460,10 @@ void link_pair_close(void) {
 
 bool link_pair_active(uint32_t now_ms) {
     return pair_active(now_ms);
+}
+
+bool link_pair_engaged(uint32_t now_ms) {
+    return pair_engaged(now_ms);
 }
 
 bool link_pair_frames_queued(void) {

@@ -16,7 +16,10 @@
  *   seconds after the target has taken the beacon, not on an operator's
  *   request, and always under the pairing key.
  * - The window counts what it sends (beacons, advertisement pairs, d/pair
- *   datagrams) and stops at fixed limits (pair.h). */
+ *   datagrams) and stops at fixed limits (pair.h).
+ * - The window lasts 10 minutes and holds any number of exchanges with its
+ *   target; a 2.04 ends an exchange, not the window (owner spec
+ *   2026-11-17). */
 #include "pair.h"
 
 #include <string.h>
@@ -50,7 +53,7 @@ const uint8_t pair_static_key[CCM_KEY_LEN] = {
 #define MID_SPAN            0x2000u
 
 static struct {
-    bool           open, have_target, replied;
+    bool           open, have_target;
     uint32_t       opened_ms;
     uint8_t        target[MAC_EUI_LEN];
     uint8_t        net_key[CCM_KEY_LEN];
@@ -59,10 +62,19 @@ static struct {
     uint16_t       mid_base;
 
     unsigned beacons, ra_pairs;
-    /* d/pair: due at due_ms once armed; one datagram in flight at most. */
+    /* The exchange with the target (pair.h): going on, its number in this
+     * window (from 1), and the time of its last progress. */
+    bool     engaged;
+    unsigned exchange;
+    uint32_t progress_ms;
+    /* d/pair: due at due_ms once armed; one datagram in flight at most.
+     * Per datagram: the exchange it was sent in, and whether its 2.04
+     * came. */
     bool     armed, in_flight;
     uint32_t due_ms;
     unsigned dpair_sent;
+    unsigned dpair_ex[PAIR_DPAIR_MAX];
+    bool     dpair_paired[PAIR_DPAIR_MAX];
 } w;
 
 static struct pair_stats stats;
@@ -79,6 +91,9 @@ void pair_init(void) {
     w.have_target = false;
     w.dpair_sent  = 0;
     w.in_flight   = false;
+    w.exchange    = 0;
+    memset(w.dpair_ex, 0, sizeof w.dpair_ex);
+    memset(w.dpair_paired, 0, sizeof w.dpair_paired);
 }
 
 bool pair_open(const uint8_t target[MAC_EUI_LEN],
@@ -101,7 +116,6 @@ bool pair_open(const uint8_t target[MAC_EUI_LEN],
     /* Below the server's 0x7000-0xFFFF (tanoclo ws-server/lib/coap-transport.js:39-44),
      * so an answer to the server's request is never taken for ours. */
     w.mid_base    = (uint16_t)(MID_FIRST + ((rnd[0] << 8 | rnd[1]) % MID_SPAN));
-    w.replied     = false;
     w.have_target = true;
     w.open        = true;
     w.opened_ms   = now_ms;
@@ -114,16 +128,50 @@ void pair_close(void) {
     wipe(w.net_key, sizeof w.net_key);
     wipe(w.rnd, sizeof w.rnd);
     w.open     = false;
+    w.engaged  = false;
     w.armed    = false;
     w.beacons  = 0;
     w.ra_pairs = 0;
+}
+
+/* The exchange is over (paired, failed or idle): no d/pair is due any more
+ * until the target shows up again. */
+static void end_exchange(void) {
+    w.engaged = false;
+    w.armed   = false;
+}
+
+/* An exchange starts, or the one going on made progress. */
+static void progress(uint32_t now_ms) {
+    if (!w.engaged) {
+        w.engaged = true;
+        w.exchange++;
+        stats.exchanges++;
+        w.progress_ms = now_ms;
+    } else if ((int32_t)(now_ms - w.progress_ms) > 0) {
+        w.progress_ms = now_ms;
+    }
 }
 
 bool pair_active(uint32_t now_ms) {
     if (w.open && (uint32_t)(now_ms - w.opened_ms) >= PAIR_WINDOW_MS) {
         pair_close();
     }
+    /* Signed: a caller's clock read a little before the last progress (the
+     * radio task reads it once per loop pass) is not 49 days later. */
+    if (w.engaged && w.in_flight) {
+        if ((int32_t)(now_ms - w.progress_ms) > 0) {
+            w.progress_ms = now_ms; /* a d/pair in flight: its time does not count */
+        }
+    } else if (w.engaged && (int32_t)(now_ms - w.progress_ms) >= (int32_t)PAIR_EXCHANGE_IDLE_MS) {
+        stats.ex_idle++;
+        end_exchange();
+    }
     return w.open;
+}
+
+bool pair_engaged(uint32_t now_ms) {
+    return pair_active(now_ms) && w.engaged;
 }
 
 const struct ccm_key *pair_key(void) {
@@ -182,7 +230,6 @@ static enum pair_req check_request(const uint8_t *req, size_t len, uint32_t now_
         return PAIR_REQ_NOT_BEACON_REQ;
     }
     w.beacons++;
-    arm(now_ms + PAIR_DPAIR_FALLBACK_MS);
     return PAIR_REQ_OK;
 }
 
@@ -214,17 +261,30 @@ size_t pair_build_beacon(uint8_t       out[PAIR_BEACON_LEN],
     return n == PAIR_BEACON_LEN ? n : 0;
 }
 
+void pair_beacon_sent(uint32_t now_ms) {
+    if (!pair_active(now_ms)) {
+        return;
+    }
+    progress(now_ms);
+    arm(now_ms + PAIR_DPAIR_FALLBACK_MS);
+}
+
 /* --- The target's other frames ---------------------------------------------- */
 void pair_note_joiner(uint32_t now_ms) {
     if (!pair_active(now_ms)) {
         return;
     }
     stats.joiner_frames++;
+    progress(now_ms);
     arm(now_ms + PAIR_DPAIR_DELAY_MS);
 }
 
 bool pair_ra_pairs_left(uint32_t now_ms) {
     return pair_active(now_ms) && w.ra_pairs < PAIR_RA_PAIRS_MAX;
+}
+
+bool pair_ra_pair_wanted(uint32_t now_ms) {
+    return pair_ra_pairs_left(now_ms) && (w.engaged || w.ra_pairs == 0);
 }
 
 bool pair_take_ra_pair(uint32_t now_ms) {
@@ -272,16 +332,19 @@ size_t pair_build_coap(uint8_t      *out,
 }
 
 size_t pair_dpair_due(uint8_t *coap, size_t cap, uint32_t now_ms) {
-    if (!pair_active(now_ms) || !w.armed || w.in_flight || w.dpair_sent >= PAIR_DPAIR_MAX
-        || (int32_t)(now_ms - w.due_ms) < 0) {
+    if (!pair_active(now_ms) || !w.engaged || !w.armed || w.in_flight
+        || w.dpair_sent >= PAIR_DPAIR_MAX || (int32_t)(now_ms - w.due_ms) < 0) {
         return 0;
     }
     uint16_t mid = (uint16_t)(w.mid_base + w.dpair_sent);
     size_t   n =
         pair_build_coap(coap, cap, mid, w.rnd + 2 + PAIR_SESSION_LEN * w.dpair_sent, w.net_key);
     if (n) {
-        w.armed     = false;
-        w.in_flight = true;
+        w.dpair_ex[w.dpair_sent]     = w.exchange;
+        w.dpair_paired[w.dpair_sent] = false;
+        w.armed                      = false;
+        w.in_flight                  = true;
+        w.progress_ms                = now_ms;
         w.dpair_sent++;
         stats.dpair_sent++;
     }
@@ -297,6 +360,10 @@ void pair_dpair_done(bool delivered) {
         stats.dpair_delivered++;
     } else {
         stats.dpair_failed++;
+        if (w.engaged && w.dpair_sent >= PAIR_DPAIR_MAX) {
+            stats.ex_failed++; /* nothing left to send the key with */
+            end_exchange();
+        }
     }
 }
 
@@ -306,18 +373,31 @@ enum pair_reply pair_reply(const uint8_t src[MAC_EUI_LEN], const uint8_t *coap, 
         return PAIR_REPLY_NONE;
     }
     uint16_t mid = (uint16_t)(coap[2] << 8 | coap[3]);
-    if ((uint16_t)(mid - w.mid_base) >= w.dpair_sent) {
+    unsigned i   = (uint16_t)(mid - w.mid_base);
+    if (i >= w.dpair_sent) {
         return PAIR_REPLY_NONE; /* an answer to the server's own request */
     }
+    /* The answer to a d/pair of the exchange going on ends it; a late one,
+     * to an earlier exchange's d/pair, changes nothing but the count. */
+    bool current = w.open && w.engaged && w.dpair_ex[i] == w.exchange;
     if (coap[1] != COAP_CHANGED) {
+        if (current) {
+            stats.ex_failed++;
+            end_exchange();
+        }
         return PAIR_REPLY_OTHER;
     }
-    if (!w.replied) {
-        w.replied = true;
+    /* Counted once per exchange, also when it comes after the window. */
+    bool counted = false;
+    for (unsigned j = 0; j < w.dpair_sent; j++) {
+        counted |= w.dpair_ex[j] == w.dpair_ex[i] && w.dpair_paired[j];
+    }
+    w.dpair_paired[i] = true;
+    if (!counted) {
         stats.paired++;
     }
-    if (w.open) {
-        pair_close();
+    if (current) {
+        end_exchange(); /* the window stays open (owner spec 2026-11-17) */
     }
     return PAIR_REPLY_PAIRED;
 }

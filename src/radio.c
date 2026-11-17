@@ -63,8 +63,12 @@
  * The Enhanced Beacon that answers the target's Beacon Request is built
  * while the request is taken (link_on_frame()) and sent from frame_done(),
  * before anything logs, PAIR_BEACON_TX_AT_US after the request's end edge
- * (see beacon_answer()). The pairing LED (PB8) is on while a window is open
- * and goes off at the beacon's STX strobe: a scope marker for that strobe. */
+ * (see beacon_answer()). The pairing LED (PB8, owner spec 2026-11-17)
+ * flashes while a window is open and waits for the target, is lit while an
+ * exchange with the target goes on (from a beacon sent to it until its
+ * 2.04, a failure or no progress, src/pair.h), and is off once the window
+ * has closed. It is also the scope marker of the beacon's STX strobe: off
+ * while the beacon waits for its moment, on right after the strobe. */
 #include "radio.h"
 
 #include "airtime.h"
@@ -1417,7 +1421,7 @@ static void tx_wait_tick(void) {
 }
 
 /* One frame through the driver: cc110l_tx_start(), or cc110l_tx_answer()
- * for a frame that answers a received one. mark: the pairing LED goes off
+ * for a frame that answers a received one. mark: the pairing LED goes on
  * right after the STX strobe (#19, the beacon's scope marker), and *stx_us
  * (if not NULL) is the time just after it. */
 static bool send_frame(const uint8_t *frame,
@@ -1443,7 +1447,7 @@ static bool send_frame(const uint8_t *frame,
                                        : cc110l_tx_start(frame, len, flags);
     if (r == CC_TX_OK) {
         if (mark) {
-            board_led(LED_PAIRING, false);
+            board_led(LED_PAIRING, true);
         }
         if (stx_us) {
             *stx_us = timebase_us();
@@ -1601,7 +1605,11 @@ bool csl_port_listen_busy(void) {
  * after the earliest and 3.4 ms before the latest the device expects [I].
  * The device asks again 8 s later when no beacon comes. Logged after the
  * beacon is on the air: STX time after the request's end. PB8 (pairing LED)
- * falls right after the STX strobe. */
+ * goes off here, a few microseconds of GPIO write, and rises right after
+ * the STX strobe, whatever the LED showed before (a flash phase, or lit
+ * during an exchange): about 3.3 ms dark, too short to see. A beacon not
+ * sent leaves it off until the end of this task loop pass, which sets it
+ * as the window says. */
 static void beacon_answer(uint32_t fall_us, bool own_end) {
     size_t         len      = 0;
     const uint8_t *answered = NULL;
@@ -1609,6 +1617,7 @@ static void beacon_answer(uint32_t fall_us, bool own_end) {
     if (!b) {
         return;
     }
+    board_led(LED_PAIRING, false);
     uint32_t edges = gdo0_edges;
     uint32_t el    = timebase_us() - fall_us;
     bool     busy  = false;
@@ -1643,7 +1652,7 @@ static void beacon_answer(uint32_t fall_us, bool own_end) {
         COUNT(beacon_fail);
     }
     uint8_t seq = b[2];
-    link_beacon_done(ok);
+    link_beacon_done(ok, (uint32_t)xTaskGetTickCount());
     if (ok) {
         LOG("pair: beacon seq %02x to the target sent: STX %lu us after the request ended "
             "(preamble about %lu us; window %u-%u us)",
@@ -1721,7 +1730,8 @@ static void pairing_trigger(uint32_t now_ms) {
     mbedtls_platform_zeroize(key, sizeof key);
     mbedtls_platform_zeroize(rnd, sizeof rnd);
     if (ok) {
-        LOG("pair: window open for %u s on channel %u, for the device named in the build only",
+        LOG("pair: window open for %u s on channel %u, for the device named in the build only; "
+            "LED flashing until it is found",
             PAIR_WINDOW_MS / 1000u,
             RADIO_CHANNEL);
     } else {
@@ -1762,6 +1772,7 @@ void csl_port_report(const struct csl_report *r) {
 }
 
 #define HEALTH_PERIOD_MS    10000u
+#define PAIR_LED_HALF_MS    500u /* pairing LED flash: 0.5 s on, 0.5 s off */
 #define STATS_PERIOD_MS     60000u
 #define RETRY_PERIOD_MS     10000u
 #define STORM_REINIT_MIN_MS 1000u
@@ -1818,6 +1829,7 @@ void radio_task_run(void) {
     bool       flash_due       = false;
     bool       pair_due        = false;
     bool       window_was_open = false;
+    bool       was_engaged     = false;
     for (;;) {
         /* The coordinator first: it may send (a wake-up frame per call during
          * a train) and says how long it can wait. */
@@ -1936,18 +1948,40 @@ void radio_task_run(void) {
             }
         }
 
-        /* The pairing LED shows the window (#19); it closes by itself when
-         * it expires or the target has the key. */
-        bool open = link_pair_active((uint32_t)xTaskGetTickCount());
-        board_led(LED_PAIRING, open);
-        if (window_was_open && !open) {
+        /* The pairing LED (#19, owner spec 2026-11-17): flashing while the
+         * window is open and waits for the target, lit during an exchange
+         * with it, off once the window has closed by itself (after
+         * PAIR_WINDOW_MS; a pairing does not close it) or by the button.
+         * The flash follows the tick clock, at this loop's pace (at most
+         * 100 ms late); at its 49.7-day wrap one phase is cut short. */
+        uint32_t t       = (uint32_t)xTaskGetTickCount();
+        bool     open    = link_pair_active(t);
+        bool     engaged = open && link_pair_engaged(t);
+        board_led(LED_PAIRING, engaged || (open && t % (2u * PAIR_LED_HALF_MS) < PAIR_LED_HALF_MS));
+        /* Their log lines wait for a quiet moment, as everything that logs
+         * in this loop: an exchange starts on a frame of the target, and the
+         * next frame's Enhanced ACK must not wait behind the log mutex. */
+        if (!packet_arriving() && !csl_busy()) {
             const struct pair_stats *ps = pair_stats();
-            LOG("pair: window closed; paired so far %lu, d/pair sent %lu delivered %lu",
-                (unsigned long)ps->paired,
-                (unsigned long)ps->dpair_sent,
-                (unsigned long)ps->dpair_delivered);
+            if (engaged && !was_engaged) {
+                LOG("pair: target found: pairing (LED lit)");
+            } else if (!engaged && was_engaged) {
+                LOG("pair: exchange over%s; exchanges %lu: paired %lu, failed %lu, no progress %lu",
+                    open ? ", window still open (LED flashing)" : "",
+                    (unsigned long)ps->exchanges,
+                    (unsigned long)ps->paired,
+                    (unsigned long)ps->ex_failed,
+                    (unsigned long)ps->ex_idle);
+            }
+            if (window_was_open && !open) {
+                LOG("pair: window closed; paired so far %lu, d/pair sent %lu delivered %lu",
+                    (unsigned long)ps->paired,
+                    (unsigned long)ps->dpair_sent,
+                    (unsigned long)ps->dpair_delivered);
+            }
+            was_engaged     = engaged;
+            window_was_open = open;
         }
-        window_was_open = open;
 
         /* Retire a frame of ours that is over, so its airtime never looks
          * current again after the 32-bit clock wraps (src/cc110l.c). */

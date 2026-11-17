@@ -98,6 +98,10 @@ bool link_pair_open(const uint8_t target[MAC_EUI_LEN],
                     uint32_t      now_ms);
 void link_pair_close(void);
 bool link_pair_active(uint32_t now_ms);
+/* The window is open and an exchange with its target is going on: from a
+ * beacon sent to it until its 2.04, a failure or no progress for
+ * PAIR_EXCHANGE_IDLE_MS (src/pair.h). */
+bool link_pair_engaged(uint32_t now_ms);
 
 /* Frames of a pairing window are still queued with the coordinator: an
  * advertisement copy or a d/pair of a window that has closed. A new window
@@ -111,9 +115,10 @@ bool link_pair_frames_queued(void);
  * header bytes of the request it answers, for the transmit gate; NULL if
  * none is ready. The radio task sends it 2.4-7.4 ms after the request
  * ended (pair.h, PAIR_BEACON_TX_AT_US), or not at all, then calls
- * link_beacon_done(). */
+ * link_beacon_done(); a beacon sent starts or continues the exchange with
+ * the target (pair_beacon_sent()). */
 const uint8_t *link_beacon(size_t *len, const uint8_t **answered);
-void           link_beacon_done(bool sent);
+void           link_beacon_done(bool sent, uint32_t now_ms);
 
 /* --- Net task ---------------------------------------------------------------- */
 /* A frame from the server for a device (the whole WebSocket message). False

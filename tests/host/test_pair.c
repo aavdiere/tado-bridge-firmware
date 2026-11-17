@@ -164,8 +164,13 @@ static void test_dpair(void) {
     CHECK(pair_open(joiner, net_key, rnd, 0));
     CHECK_EQ(pair_dpair_due(c, sizeof c, 100000), 0); /* nothing heard from the target */
 
-    /* After the beacon only: the fallback delay. */
+    /* A request answered but its beacon not sent: nothing. */
     CHECK_EQ(pair_check_request(request, 27, 1000), PAIR_REQ_OK);
+    CHECK(!pair_engaged(1000));
+    CHECK_EQ(pair_dpair_due(c, sizeof c, 1000 + PAIR_DPAIR_FALLBACK_MS), 0);
+    /* After the beacon only: the fallback delay. */
+    pair_beacon_sent(1000);
+    CHECK(pair_engaged(1000));
     CHECK_EQ(pair_dpair_due(c, sizeof c, 1000 + PAIR_DPAIR_FALLBACK_MS - 1u), 0);
     /* Its Router Solicitation brings it forward. */
     pair_note_joiner(3000);
@@ -189,8 +194,13 @@ static void test_dpair(void) {
     pair_dpair_done(true);
     pair_note_joiner(40000);
     CHECK_EQ(pair_dpair_due(c, sizeof c, 40000 + PAIR_DPAIR_DELAY_MS), PAIR_COAP_LEN);
+    uint32_t failed = pair_stats()->ex_failed;
     pair_dpair_done(false);
-    pair_note_joiner(50000);
+    /* The last d/pair of the window failed: the exchange has failed. */
+    CHECK(!pair_engaged(43000));
+    CHECK_EQ(pair_stats()->ex_failed, failed + 1u);
+    pair_note_joiner(50000); /* a new exchange, with nothing left to send */
+    CHECK(pair_engaged(50000));
     CHECK_EQ(pair_dpair_due(c, sizeof c, 60000), 0); /* PAIR_DPAIR_MAX sent */
     CHECK_EQ(pair_stats()->dpair_delivered, 1);
 
@@ -202,14 +212,19 @@ static void test_dpair(void) {
     CHECK_EQ(pair_reply(joiner, m, 4), PAIR_REPLY_NONE);
     (void)ack(m, mid0, 0x44);
     CHECK_EQ(pair_reply(joiner, m, 3), PAIR_REPLY_NONE); /* too short */
+    /* Answers to the last exchange's d/pair leave this one alone. */
     CHECK_EQ(pair_reply(joiner, m, ack(m, (uint16_t)(mid0 + 2u), 0x83)), PAIR_REPLY_OTHER);
-    CHECK(pair_active(60000));
+    CHECK(pair_engaged(60000));
     uint32_t paired = pair_stats()->paired;
     CHECK_EQ(pair_reply(joiner, m, ack(m, (uint16_t)(mid0 + 1u), 0x44)), PAIR_REPLY_PAIRED);
-    CHECK(!pair_active(60000));
-    CHECK(!pair_key()->set);
+    CHECK(pair_engaged(60000));
+    CHECK(pair_key()->set);
     CHECK_EQ(pair_stats()->paired, paired + 1u);
-    /* A late copy after the window closed is still ours, counted once. */
+    /* A copy for the same exchange counts once, also after the window. */
+    CHECK_EQ(pair_reply(joiner, m, ack(m, mid0, 0x44)), PAIR_REPLY_PAIRED);
+    CHECK_EQ(pair_stats()->paired, paired + 1u);
+    pair_close();
+    CHECK(!pair_key()->set);
     CHECK_EQ(pair_reply(joiner, m, ack(m, mid0, 0x44)), PAIR_REPLY_PAIRED);
     CHECK_EQ(pair_stats()->paired, paired + 1u);
 
@@ -222,11 +237,129 @@ static void test_dpair(void) {
     CHECK_EQ(pair_dpair_due(c, sizeof c, 80000), 0);
 }
 
+/* The 10-minute window and its exchanges (owner spec 2026-11-17): a
+ * pairing ends its exchange, not the window; the target may pair again;
+ * an exchange without progress ends; a d/pair in flight holds it. */
+static void test_exchange(void) {
+    uint8_t c[64], m[8];
+    CHECK_EQ(PAIR_WINDOW_MS, 600000u);
+    pair_init();
+    uint32_t t0 = 0xFFFC0000u; /* the millisecond clock wraps inside the window */
+    CHECK(pair_open(joiner, net_key, rnd, t0));
+    CHECK(!pair_engaged(t0));
+
+    /* The window's first advertisement goes as a pair; later ones only
+     * during an exchange. */
+    CHECK(pair_ra_pair_wanted(t0 + 1000u));
+    CHECK(pair_take_ra_pair(t0 + 1000u));
+    CHECK(pair_ra_pairs_left(t0 + 1000u));
+    CHECK(!pair_ra_pair_wanted(t0 + 1000u));
+
+    /* Exchange 1: a beacon sent, then no progress. */
+    uint32_t t  = t0 + 100000u;
+    uint32_t ex = pair_stats()->exchanges, idle = pair_stats()->ex_idle;
+    CHECK_EQ(pair_check_request(request, 27, t), PAIR_REQ_OK);
+    pair_beacon_sent(t);
+    CHECK(pair_engaged(t));
+    CHECK_EQ(pair_stats()->exchanges, ex + 1u);
+    CHECK(pair_ra_pair_wanted(t));
+    pair_beacon_sent(t + 8000u); /* another beacon: the same exchange */
+    CHECK_EQ(pair_stats()->exchanges, ex + 1u);
+    t += 8000u;
+    CHECK(pair_engaged(t - 5u)); /* a clock read a little earlier: not idle */
+    pair_note_joiner(t - 5u);    /* nor does it move the progress back */
+    CHECK(pair_engaged(t + PAIR_EXCHANGE_IDLE_MS - 1u));
+    CHECK(!pair_engaged(t + PAIR_EXCHANGE_IDLE_MS));
+    CHECK_EQ(pair_stats()->ex_idle, idle + 1u);
+    CHECK(pair_active(t + PAIR_EXCHANGE_IDLE_MS));
+    /* Its fallback d/pair (due 12 s after the beacon) was not taken: gone. */
+    CHECK_EQ(pair_dpair_due(c, sizeof c, t + PAIR_EXCHANGE_IDLE_MS + 1u), 0);
+
+    /* Exchange 2: the target's frame; its d/pair in flight holds the
+     * exchange however long it takes; delivered, then the 2.04. */
+    t = t0 + 140000u;
+    pair_note_joiner(t);
+    CHECK(pair_engaged(t));
+    CHECK_EQ(pair_stats()->exchanges, ex + 2u);
+    t += PAIR_DPAIR_DELAY_MS;
+    CHECK_EQ(pair_dpair_due(c, sizeof c, t), PAIR_COAP_LEN);
+    uint16_t mid0 = (uint16_t)(c[2] << 8 | c[3]);
+    t += 5u * PAIR_EXCHANGE_IDLE_MS;
+    CHECK(pair_engaged(t));
+    pair_dpair_done(true);
+    CHECK(pair_engaged(t + PAIR_EXCHANGE_IDLE_MS - 1u));
+    t += PAIR_EXCHANGE_IDLE_MS - 1u;
+    uint32_t paired = pair_stats()->paired;
+    CHECK_EQ(pair_reply(joiner, m, ack(m, mid0, 0x44)), PAIR_REPLY_PAIRED);
+    CHECK(!pair_engaged(t));
+    CHECK(pair_active(t));
+    CHECK(pair_key()->set);
+    CHECK(pair_is_target(joiner));
+    CHECK_EQ(pair_stats()->paired, paired + 1u);
+    CHECK(!pair_ra_pair_wanted(t));
+
+    /* Exchange 3: the same device pairs again in the window. */
+    t = t0 + 330000u;
+    CHECK_EQ(pair_check_request(request, 27, t), PAIR_REQ_OK);
+    pair_beacon_sent(t);
+    pair_note_joiner(t + 2000u);
+    t += 2000u + PAIR_DPAIR_DELAY_MS;
+    CHECK_EQ(pair_dpair_due(c, sizeof c, t), PAIR_COAP_LEN);
+    CHECK_EQ((uint16_t)(c[2] << 8 | c[3]), (uint16_t)(mid0 + 1u));
+    CHECK_MEM(c + 27, net_key, 16); /* the same network key */
+    pair_dpair_done(true);
+    /* A late copy of the 2.04 to exchange 2's d/pair: counted already,
+     * and this exchange goes on. */
+    CHECK_EQ(pair_reply(joiner, m, ack(m, mid0, 0x44)), PAIR_REPLY_PAIRED);
+    CHECK(pair_engaged(t));
+    CHECK_EQ(pair_stats()->paired, paired + 1u);
+    CHECK_EQ(pair_reply(joiner, m, ack(m, (uint16_t)(mid0 + 1u), 0x44)), PAIR_REPLY_PAIRED);
+    CHECK(!pair_engaged(t));
+    CHECK_EQ(pair_stats()->paired, paired + 2u);
+
+    /* Exchange 4: answered with an error: failed. */
+    uint32_t failed = pair_stats()->ex_failed;
+    t               = t0 + 360000u;
+    pair_note_joiner(t);
+    t += PAIR_DPAIR_DELAY_MS;
+    CHECK_EQ(pair_dpair_due(c, sizeof c, t), PAIR_COAP_LEN);
+    pair_dpair_done(true);
+    CHECK_EQ(pair_reply(joiner, m, ack(m, (uint16_t)(mid0 + 2u), 0x80)), PAIR_REPLY_OTHER);
+    CHECK(!pair_engaged(t));
+    CHECK_EQ(pair_stats()->ex_failed, failed + 1u);
+    CHECK_EQ(pair_stats()->paired, paired + 2u);
+
+    /* Exchange 5: no d/pair left in this window; it ends without progress. */
+    t = t0 + 380000u;
+    pair_note_joiner(t);
+    CHECK(pair_engaged(t));
+    CHECK_EQ(pair_dpair_due(c, sizeof c, t + PAIR_DPAIR_DELAY_MS), 0);
+    CHECK(!pair_engaged(t + PAIR_EXCHANGE_IDLE_MS));
+
+    /* The window ends 10 minutes after it opened, across the clock's wrap,
+     * and wipes the keys; nothing is answered after it. */
+    CHECK(pair_active(t0 + PAIR_WINDOW_MS - 1u));
+    CHECK(pair_key()->set);
+    CHECK(!pair_active(t0 + PAIR_WINDOW_MS));
+    CHECK(!pair_key()->set);
+    CHECK_EQ(pair_check_request(request, 27, t0 + PAIR_WINDOW_MS), PAIR_REQ_CLOSED);
+    pair_note_joiner(t0 + PAIR_WINDOW_MS);
+    CHECK(!pair_engaged(t0 + PAIR_WINDOW_MS));
+
+    /* Closed during an exchange: the exchange ends with it. */
+    CHECK(pair_open(joiner, net_key, rnd, 0));
+    pair_note_joiner(10);
+    CHECK(pair_engaged(10));
+    pair_close();
+    CHECK(!pair_engaged(10));
+}
+
 int main(void) {
     test_key_and_vectors();
     test_requests_refused();
     test_window();
     test_coap();
     test_dpair();
+    test_exchange();
     return TEST_REPORT("test_pair");
 }

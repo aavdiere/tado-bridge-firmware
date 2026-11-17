@@ -193,9 +193,11 @@ static void test_pairing(uint32_t *now_ms) {
         CHECK_EQ(body[6] | body[7] << 8 | body[8] << 16 | (uint32_t)body[9] << 24, ctr);
     }
     CHECK_EQ(link_counter(), ctr + 1u);
-    link_beacon_done(true);
+    CHECK(!link_pair_engaged(*now_ms)); /* not before the beacon is on the air */
+    link_beacon_done(true, *now_ms);
     CHECK(link_beacon(&bl, &ans) == NULL);
     CHECK_EQ(link_stats()->beacons_sent, 1);
+    CHECK(link_pair_engaged(*now_ms)); /* the exchange with the target */
 
     /* The target's Router Solicitation under the pairing key; a stranger's
      * is not even tried under it. Neither goes to the server. */
@@ -238,22 +240,32 @@ static void test_pairing(uint32_t *now_ms) {
     run_ms(now_ms, PAIR_DPAIR_DELAY_MS + 2000);
     CHECK_EQ(link_stats()->dpair_queued, 2);
 
-    /* The target's 2.04 under the network key: paired, the window closes,
-     * and the answer is not relayed. */
+    /* The target's 2.04 under the network key: paired, the exchange is
+     * over, the answer is not relayed, and the window stays open (owner
+     * spec 2026-11-17). */
     uint8_t reply[4] = {0x60, 0x44, (uint8_t)(mid >> 8), (uint8_t)mid};
     n                = frame_from(f, joiner, &key, 0x31, reply, sizeof reply);
     CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_PAIRED);
-    CHECK(!link_pair_active(*now_ms));
-    CHECK(!pair_key()->set);
+    CHECK(link_pair_active(*now_ms));
+    CHECK(!link_pair_engaged(*now_ms));
+    CHECK(pair_key()->set);
     CHECK_EQ(link_uplink_peek(out, sizeof out), 0);
     /* From then on the device is one of the network's: to the server. */
     static const uint8_t token_req[] = {0x40, 0x02, 0x12, 0x99, 0xB4, 'a', 'u', 't', 'h'};
     n = frame_from(f, joiner, &key, 0x32, token_req, sizeof token_req);
     CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_FORWARDED);
     link_uplink_pop();
-    /* And its Beacon Requests get nothing any more. */
+    /* It may pair again while the window is open: its Beacon Request is
+     * answered; a beacon that is not sent starts no exchange. */
     n = beacon_request(f, joiner, 0x7c);
+    CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_BEACON_ANSWER);
+    link_beacon_done(false, *now_ms);
+    CHECK(!link_pair_engaged(*now_ms));
+    /* Once the window is closed, nothing. */
+    link_pair_close();
+    n = beacon_request(f, joiner, 0x7d);
     CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_BEACON_REQ);
+    CHECK(link_beacon(&bl, &ans) == NULL);
     run_ms(now_ms, 20000);
 
     /* A new window: at most PAIR_RA_PAIRS_MAX advertisement pairs however
@@ -340,6 +352,36 @@ static void test_pairing(uint32_t *now_ms) {
     CHECK_EQ(pair_stats()->dpair_failed, failed + 1);
     CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
     link_pair_close();
+
+    /* Between exchanges the 10-minute window keeps its pairs for the
+     * target: the periodic advertisement goes as outside a window, once,
+     * under the network key, to the network's devices. During an exchange
+     * the target's solicitation gets a pair again. */
+    n = mac_build_broadcast(&key, f, sizeof f, false, 0x51, dev, 0x5001, rs, sizeof rs);
+    CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_BROADCAST); /* a device heard */
+    run_ms(now_ms, 12000);
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    run_ms(now_ms, 3000); /* the window's first pair */
+    pairs           = link_stats()->ra_pairs_queued;
+    ras             = link_stats()->ra_queued;
+    unsigned before = n_bcast;
+    run_ms(now_ms, 250000); /* one periodic advertisement, 212 s later */
+    CHECK(link_pair_active(*now_ms));
+    CHECK(!link_pair_engaged(*now_ms));
+    CHECK_EQ(link_stats()->ra_queued, ras + 1u);
+    CHECK_EQ(link_stats()->ra_pairs_queued, pairs);
+    CHECK_EQ(n_bcast - before, 1);
+    CHECK_EQ(last_bcast[0], 0x49);
+    CHECK_EQ(mac_open(&key, last_bcast, last_bcast_len, body, sizeof body, &b0), MAC_OPEN_OK);
+    CHECK(pair_ra_pairs_left(*now_ms));
+    n = mac_build_broadcast(&pk, f, sizeof f, false, 41, joiner, 61, rs, sizeof rs);
+    CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_PAIRING);
+    CHECK(link_pair_engaged(*now_ms));
+    run_ms(now_ms, 3000);
+    CHECK_EQ(link_stats()->ra_pairs_queued, pairs + 1u);
+    CHECK_EQ(n_bcast - before, 3);
+    link_pair_close();
+    run_ms(now_ms, 12000);
 
     /* A new key (a new network) closes a window. */
     CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));

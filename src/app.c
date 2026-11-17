@@ -77,7 +77,8 @@ static void housekeeping_task(void *arg) {
         button_update(&reset, board_reset_button_raw());
         button_update(&pair, board_pair_button_raw());
         /* The router LED shows Ethernet link and DHCP (net task, #13); the
-         * pairing LED shows a pairing window (radio task, #19). Holding the
+         * pairing LED shows a pairing window and its exchanges (radio task,
+         * #19). Holding the
          * pair button PAIR_HOLD_MS opens a window, or closes the open one;
          * once per press. */
         if (!pair.state) {
