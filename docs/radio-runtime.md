@@ -133,7 +133,7 @@ The CC110L has no automatic acknowledgement and no wake-on-radio (`datasheets/cc
 
 ## P5 link implementation (#17) [I]
 
-Host-tested, built; the TX-off image was reviewed (`fw-reviewer`, "safe to flash"), flashed and verified (2026-11-17); the first test frames went out with a temporary sender, since reverted (`test-bench.md`, "First transmit test" [V]). The committed image cannot transmit: `RADIO_TX_ALLOWED` is 0 (`src/cc110l.h`), and no network key is ever set (`link_set_key()` has no caller until #37 and #19), so no ACK is prepared and nothing is queued for the air.
+Host-tested, built; the TX-off image was reviewed (`fw-reviewer`, "safe to flash"), flashed and verified (2026-11-17); the first test frames went out with a temporary sender, since reverted (`test-bench.md`, "First transmit test" [V]). The committed image cannot transmit: `RADIO_TX_ALLOWED` is 0 (`src/cc110l.h`), and no network key is ever set (`link_set_key()` has no caller until #37 and #19), so no ACK is prepared and nothing is queued for the air. Since #37 the key is set at boot from a valid network record in flash (`design.md`, "Implementation: network and counter records (#37)"); no network is created until pairing (#19), so on the bench there is still no key.
 
 **Modules.** Hardware-independent and tested on the host: `src/mac.c`, `src/ccm.c`, `src/lowpan.c`, `src/txgate.c`, `src/csl.c`, `src/relay.c`, `src/msgq.c`, `src/link.c`. Hardware side: `src/radio.c` (task, interrupts, the coordinator's `csl_port_*` functions) and `src/cc110l.c` (the only code that can key the transmitter). Net task side: `src/session.c` moves frames between the server and the two static 4 KB queues of `src/link.c`.
 
