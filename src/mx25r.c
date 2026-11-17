@@ -28,6 +28,7 @@
 #include "log.h"
 #include "spi1.h"
 #include "timebase.h"
+#include "watchdog.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -203,6 +204,7 @@ bool mx25r_erase_sector(uint32_t addr) {
             return false;
         }
         vTaskDelay(1);
+        watchdog_checkin(WDG_RADIO); /* bounded by SE_TIMEOUT_MS; the IWDG window is ~3 s */
     }
     return cycle_ok(sr, SCUR_EFAIL);
 }
