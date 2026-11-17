@@ -9,6 +9,7 @@
 
 #include "board.h"
 #include "enc28j60.h"
+#include "link.h"
 #include "log.h"
 #include "rng.h"
 #include "session.h"
@@ -348,6 +349,10 @@ static void log_address(void) {
         gw,
         ipaddr_ntoa(dns_getserver(0)),
         (unsigned long)(d ? d->offered_t0_lease : 0u));
+    /* The Router Advertisement on the radio side carries the gateway and
+     * the DNS server (src/link.h). Both in network byte order. */
+    link_set_router(ip4_addr_get_u32(netif_ip4_gw(&eth)),
+                    ip4_addr_get_u32(ip_2_ip4(dns_getserver(0))));
 }
 
 static void address_check(void) {
@@ -403,6 +408,7 @@ static void log_minute(void) {
         ipaddr_ntoa_r(&server_ip, srv, sizeof srv);
     }
     LOG("ip: 60 s: address %s, server %s is %s", ip, NET_SERVER_HOST, srv);
+    session_log_minute();
     minute = (struct counters){0};
 }
 

@@ -14,8 +14,11 @@
 
 #include "board.h"
 #include "coap.h"
+#include "link.h"
 #include "log.h"
 #include "provision.h"
+#include "radio.h"
+#include "relay.h"
 #include "rng.h"
 #include "tls.h"
 #include "ws.h"
@@ -74,6 +77,11 @@ static bool     pending;
 
 static uint8_t session_token[8];
 static bool    have_token;
+
+/* Relay counters, and the buffer for one uplink from the radio task
+ * (src/link.h). Net task only. */
+static uint32_t up_relayed, up_dropped, down_relayed, down_dropped;
+static uint8_t  up_msg[RELAY_MSG_MAX];
 
 static bool       time_valid;
 static uint32_t   time_unix;
@@ -359,7 +367,24 @@ static void on_message(const uint8_t *d, size_t n) {
             (unsigned)(n - FRAME_HDR));
         return;
     }
-    bool to_us = memcmp(d + 3, bridge_ipv6, 16) == 0;
+    bool    to_us = memcmp(d + 3, bridge_ipv6, 16) == 0;
+    uint8_t wire[MAC_EUI_LEN];
+    if (!to_us && (d[0] << 8 | d[1]) == DIR_DOWNLINK && relay_wire_from_ipv6(d + 3, wire)) {
+        /* For a device (a link-local tado address that is not ours): to the
+         * radio task, which sends it at the device's next sample (#17,
+         * src/link.h). The CoAP bytes go unchanged. Before everything the
+         * bridge reads for itself below, so that no message for a device is
+         * taken as the bridge's own reply or time. */
+        bool queued = link_downlink_put(d, FRAME_HDR + clen);
+        radio_notify_link();
+        down_relayed += queued;
+        down_dropped += !queued;
+        if (!queued) {
+            LOG("session: downlink for a device dropped, radio queue full (mid %04x)",
+                (unsigned)m.mid);
+        }
+        return;
+    }
     if (pending && m.type == COAP_ACK && m.mid == pending_mid && m.tkl == sizeof pending_token
         && memcmp(m.token, pending_token, sizeof pending_token) == 0) {
         on_reply(&m);
@@ -372,10 +397,10 @@ static void on_message(const uint8_t *d, size_t n) {
     }
     char path[40];
     coap_path(&m, path, sizeof path);
-    /* Requests for the bridge itself (d/rfkey, d/pair, ...) and for devices
-     * come with P5 (docs/server-api.md "Bridge handles itself"). */
+    /* Requests for the bridge itself (d/rfkey, d/pair, ...) come with #19
+     * (docs/server-api.md "Bridge handles itself"). */
     LOG("session: downlink %s type %u code %u.%02u mid %04x /%s (%u bytes payload) not handled yet",
-        to_us ? "for the bridge" : "for a device",
+        to_us ? "for the bridge" : "for no device address",
         (unsigned)m.type,
         (unsigned)(m.code >> 5),
         (unsigned)(m.code & 31u),
@@ -394,9 +419,39 @@ static void leds(void) {
     board_led(LED_CLOUD, on);
 }
 
+/* Uplinks from devices, queued by the radio task: to the server while the
+ * session is ready. Without a session they are dropped: the device's
+ * Enhanced ACK has gone out, and it is CoAP that repeats a confirmable
+ * message [I] (what stock does without its cloud is not known). */
+static void relay_uplinks(void) {
+    size_t n;
+    while ((n = link_uplink_peek(up_msg, sizeof up_msg)) != 0) {
+        if (phase == P_READY) {
+            if (!ws_send(up_msg, n)) {
+                return; /* send queue full: keep it for the next pass */
+            }
+            up_relayed++;
+        } else {
+            up_dropped++;
+        }
+        link_uplink_pop();
+    }
+}
+
+void session_log_minute(void) {
+    LOG("session: 60 s: uplinks to server %lu, dropped without a session %lu; downlinks to the "
+        "radio %lu, dropped (queue full) %lu",
+        (unsigned long)up_relayed,
+        (unsigned long)up_dropped,
+        (unsigned long)down_relayed,
+        (unsigned long)down_dropped);
+    up_relayed = up_dropped = down_relayed = down_dropped = 0;
+}
+
 void session_poll(bool net_up, const ip_addr_t *server, bool *busy) {
     static bool started;
     *busy = false;
+    relay_uplinks();
     if (!started) {
         started       = true;
         have_identity = identity_init();
