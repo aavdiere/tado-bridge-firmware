@@ -336,6 +336,19 @@ bool csl_room_for_broadcasts(unsigned n) {
     return g.free_count >= n;
 }
 
+unsigned csl_pairing_jobs(void) {
+    unsigned n = 0;
+    for (unsigned i = 0; i < CSL_NEIGHBORS; i++) {
+        if (!g.nb[i].used) {
+            continue;
+        }
+        for (uint8_t idx = g.nb[i].head; idx != JOB_NONE; idx = g.jobs[idx].next) {
+            n += (g.jobs[idx].flags & CSL_JOB_PAIRING) != 0;
+        }
+    }
+    return n;
+}
+
 bool csl_take_seq_counter(uint8_t *seq, uint32_t *counter) {
     if (g.counter >= g.counter_limit) {
         return false;

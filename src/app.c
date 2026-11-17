@@ -20,7 +20,7 @@
 
 #define STACK_WORDS 512 /* 2 KB each; LOG() needs about 1 KB of it */
 /* 3.5 KB. Deepest path (#19): the pair button creates a network, whose key
- * draw may reseed the DRBG: radio_task_run 224 + network_create 88 +
+ * draw may reseed the DRBG: radio_task_run 232 + network_create 88 +
  * rng_random 24 + mbedtls_ctr_drbg_random(_with_add) 104 + reseed 416 +
  * block_cipher_df 832 + AES 124 bytes = about 1.8 KB by -fstack-usage
  * (without LTO), plus an exception frame of up to 104 bytes with the FPU:

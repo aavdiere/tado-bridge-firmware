@@ -110,6 +110,9 @@ bool csl_enqueue_broadcast(
 unsigned csl_broadcasts_queued(void);
 bool     csl_room_for_broadcasts(unsigned n);
 
+/* Jobs flagged CSL_JOB_PAIRING still queued, including one in flight. */
+unsigned csl_pairing_jobs(void);
+
 /* Drop everything queued and the transaction in flight (radio re-init). */
 void csl_flush(void);
 

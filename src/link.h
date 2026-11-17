@@ -88,15 +88,24 @@ void link_on_report(const struct csl_report *r);
 /* Radio task. Opens a pairing window for the device whose wire EUI-64 is
  * target, to hand it net_key, which must be the key in use (link_set_key()).
  * The window's first Router Advertisement pair is due a second later.
- * False if the link has no identity or key, or target is ours or not a node
- * address. rnd: PAIR_RAND_LEN random bytes. The caller wipes its copies of
- * net_key and rnd afterwards. */
+ * False if the link has no identity or key, target is ours or not a node
+ * address, or frames of the last window are still queued
+ * (link_pair_frames_queued()). rnd: PAIR_RAND_LEN random bytes. The caller
+ * wipes its copies of net_key and rnd afterwards. */
 bool link_pair_open(const uint8_t target[MAC_EUI_LEN],
                     const uint8_t net_key[CCM_KEY_LEN],
                     const uint8_t rnd[PAIR_RAND_LEN],
                     uint32_t      now_ms);
 void link_pair_close(void);
 bool link_pair_active(uint32_t now_ms);
+
+/* Frames of a pairing window are still queued with the coordinator: an
+ * advertisement copy or a d/pair of a window that has closed. A new window
+ * waits until they are gone, so that it never sends one of them under its
+ * own pairing key, nor takes their reports for its own. Once the window is
+ * closed they go within seconds: those under the pairing key fail for
+ * want of it at their next attempt. */
+bool link_pair_frames_queued(void);
 
 /* After LINK_RX_BEACON_ANSWER: the Enhanced Beacon to send and the 16
  * header bytes of the request it answers, for the transmit gate; NULL if

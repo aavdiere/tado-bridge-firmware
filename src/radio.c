@@ -1696,6 +1696,11 @@ static void pairing_trigger(uint32_t now_ms) {
         LOG("pair: radio not ready to transmit (no PLL lock or interrupts off): no window");
         return;
     }
+    if (link_pair_frames_queued()) {
+        LOG("pair: frames of the last window still queued: no window; hold the button again in "
+            "a few seconds");
+        return;
+    }
     uint8_t key[CCM_KEY_LEN], rnd[PAIR_RAND_LEN];
     bool    ok;
     if (network_active()) {

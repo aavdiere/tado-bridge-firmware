@@ -439,7 +439,7 @@ bool link_pair_open(const uint8_t target[MAC_EUI_LEN],
                     const uint8_t key[CCM_KEY_LEN],
                     const uint8_t rnd[PAIR_RAND_LEN],
                     uint32_t      now_ms) {
-    if (!link_ready() || memcmp(target, own, MAC_EUI_LEN) == 0
+    if (!link_ready() || memcmp(target, own, MAC_EUI_LEN) == 0 || link_pair_frames_queued()
         || !pair_open(target, key, rnd, now_ms)) {
         return false;
     }
@@ -456,6 +456,10 @@ void link_pair_close(void) {
 
 bool link_pair_active(uint32_t now_ms) {
     return pair_active(now_ms);
+}
+
+bool link_pair_frames_queued(void) {
+    return csl_pairing_jobs() != 0;
 }
 
 bool link_downlink_put(const uint8_t *msg, size_t len) {

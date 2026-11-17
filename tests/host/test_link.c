@@ -317,6 +317,30 @@ static void test_pairing(uint32_t *now_ms) {
     link_pair_close();
     run_ms(now_ms, 4000);
 
+    /* A window closes while its d/pair waits for a retry: no new window
+     * opens until that job is gone, so the old d/pair never goes out under
+     * a new window's pairing key (#19 review L3). Without the pairing key
+     * its next attempt fails and drops it, sending nothing. */
+    CHECK(!link_pair_frames_queued());
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    run_ms(now_ms, 1500);
+    n = mac_build_broadcast(&pk, f, sizeof f, false, 40, joiner, 60, rs, sizeof rs);
+    CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_PAIRING);
+    uint32_t dq = link_stats()->dpair_queued, failed = pair_stats()->dpair_failed;
+    run_ms(now_ms, PAIR_DPAIR_DELAY_MS + 100);
+    CHECK_EQ(link_stats()->dpair_queued, dq + 1);
+    CHECK(link_pair_frames_queued()); /* in its retry gap */
+    link_pair_close();
+    unsigned nd = n_data;
+    CHECK(!link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    CHECK(!link_pair_active(*now_ms));
+    run_ms(now_ms, 3000);
+    CHECK(!link_pair_frames_queued());
+    CHECK_EQ(n_data, nd);
+    CHECK_EQ(pair_stats()->dpair_failed, failed + 1);
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    link_pair_close();
+
     /* A new key (a new network) closes a window. */
     CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
     link_set_key(v_key2.p, 1, UINT32_MAX);
