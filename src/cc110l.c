@@ -684,7 +684,20 @@ static bool txfifo_write(const uint8_t *p, size_t n) {
     return true;
 }
 
-enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned flags) {
+/* The frame's copy in tx.buf is wiped once it has left the chip or the
+ * transmission was abandoned: a d/pair carries the network key under the
+ * public pairing key (#19). */
+static void tx_wipe(void) {
+    volatile uint8_t *v = tx.buf;
+    for (size_t i = 0; i < sizeof tx.buf; i++) {
+        v[i] = 0;
+    }
+}
+
+/* cc110l_tx_start() and cc110l_tx_answer(): answered is the received
+ * frame's header that the frame answers (an Enhanced Beacon), else NULL. */
+static enum cc110l_tx_result
+tx_begin(const uint8_t *frame, size_t len, const uint8_t *answered, unsigned flags) {
     if (!RADIO_TX_ALLOWED) {
         return CC_TX_DISABLED;
     }
@@ -711,7 +724,7 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
         return CC_TX_REFUSED;
     }
     verified     = false; /* used for this frame */
-    last_verdict = judge(frame, len, NULL, flags);
+    last_verdict = judge(frame, len, answered, flags);
     if (last_verdict != TXGATE_OK) {
         return CC_TX_REFUSED;
     }
@@ -755,10 +768,28 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
     if (!ok) {
         tx_active = false;
         tx.idx    = tx.total; /* nothing to feed */
+        tx_wipe();
         return stuck ? CC_TX_STATE : CC_TX_SPI;
     }
     tx.idx = (uint16_t)first;
     return CC_TX_OK;
+}
+
+enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned flags) {
+    return tx_begin(frame, len, NULL, flags);
+}
+
+enum cc110l_tx_result cc110l_tx_answer(const uint8_t *frame,
+                                       size_t         len,
+                                       const uint8_t  answered[MAC_HDR_LEN],
+                                       unsigned       flags) {
+    if (!answered) {
+        if (RADIO_TX_ALLOWED) {
+            last_verdict = TXGATE_NO_ANSWER;
+        }
+        return RADIO_TX_ALLOWED ? CC_TX_REFUSED : CC_TX_DISABLED;
+    }
+    return tx_begin(frame, len, answered, flags);
 }
 
 bool cc110l_tx_feed(size_t *left) {
@@ -787,6 +818,7 @@ bool cc110l_tx_feed(size_t *left) {
 
 void cc110l_tx_done(void) {
     tx_active = false;
+    tx_wipe();
 }
 
 /* SFTX works in IDLE and in TXFIFO_UNDERFLOW only (cc110l.txt:3255-3257).
@@ -818,6 +850,7 @@ void cc110l_tx_abort(void) {
     tx_permit = false;
     tx_active = false;
     tx.idx    = tx.total;
+    tx_wipe();
 }
 
 enum cc110l_tx_result cc110l_ack_prepare(const uint8_t a[MAC_ACK_LEN],

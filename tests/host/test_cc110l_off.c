@@ -49,6 +49,13 @@ int main(void) {
     size_t  n = mac_build_data(&key, f, sizeof f, false, 2, device, own, 1, body, sizeof body);
     CHECK(n > 0);
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_DISABLED);
+    /* A beacon (pairing, #19): the same. */
+    uint8_t eb[32] = {0x18, 0xEC, 1, 0xCD, 0xAB}, ebr[16] = {0x0B, 0xE8, 1, 0xFF, 0xFF, 0xFF, 0xFF};
+    memcpy(eb + 5, device, 8);
+    memcpy(ebr + 7, device, 8);
+    memcpy(eb + 13, own, 3);
+    CHECK_EQ(cc110l_tx_answer(eb, sizeof eb, ebr, TXGATE_PAIRING), CC_TX_DISABLED);
+    CHECK_EQ(cc110l_tx_answer(eb, sizeof eb, NULL, TXGATE_PAIRING), CC_TX_DISABLED);
     size_t left = 0;
     CHECK(cc110l_tx_feed(&left));
     CHECK_EQ(left, 0);

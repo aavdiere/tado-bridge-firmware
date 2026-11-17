@@ -237,13 +237,21 @@ uint32_t cc110l_airtime_used_us(void);
  * TXGATE_*. */
 enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned flags);
 
+/* The same for a frame that answers a received one, which the transmit
+ * gate needs to see: the Enhanced Beacon answering a Beacon Request
+ * (answered: the request's first 16 bytes; flags: TXGATE_PAIRING; #19).
+ * Refused without answered. */
+enum cc110l_tx_result
+cc110l_tx_answer(const uint8_t *frame, size_t len, const uint8_t answered[16], unsigned flags);
+
 /* Tops the TX FIFO up for a frame longer than the FIFO. *left: bytes not
  * yet written. False on a TX FIFO underflow or an SPI failure; the caller
  * then re-arms the receiver. */
 bool cc110l_tx_feed(size_t *left);
 
 /* Stops a transmission that went wrong and empties the TX FIFO. The chip
- * is left in IDLE; the caller re-arms the receiver. */
+ * is left in IDLE; the caller re-arms the receiver. The driver's copy of
+ * the frame is wiped (also by cc110l_tx_done()). */
 void cc110l_tx_abort(void);
 
 /* The caller has seen the frame started with cc110l_tx_start() leave the

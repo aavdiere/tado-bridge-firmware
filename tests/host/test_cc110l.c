@@ -338,6 +338,60 @@ static void test_frames(void) {
     check_clean();
 }
 
+/* --- Enhanced Beacon (#19) ---------------------------------------------------------- */
+/* freedo's request and beacon (tado/beacon_test.go:62, 90): the beacon goes
+ * out only through cc110l_tx_answer(), as a pairing frame answering that
+ * request, on the test channel; the driver's copy is wiped afterwards. */
+static void test_beacon(void) {
+    static const uint8_t bridge[8] = {0x09, 0xa1, 0xce, 0xfa, 0x07, 0xc5, 0x1b, 0x00};
+    static const uint8_t ebr[27]   = {
+        0x0b, 0xe8, 0x7b, 0xff, 0xff, 0xff, 0xff, 0x0b, 0xb1, 0xce, 0xfa, 0x07, 0xc5, 0x1b,
+        0x00, 0x04, 0x58, 0x14, 0x63, 0xf9, 0x01, 0x47, 0xed, 0x74, 0xca, 0xf1, 0xbd,
+    };
+    static const uint8_t eb[32] = {
+        0x18, 0xec, 0x59, 0xcd, 0xab, 0x0b, 0xb1, 0xce, 0xfa, 0x07, 0xc5,
+        0x1b, 0x00, 0x09, 0xa1, 0xce, 0x08, 0x5a, 0x08, 0x64, 0xb7, 0x71,
+        0x9c, 0x19, 0xe3, 0x42, 0x85, 0xc9, 0xcd, 0xed, 0x7e, 0xc2,
+    };
+    model_init();
+    bring_up(TXGATE_TEST_CHANNEL);
+    cc110l_set_identity(bridge);
+    CHECK_EQ(cc110l_tx_start(eb, sizeof eb, TXGATE_PAIRING), CC_TX_REFUSED);
+    CHECK_EQ(cc110l_tx_verdict(), TXGATE_NO_ANSWER);
+    CHECK_EQ(cc110l_tx_answer(eb, sizeof eb, NULL, TXGATE_PAIRING), CC_TX_REFUSED);
+    CHECK_EQ(cc110l_tx_verdict(), TXGATE_NO_ANSWER);
+    CHECK_EQ(cc110l_tx_answer(eb, sizeof eb, ebr, 0), CC_TX_REFUSED);
+    CHECK_EQ(cc110l_tx_verdict(), TXGATE_NOT_TEST_CHANNEL);
+    CHECK_EQ(chip.stx_count, 0);
+    CHECK_EQ(chip.tx_fifo_writes, 0);
+
+    CHECK_EQ(cc110l_tx_answer(eb, sizeof eb, ebr, TXGATE_PAIRING), CC_TX_OK);
+    CHECK(cc110l_tx_expected());
+    size_t left = 99;
+    CHECK(cc110l_tx_feed(&left));
+    CHECK_EQ(left, 0);
+    CHECK(tx.buf[0] == sizeof eb);
+    finish_frame();
+    sent_is(0, eb, sizeof eb);
+    static const uint8_t zero[sizeof tx.buf];
+    CHECK_MEM(tx.buf, zero, sizeof tx.buf);
+
+    /* Any other channel: refused before the chip is touched. */
+    unsigned writes = chip.tx_fifo_writes;
+    for (unsigned ch = 0; ch <= 49; ch++) {
+        if (ch == TXGATE_TEST_CHANNEL) {
+            continue;
+        }
+        bring_up(ch);
+        CHECK_EQ(cc110l_tx_answer(eb, sizeof eb, ebr, TXGATE_PAIRING), CC_TX_REFUSED);
+        CHECK(cc110l_tx_verdict() == TXGATE_NOT_TEST_CHANNEL
+              || cc110l_tx_verdict() == TXGATE_PROTECTED);
+    }
+    CHECK_EQ(chip.tx_fifo_writes, writes);
+    cc110l_set_identity(own);
+    check_clean();
+}
+
 /* --- Enhanced ACK ------------------------------------------------------------------ */
 static void test_ack(void) {
     uint8_t ackf[MAC_ACK_LEN], up[MAC_FRAME_MAX], other[MAC_FRAME_MAX];
@@ -1292,6 +1346,7 @@ int main(void) {
     test_channels();
     test_chip_changed();
     test_frames();
+    test_beacon();
     test_ack();
     test_ack_failures();
     test_tx_expected_wrap();
