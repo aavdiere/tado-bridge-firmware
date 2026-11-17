@@ -334,9 +334,13 @@ So a connection holds 7976 bytes, the handshake needs 11232 more than the idle b
 
 Freedo's job pool of 128 (`freedo/firmware/cc1101_bridge/cc1101_bridge.ino:203`) is too large to carry over. **Decision (user): support 16 devices for now,** matching freedo's 16 anchors and neighbours (`:191,201`).
 
+**P5 static size (#17, 2026-11-17) [V]:** build `88c7894`, `arm-none-eabi-size build/tado-bridge.elf`: text 142640, data 136, bss 79392 (earlier P4 production image: bss 56188). Static RAM is now 79528 bytes, 83624 with the 4 KB main stack, so 47448 bytes (46 KB) are not reserved. The radio side added 23204 bytes of `.bss`, about twice the 11 KB estimate. Largest new symbols (`arm-none-eabi-nm -S`): `relay` 6320 bytes, the two link queues `up_store` and `down_store` 4096 each, `g` 4008. The heap margin is unchanged because P5 uses `.bss`, as planned above. Not yet measured on the board: stack use of the radio task (640 words, `radio-runtime.md`, "P5 link implementation (#17)"). The estimate table above is superseded by these figures.
+
 ### Flash estimate [I]
 
 About 200-250 KB of 512 KB: mbedTLS 100, lwIP 40, FreeRTOS 10, application 60-100. Stock reaches past 360 KB (`tanoclo/patch_ib_firmware/patch_endpoint.sh:24`).
+
+**Flash, measured [V]:** text 142640 bytes of 512 KB (28 %) at `88c7894` (`arm-none-eabi-size`), below the 200-250 KB estimate. Bootloader and second slot (#20) still have to fit beside it.
 
 ### To prove on a prototype
 
