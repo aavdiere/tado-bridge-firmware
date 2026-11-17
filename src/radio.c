@@ -380,6 +380,7 @@ struct counters {
     uint32_t tx_no_lock;        /* of tx_refused: no calibration with PLL lock */
     uint32_t tx_duty, ack_duty; /* refused: the hour's airtime budget is spent */
     uint32_t ack_rearm;         /* the ACK interrupt failed and the task re-armed RX */
+    uint32_t lbt_rssi_busy;     /* listens found busy by RSSI */
 };
 static struct counters minute, total;
 
@@ -1217,6 +1218,17 @@ static void flash_check(void) {
     }
 }
 
+/* Listen before transmit by RSSI (see csl_port_listen_begin()). Threshold
+ * [I]: -85 dBm, about 19 dB above the sensitivity at 868 MHz and 38.4
+ * kBaud, -104 dBm (cc110l.txt:600-603; 50 kBaud here), and well below the
+ * -41 to -72 dBm of the tado frames seen on the bench (radio-runtime.md,
+ * P2). The highest RSSI of the minute's listens is logged, to set it from
+ * bench data. */
+#define LBT_RSSI_BUSY_DBM (-85)
+static bool lbt_listening;
+static bool lbt_rssi_seen; /* lbt_rssi_max_x2 holds a value this minute */
+static int  lbt_rssi_max_x2;
+
 static void log_minute(void) {
     LOG("radio: 60 s: frames %lu (crc ok %lu, bad %lu, wake %lu), overflow %lu, bad len %lu, stale "
         "%lu, "
@@ -1265,6 +1277,15 @@ static void log_minute(void) {
         (unsigned long)minute.ack_duty,
         (unsigned long)acks_failed,
         (unsigned long)minute.ack_rearm);
+    {
+        char r[12];
+        LOG("link: 60 s: listens busy by rssi %lu (threshold %d dBm), highest listen rssi %s%s",
+            (unsigned long)minute.lbt_rssi_busy,
+            LBT_RSSI_BUSY_DBM,
+            lbt_rssi_seen ? half_db(r, sizeof r, lbt_rssi_max_x2) : "none",
+            lbt_rssi_seen ? " dBm" : "");
+        lbt_rssi_seen = false;
+    }
     LOG("link: totals: to server %lu, dup %lu, mic fail %lu, dropped %lu, downlinks %lu refused "
         "%lu, RA %lu",
         (unsigned long)ls->rx[LINK_RX_FORWARDED],
@@ -1398,25 +1419,58 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
 }
 
 /* Listen before transmit: "a packet on the air" is a sync word seen at any
- * time during the listen (GDO0 edges), a frame still being read, or a frame
- * of our own (an Enhanced ACK) on the air. The chip's frequency registers
- * are read back here as well: if they are not what was written, the
- * transaction ends as "busy" before its first frame, which the driver
- * would refuse anyway (it reads them back again for every frame). */
+ * time during the listen (GDO0 edges), a frame still being read, a frame
+ * of our own (an Enhanced ACK) on the air, or energy in the channel: the
+ * RSSI at or above LBT_RSSI_BUSY_DBM at the start of the listen, at its
+ * end, or at any loop pass in between (about one, 2-3 ms in; the task
+ * waits for the rest of the 3.968 ms). Sync words show tado frames; the
+ * RSSI also shows other users of the band, which the sync words miss
+ * (test-bench.md: LoRaWAN-like bursts on neighbouring channels). In RX the
+ * RSSI register updates continuously until a sync word freezes it
+ * (cc110l.txt:2113-2115). The chip's frequency registers are read back
+ * here as well: if they are not what was written, the transaction ends as
+ * "busy" before its first frame, which the driver would refuse anyway (it
+ * reads them back again for every frame). A failed RSSI read counts as busy;
+ * threshold and statistics are with the minute log above. */
 static uint32_t lbt_edges;
-static bool     lbt_busy;
+static bool     lbt_busy, lbt_rssi_hit;
 
 static bool on_air_now(void) {
     return packet_arriving() || cc110l_tx_expected();
 }
 
+static void lbt_sample_rssi(void) {
+    uint8_t raw;
+    if (!cc110l_read_status_stable(CC_RSSI, &raw)) {
+        COUNT(spi_err);
+        lbt_rssi_hit = true;
+        return;
+    }
+    int x2 = rssi_x2(raw);
+    if (!lbt_rssi_seen || x2 > lbt_rssi_max_x2) {
+        lbt_rssi_max_x2 = x2;
+        lbt_rssi_seen   = true;
+    }
+    if (x2 >= 2 * LBT_RSSI_BUSY_DBM) {
+        lbt_rssi_hit = true;
+    }
+}
+
 void csl_port_listen_begin(void) {
-    lbt_edges = gdo0_edges;
-    lbt_busy  = on_air_now() || !cc110l_tx_verify_channel();
+    lbt_edges     = gdo0_edges;
+    lbt_rssi_hit  = false;
+    lbt_listening = true;
+    lbt_busy      = on_air_now() || !cc110l_tx_verify_channel();
+    lbt_sample_rssi();
 }
 
 bool csl_port_listen_busy(void) {
-    return lbt_busy || gdo0_edges != lbt_edges || on_air_now();
+    lbt_sample_rssi();
+    lbt_listening = false;
+    if (lbt_rssi_hit) {
+        COUNT(lbt_rssi_busy);
+    }
+    return lbt_busy || lbt_rssi_hit || gdo0_edges != lbt_edges || on_air_now();
 }
 
 static const char *const outcome_name[] = {
@@ -1569,6 +1623,13 @@ void radio_task_run(void) {
         }
         if (wake.active && (uint32_t)(timebase_us() - wake.last_us) > WAKE_GAP_US) {
             wake_flush();
+        }
+        if (lbt_listening) {
+            if (csl_busy()) {
+                lbt_sample_rssi(); /* a pass inside the listen */
+            } else {
+                lbt_listening = false; /* the transaction ended without its verdict */
+            }
         }
 
         if (!lbt_seeded && rng_try_bytes(&lbt_state, sizeof lbt_state)) {
