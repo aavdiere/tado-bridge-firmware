@@ -63,7 +63,7 @@ Because tanoclo is the compatibility target and accepts zeros for #10, the firmw
 | 17b | Does `SFRX` de-assert GDO2 (`IOCFG2=07`); else the first frame after a flush gets no ACK | Opened by #17 [I]; same place. Bench |
 | 17c | Listen before transmit sees sync words only, not carrier or RSSI; recalibration after bring-up | Opened by #17 [I]; decide with the first transmissions (#11). **2026-11-17 [V]:** bring-up calibration ran (1 try, PLL locked) and 5 frames went out with 0 LBT skips on a quiet channel 10; busy-channel behaviour not yet exercised (`test-bench.md`) |
 | 31 | Stock coordinator silent since 10:11:30 on 2026-11-17, before our first transmission (arm 10:18:16); stock devices then sent Beacon Requests on several channels | Not caused by our frames [I] (nothing was sent before the arm). Owner to check the stock bridge (`test-bench.md`, "First transmit test") |
-| 32 | Duty-cycle basis: 1 % in 865-868 MHz, 30 s per hour budget | [I]; awaiting owner acceptance. 8311 us airtime charged per frame |
+| 32 | Duty-cycle basis: 1 % in 865-868 MHz, 30 s per hour budget | **Decision (owner, 2026-11-17): 1 % is correct under the EU rules for this band**; the 30 s per hour budget stays as built (src/airtime.h). 8311 us airtime charged per frame |
 | 17d | Measured ACK latency (estimate 0.15-0.3 ms, target under 1 ms) and radio task stack margin | Opened by #17 [I]; SDR with `tools/sdr/demod.py` (#18), RTT stack watermark |
 
 ## E. Not reviewed or undocumented
