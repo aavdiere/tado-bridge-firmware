@@ -146,11 +146,16 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
             return memcmp(want, f, MAC_ACK_LEN) == 0 ? TXGATE_OK : TXGATE_WRONG_ANSWER;
         }
 
-        case MAC_BEACON:
-            /* 18 ec seq | PAN(2) | dst(8) | src(8) | ..., answering
-             * 0b e8 seq | ff ff | ff ff | src(8) | ... (freedo tado/beacon.go:
-             * 17-27). Pairing only; the caller (#19) also has to check that
-             * the joiner is the device named for the window. */
+        case MAC_BEACON: {
+            /* 18 ec seq | cd ab | dst(8) | src[0:3] || sealed: src[3:8] | 04 |
+             * counter(4) | FCS || MIC, answering 0b e8 seq | ff ff | ff ff |
+             * src(8) | 04 || ... (freedo tado/beacon.go:17-23). Only the first
+             * three bytes of our address are in the clear; the rest is
+             * sealed with the frame counter. Pairing only; the caller (#19)
+             * also checks that the joiner is the device named for the
+             * window (src/pair.c). */
+            static const uint8_t pan[2]   = {(uint8_t)MAC_PAN_ID, (uint8_t)(MAC_PAN_ID >> 8)};
+            static const uint8_t bcast[4] = {0xFF, 0xFF, 0xFF, 0xFF};
             if (len != 32u) {
                 return TXGATE_BAD_LENGTH;
             }
@@ -160,16 +165,21 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
             if (!answered) {
                 return TXGATE_NO_ANSWER;
             }
-            if (mac_classify(answered, MAC_HDR_LEN) != MAC_BEACON_REQUEST) {
+            if (mac_classify(answered, MAC_HDR_LEN) != MAC_BEACON_REQUEST
+                || memcmp(answered + 3, bcast, sizeof bcast) != 0) {
                 return TXGATE_WRONG_ANSWER;
             }
-            if (memcmp(f + 13, own, 8) != 0) {
+            if (memcmp(f + 3, pan, sizeof pan) != 0) {
+                return TXGATE_MALFORMED;
+            }
+            if (memcmp(f + 13, own, 3) != 0) {
                 return TXGATE_NOT_OUR_SRC;
             }
             if (memcmp(f + 5, answered + 7, 8) != 0 || memcmp(answered + 7, own, 8) == 0) {
                 return TXGATE_WRONG_ANSWER;
             }
             return TXGATE_OK;
+        }
 
         default:
             return TXGATE_BAD_CLASS;

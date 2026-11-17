@@ -238,19 +238,51 @@ static void test_frame_rules(void) {
     CHECK_EQ(txgate_check_frame(&r, own, junk, sizeof junk, NULL, 0), TXGATE_BAD_CLASS);
 
     /* Enhanced Beacon (#19): pairing flag, the test channel, and the request
-     * it answers. */
-    uint8_t eb[32] = {0x18, 0xEC, 4, 0xCD, 0xAB};
-    memcpy(eb + 5, peer, 8);
-    memcpy(eb + 13, own, 8);
-    CHECK_EQ(txgate_check_frame(&r, own, eb, sizeof eb, req, TXGATE_PAIRING), TXGATE_OK);
-    CHECK_EQ(txgate_check_frame(&r, own, eb, sizeof eb, req, 0), TXGATE_NOT_TEST_CHANNEL);
-    CHECK_EQ(txgate_check_frame(&r, own, eb, sizeof eb, NULL, TXGATE_PAIRING), TXGATE_NO_ANSWER);
-    CHECK_EQ(txgate_check_frame(&r, own, eb, sizeof eb, eb, TXGATE_PAIRING), TXGATE_WRONG_ANSWER);
+     * it answers. freedo's request and beacon (tado/beacon_test.go:62, 90),
+     * sealed as on air: the beacon's source is in the clear for its first
+     * three bytes only. */
+    static const uint8_t bridge[8] = {0x09, 0xa1, 0xce, 0xfa, 0x07, 0xc5, 0x1b, 0x00};
+    static const uint8_t ebr[27]   = {
+        0x0b, 0xe8, 0x7b, 0xff, 0xff, 0xff, 0xff, 0x0b, 0xb1, 0xce, 0xfa, 0x07, 0xc5, 0x1b,
+        0x00, 0x04, 0x58, 0x14, 0x63, 0xf9, 0x01, 0x47, 0xed, 0x74, 0xca, 0xf1, 0xbd,
+    };
+    uint8_t eb[32] = {
+        0x18, 0xec, 0x59, 0xcd, 0xab, 0x0b, 0xb1, 0xce, 0xfa, 0x07, 0xc5,
+        0x1b, 0x00, 0x09, 0xa1, 0xce, 0x08, 0x5a, 0x08, 0x64, 0xb7, 0x71,
+        0x9c, 0x19, 0xe3, 0x42, 0x85, 0xc9, 0xcd, 0xed, 0x7e, 0xc2,
+    };
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, 0), TXGATE_NOT_TEST_CHANNEL);
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, NULL, TXGATE_PAIRING),
+             TXGATE_NO_ANSWER);
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, eb, TXGATE_PAIRING),
+             TXGATE_WRONG_ANSWER);
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, 31, ebr, TXGATE_PAIRING), TXGATE_BAD_LENGTH);
+    /* A request of ours: no beacon to ourselves. */
+    uint8_t mine[27];
+    memcpy(mine, ebr, sizeof mine);
+    memcpy(mine + 7, bridge, 8);
+    memcpy(eb + 5, bridge, 8);
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, mine, TXGATE_PAIRING),
+             TXGATE_WRONG_ANSWER);
+    memcpy(eb + 5, ebr + 7, 8);
     eb[6] ^= 1; /* beacon for a device that did not ask */
-    CHECK_EQ(txgate_check_frame(&r, own, eb, sizeof eb, req, TXGATE_PAIRING), TXGATE_WRONG_ANSWER);
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING),
+             TXGATE_WRONG_ANSWER);
     eb[6] ^= 1;
     eb[14] ^= 1; /* not from us */
-    CHECK_EQ(txgate_check_frame(&r, own, eb, sizeof eb, req, TXGATE_PAIRING), TXGATE_NOT_OUR_SRC);
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING),
+             TXGATE_NOT_OUR_SRC);
+    eb[14] ^= 1;
+    eb[3] ^= 1; /* another PAN */
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_MALFORMED);
+    eb[3] ^= 1;
+    uint8_t ebr2[27];
+    memcpy(ebr2, ebr, sizeof ebr2);
+    ebr2[4] = 0xCD; /* a request to one PAN only is not a joiner's */
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr2, TXGATE_PAIRING),
+             TXGATE_WRONG_ANSWER);
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
 
     /* Pairing on any other channel of the plan is refused. */
     for (unsigned ch = 0; ch <= 49; ch++) {
