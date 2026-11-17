@@ -42,9 +42,10 @@ struct button {
     uint8_t     pending; /* consecutive samples that disagree with state */
 };
 
-#define POLL_MS    10
-#define DEBOUNCE_N 3   /* 30 ms */
-#define KICK_MS    500 /* watchdog window (docs/build.md P1) */
+#define POLL_MS      10
+#define DEBOUNCE_N   3    /* 30 ms */
+#define KICK_MS      500  /* watchdog window (docs/build.md P1) */
+#define PAIR_HOLD_MS 1000 /* the pair button opens a pairing window (#19) */
 
 static void button_update(struct button *b, bool raw) {
     if (raw == b->state) {
@@ -61,6 +62,7 @@ static void housekeeping_task(void *arg) {
     struct button reset     = {.name = "factory reset (PB10)"};
     struct button pair      = {.name = "pair (PC15)"};
     uint32_t      loops     = 0;
+    unsigned      pair_held = 0; /* polls the pair button has been held */
     TickType_t    next_kick = xTaskGetTickCount() + pdMS_TO_TICKS(KICK_MS);
 
     for (TickType_t wake = xTaskGetTickCount();; loops++) {
@@ -68,8 +70,16 @@ static void housekeeping_task(void *arg) {
 
         button_update(&reset, board_reset_button_raw());
         button_update(&pair, board_pair_button_raw());
-        /* The router LED shows Ethernet link and DHCP (net task, #13). */
-        board_led(LED_PAIRING, pair.state); /* pairing LED mirrors the pair button */
+        /* The router LED shows Ethernet link and DHCP (net task, #13); the
+         * pairing LED shows a pairing window (radio task, #19). Holding the
+         * pair button PAIR_HOLD_MS opens a window, or closes the open one;
+         * once per press. */
+        if (!pair.state) {
+            pair_held = 0;
+        } else if (pair_held < PAIR_HOLD_MS / POLL_MS && ++pair_held == PAIR_HOLD_MS / POLL_MS) {
+            LOG("button: pair held %u ms: pairing window requested", PAIR_HOLD_MS);
+            radio_request_pairing();
+        }
 
         /* Every 500 ms by the clock, not by loop count: after the net task's
          * P-256 steps have held this task off for a few hundred ms (#15),

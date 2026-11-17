@@ -15,6 +15,12 @@ set(BRIDGE_SERIAL "IB0000000000")
 # + 50 (extract_rf_key.js:71). Starts with tado's OUI 00 1b c5.
 set(BRIDGE_EUI64 "00 1b c5 00 00 00 00 00")
 
+# Pairing (#19, optional): the one device the pair button may pair, its
+# EUI-64 in the same order as BRIDGE_EUI64 (starts 00 1b c5; the source
+# address of its Beacon Requests, which the SDR shows in wire order, read
+# backwards). Without it the pair button opens no window.
+# set(PAIR_TARGET_EUI64 "00 1b c5 00 00 00 00 00")
+
 # Trust anchor for the server certificate: the public CA certificate only,
 # never a key. The bench CA: docs/test-bench.md "Bench certificate".
 set(SERVER_CA_PEM "$ENV{HOME}/tanoclo-bench/certs/bench-ca.pem")

@@ -54,7 +54,17 @@
  * the task loop, so a TX state that is not ours is stopped within
  * microseconds of the next radio access and at most one loop pass (<= 100 ms
  * when idle, with no other radio access in between) after the access that
- * caused it. */
+ * caused it.
+ *
+ * PAIRING (#19, src/pair.h). The pair button (held 1 s, src/app.c) asks this
+ * task to open a window for the device named in the build
+ * (PAIR_TARGET_EUI64 in config/local.cmake): at a quiet moment it creates
+ * the network first if there has never been one, then opens the window.
+ * The Enhanced Beacon that answers the target's Beacon Request is built
+ * while the request is taken (link_on_frame()) and sent from frame_done(),
+ * before anything logs, PAIR_BEACON_TX_AT_US after the request's end edge
+ * (see beacon_answer()). The pairing LED (PB8) is on while a window is open
+ * and goes off at the beacon's STX strobe: a scope marker for that strobe. */
 #include "radio.h"
 
 #include "airtime.h"
@@ -65,6 +75,7 @@
 #include "mac.h"
 #include "mx25r.h"
 #include "network.h"
+#include "pair.h"
 #include "provision.h"
 #include "rng.h"
 #include "spi1.h"
@@ -73,6 +84,8 @@
 
 #include "FreeRTOS.h"
 #include "task.h"
+
+#include "mbedtls/platform_util.h"
 
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/exti.h>
@@ -206,6 +219,7 @@ _Static_assert(FXOSC_HZ * 8u * 16u / (1u << 17) == 25390u, "deviation 25.39 kHz"
  * REARM, it could not, abort and re-arm now. */
 #define NOTE_ACK_CHECK (1u << 6)
 #define NOTE_ACK_REARM (1u << 7)
+#define NOTE_PAIR      (1u << 8) /* the pair button: open or close a window (#19) */
 
 /* FreeRTOS FromISR calls need a numeric priority >= 5 (FreeRTOSConfig.h,
  * configMAX_SYSCALL_INTERRUPT_PRIORITY = 0x50). */
@@ -353,6 +367,12 @@ void radio_notify_link(void) {
     }
 }
 
+void radio_request_pairing(void) {
+    if (self) {
+        xTaskNotify(self, NOTE_PAIR, eSetBits);
+    }
+}
+
 /* Microseconds since boot that do not wrap: TIM2's 32 bits extended. Radio
  * task only, called on every loop pass, far more often than the 71 minutes
  * of one wrap. */
@@ -382,6 +402,10 @@ struct counters {
     uint32_t tx_duty, ack_duty; /* refused: the hour's airtime budget is spent */
     uint32_t ack_rearm;         /* the ACK interrupt failed and the task re-armed RX */
     uint32_t lbt_rssi_busy;     /* listens found busy by RSSI */
+    /* Enhanced Beacons (#19): sent, and not sent because the request's end
+     * was not seen live, the channel was busy, it was too late, or the
+     * driver refused or failed. */
+    uint32_t beacon_sent, beacon_no_stamp, beacon_busy, beacon_late, beacon_fail;
 };
 static struct counters minute, total;
 
@@ -508,6 +532,10 @@ static struct {
     bool     in_packet;
     uint32_t sync_us;
     bool     ack_considered; /* ack_consider() has run for this frame */
+    /* gdo0_edges before the RXBYTES read that brought this frame's length
+     * byte: at frame_done() exactly one more edge (the frame's end) means
+     * gdo0_fall_us is this frame's end (#19, beacon_answer()). */
+    uint32_t edges_at_len;
 } rx;
 
 static bool packet_arriving(void) {
@@ -736,29 +764,40 @@ static void ack_consider(const uint8_t *hdr, uint32_t edges, bool arriving) {
 }
 
 static const char *const link_rx_name[LINK_RX_COUNT] = {
-    [LINK_RX_BAD_CRC]     = "bad crc",
-    [LINK_RX_ACK_TAKEN]   = "ack for our frame",
-    [LINK_RX_ACK_OTHER]   = "ack, not ours",
-    [LINK_RX_FORWARDED]   = "to server",
-    [LINK_RX_HELD]        = "fragment held",
-    [LINK_RX_DUPLICATE]   = "duplicate",
-    [LINK_RX_NOT_RELAYED] = "not relayed",
-    [LINK_RX_DROPPED]     = "DROPPED, queue full",
-    [LINK_RX_NOT_FOR_US]  = "not for us",
-    [LINK_RX_NO_KEY]      = "no key",
-    [LINK_RX_MIC_FAIL]    = "mic fail",
-    [LINK_RX_BROADCAST]   = "broadcast",
-    [LINK_RX_BEACON_REQ]  = "beacon request",
-    [LINK_RX_OTHER]       = "other",
+    [LINK_RX_BAD_CRC]       = "bad crc",
+    [LINK_RX_ACK_TAKEN]     = "ack for our frame",
+    [LINK_RX_ACK_OTHER]     = "ack, not ours",
+    [LINK_RX_FORWARDED]     = "to server",
+    [LINK_RX_HELD]          = "fragment held",
+    [LINK_RX_DUPLICATE]     = "duplicate",
+    [LINK_RX_NOT_RELAYED]   = "not relayed",
+    [LINK_RX_DROPPED]       = "DROPPED, queue full",
+    [LINK_RX_NOT_FOR_US]    = "not for us",
+    [LINK_RX_NO_KEY]        = "no key",
+    [LINK_RX_MIC_FAIL]      = "mic fail",
+    [LINK_RX_BROADCAST]     = "broadcast",
+    [LINK_RX_BEACON_REQ]    = "beacon request",
+    [LINK_RX_BEACON_ANSWER] = "beacon request of the pairing target",
+    [LINK_RX_PAIRING]       = "pairing target, pairing key",
+    [LINK_RX_PAIRED]        = "PAIRED: the target took the network key",
+    [LINK_RX_OTHER]         = "other",
 };
+_Static_assert(LINK_RX_OTHER + 1 == LINK_RX_COUNT, "a name for every link_rx");
+
+static void beacon_answer(uint32_t fall_us, bool own_end);
 
 /* A complete frame is in rx.buf. By now the GDO2 interrupt has sent the
  * Enhanced ACK if one was prepared, so this may take its time and log. */
 static void frame_done(void) {
     static uint32_t acks_seen;
-    unsigned        len      = rx.buf[0];
-    const uint8_t  *mac      = &rx.buf[1];
-    uint8_t         rssi_raw = rx.buf[1 + len];
+    /* The frame's end edge, taken together with the edge count (#19). */
+    taskENTER_CRITICAL();
+    uint32_t fall_us = gdo0_fall_us;
+    bool     own_end = (uint32_t)(gdo0_edges - rx.edges_at_len) == 1u;
+    taskEXIT_CRITICAL();
+    unsigned       len      = rx.buf[0];
+    const uint8_t *mac      = &rx.buf[1];
+    uint8_t        rssi_raw = rx.buf[1 + len];
     uint8_t st2    = rx.buf[2 + len]; /* bit 7 CRC_OK, bits 6:0 reserved (cc110l.txt:1747-1757) */
     bool    crc_ok = (st2 & 0x80) != 0;
     int     rssi   = rssi_x2(rssi_raw);
@@ -804,7 +843,10 @@ static void frame_done(void) {
      * a later packet has ended since, the stamp is too late; the coordinator
      * bounds what it accepts (csl_anchor_store). */
     enum link_rx what =
-        link_on_frame(mac, len, crc_ok, stamp64(gdo0_fall_us), (uint32_t)xTaskGetTickCount());
+        link_on_frame(mac, len, crc_ok, stamp64(fall_us), (uint32_t)xTaskGetTickCount());
+    if (what == LINK_RX_BEACON_ANSWER) {
+        beacon_answer(fall_us, own_end); /* before anything logs: it has a deadline */
+    }
 
     if ((mac[0] & 0x07) == 5 && len >= 2) { /* wake-up: 25 <seq> CD AB ... */
         COUNT(wake);
@@ -888,6 +930,7 @@ static void rx_pump(void) {
             rx.total          = 1 + len + 2;
             rx.assembling     = true;
             rx.ack_considered = false;
+            rx.edges_at_len   = edges;
             rx.start_us       = timebase_us();
             continue;
         }
@@ -1303,6 +1346,27 @@ static void log_minute(void) {
         (unsigned long)ls->down_queued,
         (unsigned long)(ls->down_refused + ls->down_full),
         (unsigned long)ls->ra_queued);
+    const struct pair_stats *ps = pair_stats();
+    if (ps->windows) {
+        LOG("pair: 60 s: beacons sent %lu, not sent: end not live %lu, busy %lu, late %lu, failed "
+            "%lu; totals: requests answered %lu, from others %lu",
+            (unsigned long)minute.beacon_sent,
+            (unsigned long)minute.beacon_no_stamp,
+            (unsigned long)minute.beacon_busy,
+            (unsigned long)minute.beacon_late,
+            (unsigned long)minute.beacon_fail,
+            (unsigned long)ps->req[PAIR_REQ_OK],
+            (unsigned long)ps->req[PAIR_REQ_NOT_TARGET]);
+        LOG("pair: totals: windows %lu, paired %lu, target frames %lu, RA pairs %lu, d/pair sent "
+            "%lu delivered %lu failed %lu",
+            (unsigned long)ps->windows,
+            (unsigned long)ps->paired,
+            (unsigned long)ps->joiner_frames,
+            (unsigned long)ps->ra_pairs,
+            (unsigned long)ps->dpair_sent,
+            (unsigned long)ps->dpair_delivered,
+            (unsigned long)ps->dpair_failed);
+    }
     minute = (struct counters){0};
 }
 
@@ -1349,7 +1413,16 @@ static void tx_wait_tick(void) {
     watchdog_checkin(WDG_RADIO);
 }
 
-bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
+/* One frame through the driver: cc110l_tx_start(), or cc110l_tx_answer()
+ * for a frame that answers a received one. mark: the pairing LED goes off
+ * right after the STX strobe (#19, the beacon's scope marker), and *stx_us
+ * (if not NULL) is the time just after it. */
+static bool send_frame(const uint8_t *frame,
+                       size_t         len,
+                       const uint8_t *answered,
+                       unsigned       flags,
+                       bool           mark,
+                       uint32_t      *stx_us) {
     if (!gdo_irq_on) {
         /* The storm guard tripped or a re-init failed: the chip may have
          * reset and is not known to hold our configuration. Nothing goes
@@ -1363,7 +1436,16 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
     for (unsigned i = 0; i < 16 && cc110l_tx_expected(); i++) {
         tx_wait_tick();
     }
-    enum cc110l_tx_result r = cc110l_tx_start(frame, len, flags);
+    enum cc110l_tx_result r = answered ? cc110l_tx_answer(frame, len, answered, flags)
+                                       : cc110l_tx_start(frame, len, flags);
+    if (r == CC_TX_OK) {
+        if (mark) {
+            board_led(LED_PAIRING, false);
+        }
+        if (stx_us) {
+            *stx_us = timebase_us();
+        }
+    }
     if (r == CC_TX_DISABLED || r == CC_TX_REFUSED || r == CC_TX_BUSY || r == CC_TX_NO_LOCK
         || r == CC_TX_DUTY || r == CC_TX_NO_PA) {
         /* The chip was not touched: still receiving. A frame refused for
@@ -1426,6 +1508,10 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
     return true;
 }
 
+bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
+    return send_frame(frame, len, NULL, flags, false, NULL);
+}
+
 /* Listen before transmit: "a packet on the air" is a sync word seen at any
  * time during the listen (GDO0 edges), a frame still being read, a frame
  * of our own (an Enhanced ACK) on the air, or energy in the channel: the
@@ -1481,6 +1567,160 @@ bool csl_port_listen_busy(void) {
     return lbt_busy || lbt_rssi_hit || gdo0_edges != lbt_edges || on_air_now();
 }
 
+/* --- Pairing: the beacon answer (#19) -------------------------------------------
+ * The target's Beacon Request has just been taken (frame_done()) and its
+ * Enhanced Beacon built (link_beacon()). Deadline: the beacon's preamble
+ * starts 2.4-7.4 ms after the request ended (pair.h). The request's end is
+ * gdo0_fall_us, stamped by the GDO0 interrupt within microseconds of the
+ * edge, later by at most one SPI1 critical section (about 0.1 ms), which
+ * only moves the beacon later. Steps:
+ *   1. The stamp must be the request's own end (own_end: exactly one GDO0
+ *      edge since its length byte was read, so this task took the request
+ *      while it was arriving). Otherwise the stamp may belong to a later
+ *      packet: no beacon.
+ *   2. Wait, spinning, until PAIR_BEACON_TX_AT_US after the stamp (about
+ *      3.7 ms minus the time this task needed to get here: the pump, the
+ *      CCM check of the request and building the beacon, well under
+ *      0.5 ms [I]). Any GDO0 edge (a sync word), GDO0 high, a frame of ours
+ *      on the air, a coordinator transaction holding the air, or an RSSI at
+ *      or above LBT_RSSI_BUSY_DBM at the end makes the channel busy: no
+ *      beacon. The commercial bridge listens 3.968 ms here (freedo
+ *      cc1101_bridge.ino:228-230).
+ *   3. Too late (past PAIR_BEACON_TX_LATEST_US, e.g. this task was blocked
+ *      by a flash program): no beacon.
+ *   4. cc110l_tx_answer(): channel read-back, transmit gate (pairing flag,
+ *      test channel, answers this request), airtime, SIDLE/SFRX/SFTX, 33
+ *      FIFO bytes, STX: about 0.15 ms [I]. Then IDLE to TX 75.2 us
+ *      (docs/datasheets/cc110l.txt:2542) to the first preamble bit.
+ * So the preamble starts about 3.9-4.0 ms after the request ended, 1.5 ms
+ * after the earliest and 3.4 ms before the latest the device expects [I].
+ * The device asks again 8 s later when no beacon comes. Logged after the
+ * beacon is on the air: STX time after the request's end. PB8 (pairing LED)
+ * falls right after the STX strobe. */
+static void beacon_answer(uint32_t fall_us, bool own_end) {
+    size_t         len      = 0;
+    const uint8_t *answered = NULL;
+    const uint8_t *b        = link_beacon(&len, &answered);
+    if (!b) {
+        return;
+    }
+    uint32_t edges = gdo0_edges;
+    uint32_t el    = timebase_us() - fall_us;
+    bool     busy  = false;
+    while (own_end && el < PAIR_BEACON_TX_AT_US) {
+        if (gdo0_edges != edges || gpio_get(GPIOA, BOARD_GDO0_PIN) || cc110l_tx_expected()
+            || csl_busy()) {
+            busy = true;
+            break;
+        }
+        uint32_t left = PAIR_BEACON_TX_AT_US - el;
+        delay_us(left > 100u ? 100u : left);
+        el = timebase_us() - fall_us;
+    }
+    if (own_end && !busy) {
+        uint8_t raw = 0;
+        busy        = gdo0_edges != edges || gpio_get(GPIOA, BOARD_GDO0_PIN)
+                      || !cc110l_read_status_stable(CC_RSSI, &raw)
+                      || rssi_x2(raw) >= 2 * LBT_RSSI_BUSY_DBM;
+        el          = timebase_us() - fall_us;
+    }
+    uint32_t stx = 0;
+    bool     ok  = false;
+    if (!own_end) {
+        COUNT(beacon_no_stamp);
+    } else if (busy) {
+        COUNT(beacon_busy);
+    } else if (el > PAIR_BEACON_TX_LATEST_US) {
+        COUNT(beacon_late);
+    } else if ((ok = send_frame(b, len, answered, TXGATE_PAIRING, true, &stx))) {
+        COUNT(beacon_sent);
+    } else {
+        COUNT(beacon_fail);
+    }
+    uint8_t seq = b[2];
+    link_beacon_done(ok);
+    if (ok) {
+        LOG("pair: beacon seq %02x to the target sent: STX %lu us after the request ended "
+            "(preamble about %lu us; window %u-%u us)",
+            seq,
+            (unsigned long)(stx - fall_us),
+            (unsigned long)(stx - fall_us + 75u),
+            PAIR_BEACON_START_MIN_US,
+            PAIR_BEACON_START_MAX_US);
+    } else {
+        LOG("pair: beacon seq %02x to the target NOT sent: %s (%lu us after the request ended)",
+            seq,
+            !own_end                        ? "request end not seen live"
+            : busy                          ? "channel busy"
+            : el > PAIR_BEACON_TX_LATEST_US ? "too late"
+                                            : "refused or failed",
+            (unsigned long)el);
+    }
+}
+
+/* The pair button (#19): open a window for the device named in the build,
+ * or close the one that is open. Runs at a quiet moment (no packet
+ * arriving, no transaction on the air), never inside a window: creating a
+ * network blocks this task for up to about 0.8 s (fw-reviewer items 1-3 of
+ * #19). The pairing trigger therefore needs, all of them: a target named in
+ * config/local.cmake (PAIR_TARGET_EUI64), the transmitter built in
+ * (RADIO_TX_ALLOWED), the flash read at boot, an identity, the radio up with
+ * PLL lock, and the owner's hand on the button. */
+static bool flash_ready; /* flash_boot() succeeded: the records may be read and written */
+
+static void pairing_trigger(uint32_t now_ms) {
+    if (link_pair_active(now_ms)) {
+        link_pair_close();
+        LOG("pair: window closed by the pair button");
+        return;
+    }
+#ifndef PROVISION_PAIR_EUI64
+    LOG("pair: no device named for pairing (PAIR_TARGET_EUI64 in config/local.cmake): no window");
+#else
+    static const uint8_t eui[MAC_EUI_LEN] = PROVISION_PAIR_EUI64;
+    uint8_t              target[MAC_EUI_LEN];
+    for (unsigned i = 0; i < MAC_EUI_LEN; i++) {
+        target[i] = eui[MAC_EUI_LEN - 1u - i]; /* wire order, as link_start() */
+    }
+    if (!RADIO_TX_ALLOWED) {
+        LOG("pair: transmitter switched off (RADIO_TX_ALLOWED 0): no window");
+        return;
+    }
+    if (!flash_ready || !link_own()) {
+        LOG("pair: %s: no window", !flash_ready ? "flash not ready at boot" : "no identity");
+        return;
+    }
+    if (!gdo_irq_on || !cc110l_cal_ok()) {
+        LOG("pair: radio not ready to transmit (no PLL lock or interrupts off): no window");
+        return;
+    }
+    uint8_t key[CCM_KEY_LEN], rnd[PAIR_RAND_LEN];
+    bool    ok;
+    if (network_active()) {
+        ok = network_key(key);
+    } else if (network_absent()) {
+        LOG("pair: no network yet: creating one on channel %u before the window opens",
+            RADIO_CHANNEL);
+        ok = network_create(RADIO_CHANNEL, key);
+    } else {
+        LOG("pair: a network record exists but is not in use: no window, no new network over it");
+        return;
+    }
+    ok = ok && rng_random(NULL, rnd, sizeof rnd) == 0
+         && link_pair_open(target, key, rnd, (uint32_t)xTaskGetTickCount());
+    mbedtls_platform_zeroize(key, sizeof key);
+    mbedtls_platform_zeroize(rnd, sizeof rnd);
+    if (ok) {
+        LOG("pair: window open for %u s on channel %u, for the device named in the build only",
+            PAIR_WINDOW_MS / 1000u,
+            RADIO_CHANNEL);
+    } else {
+        LOG("pair: window not opened (network key not read back, no random numbers, or the "
+            "target is not a device address)");
+    }
+#endif
+}
+
 static const char *const outcome_name[] = {
     [CSL_DELIVERED] = "delivered",
     [CSL_NO_ACK]    = "no ack",
@@ -1494,6 +1734,7 @@ static const char *const outcome_name[] = {
 /* After the fact: the transaction is over when this runs. No address in the
  * log, only the MAC seq and our own datagram id. */
 void csl_port_report(const struct csl_report *r) {
+    link_on_report(r);
     if (r->outcome == CSL_BUSY && !r->final) {
         return; /* a busy listen is retried 20 ms later; the outcome gets its line */
     }
@@ -1543,6 +1784,7 @@ void radio_task_run(void) {
 
     watchdog_checkin(WDG_RADIO);
     bool flash_ok = flash_boot();
+    flash_ready   = flash_ok;
     link_start();
     if (flash_ok) {
         network_boot(); /* key and counter reservation from flash, before the radio (#37) */
@@ -1560,10 +1802,12 @@ void radio_task_run(void) {
         }
     }
 
-    TickType_t next_health = xTaskGetTickCount() + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
-    TickType_t next_stats  = xTaskGetTickCount() + pdMS_TO_TICKS(STATS_PERIOD_MS);
-    TickType_t last_storm  = xTaskGetTickCount() - pdMS_TO_TICKS(STORM_REINIT_MIN_MS);
-    bool       flash_due   = false;
+    TickType_t next_health     = xTaskGetTickCount() + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
+    TickType_t next_stats      = xTaskGetTickCount() + pdMS_TO_TICKS(STATS_PERIOD_MS);
+    TickType_t last_storm      = xTaskGetTickCount() - pdMS_TO_TICKS(STORM_REINIT_MIN_MS);
+    bool       flash_due       = false;
+    bool       pair_due        = false;
+    bool       window_was_open = false;
     for (;;) {
         /* The coordinator first: it may send (a wake-up frame per call during
          * a train) and says how long it can wait. */
@@ -1658,10 +1902,15 @@ void radio_task_run(void) {
          * (its Enhanced ACK must not wait behind a log line or the flash),
          * no transaction on the air. */
         flash_due |= (bits & NOTE_FLASH) != 0;
+        pair_due |= (bits & NOTE_PAIR) != 0;
         if (!packet_arriving() && !csl_busy()) {
             if (flash_due) {
                 flash_due = false;
                 flash_check();
+            }
+            if (pair_due) {
+                pair_due = false;
+                pairing_trigger((uint32_t)now);
             }
             network_service((uint32_t)now);
             if ((int32_t)(now - next_health) >= 0) {
@@ -1676,6 +1925,19 @@ void radio_task_run(void) {
                 log_minute();
             }
         }
+
+        /* The pairing LED shows the window (#19); it closes by itself when
+         * it expires or the target has the key. */
+        bool open = link_pair_active((uint32_t)xTaskGetTickCount());
+        board_led(LED_PAIRING, open);
+        if (window_was_open && !open) {
+            const struct pair_stats *ps = pair_stats();
+            LOG("pair: window closed; paired so far %lu, d/pair sent %lu delivered %lu",
+                (unsigned long)ps->paired,
+                (unsigned long)ps->dpair_sent,
+                (unsigned long)ps->dpair_delivered);
+        }
+        window_was_open = open;
 
         /* Retire a frame of ours that is over, so its airtime never looks
          * current again after the 32-bit clock wraps (src/cc110l.c). */

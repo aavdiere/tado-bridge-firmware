@@ -32,4 +32,10 @@ void radio_request_flash_check(void);
 /* Wake the radio task after link_downlink_put() (src/link.h). Any task. */
 void radio_notify_link(void);
 
+/* The pair button was held (src/app.c): open a pairing window for the
+ * device named in the build, or close the open one (#19, src/pair.h). The
+ * radio task does it at its next quiet moment and logs the outcome. Any
+ * task. */
+void radio_request_pairing(void);
+
 #endif
