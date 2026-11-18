@@ -37,4 +37,21 @@ void button_init(struct button *b, bool need_release);
 /* One poll. raw: true = pressed. hold_polls: 0 for no hold. */
 unsigned button_poll(struct button *b, bool raw, uint32_t hold_polls);
 
+/* Warning flicker before the hold fires (factory reset, owner request
+ * 2026-11-18): during the last BUTTON_WARN_MS of the hold the LEDs go
+ * together 500 ms off, 500 ms on, starting off. Pure function of the hold
+ * time, so it can be tested on the host. */
+#define BUTTON_WARN_MS      3000u
+#define BUTTON_WARN_HALF_MS 500u
+enum button_led { BUTTON_LED_NORMAL, BUTTON_LED_OFF, BUTTON_LED_ON };
+/* held_ms: how long the press has lasted; hold_ms: when the hold fires.
+ * Normal before hold_ms - BUTTON_WARN_MS and from hold_ms on (the erase
+ * has started). */
+enum button_led button_warn_led(uint32_t held_ms, uint32_t hold_ms);
+/* Same for a button polled every poll_ms with the hold at hold_polls.
+ * Normal while the press is not debounced, not allowed to fire (held at
+ * power-on) or being released (a release reading is pending), so the LEDs
+ * return as soon as the button reads released. */
+enum button_led button_warn_poll(const struct button *b, uint32_t poll_ms, uint32_t hold_polls);
+
 #endif

@@ -61,8 +61,9 @@ static void button_log(const char *name, unsigned ev) {
 static void housekeeping_task(void *arg) {
     (void)arg;
     struct button reset, pair;
-    uint32_t      loops     = 0;
-    TickType_t    next_kick = xTaskGetTickCount() + pdMS_TO_TICKS(KICK_MS);
+    bool          warn_shown = false;
+    uint32_t      loops      = 0;
+    TickType_t    next_kick  = xTaskGetTickCount() + pdMS_TO_TICKS(KICK_MS);
     /* The factory reset needs a release first: held from power-on (or PB10
      * stuck low) it never fires (src/button.h). */
     button_init(&reset, true);
@@ -77,6 +78,14 @@ static void housekeeping_task(void *arg) {
          * press. */
         unsigned ev = button_poll(&reset, board_reset_button_raw(), FACTORY_HOLD_MS / POLL_MS);
         button_log("factory reset (PB10)", ev);
+        /* Last 3 s of the hold: router, cloud and pairing LEDs flicker
+         * together, 500 ms off, 500 ms on. Back to normal at once on release,
+         * and at the hold itself (the erase starts). */
+        enum button_led warn = button_warn_poll(&reset, POLL_MS, FACTORY_HOLD_MS / POLL_MS);
+        if (warn != BUTTON_LED_NORMAL || warn_shown) {
+            board_led_override(warn != BUTTON_LED_NORMAL, warn == BUTTON_LED_ON);
+            warn_shown = warn != BUTTON_LED_NORMAL;
+        }
         if (ev & BUTTON_HOLD) {
             LOG("button: factory reset held %u s: factory reset requested", FACTORY_HOLD_MS / 1000);
             radio_request_factory_reset();

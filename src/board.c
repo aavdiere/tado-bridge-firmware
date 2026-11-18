@@ -122,11 +122,38 @@ void board_power_led_force(void) {
     GPIO_MODER(GPIOB) = (GPIO_MODER(GPIOB) & ~(3u << 2u)) | (1u << 2u); /* PB1 output */
 }
 
-void board_led(enum led led, bool on) {
+/* The states the tasks asked for, one byte each (atomic stores, no
+ * read-modify-write shared between tasks), and the factory reset warning
+ * override: 0 off (no override), 1 forced off, 2 forced on. */
+static volatile uint8_t led_req[LED_COUNT];
+static volatile uint8_t led_ovr;
+
+static bool led_overridden(enum led led) {
+    return led_ovr != 0 && led != LED_POWER;
+}
+
+static void led_write(enum led led, bool on) {
     if (on) {
         gpio_set(GPIOB, led_pin[led]);
     } else {
         gpio_clear(GPIOB, led_pin[led]);
+    }
+}
+
+void board_led(enum led led, bool on) {
+    led_req[led] = on;
+    led_write(led, led_overridden(led) ? led_ovr == 2 : on);
+}
+
+void board_led_override(bool active, bool on) {
+    led_ovr = active ? (on ? 2 : 1) : 0;
+    /* A board_led() racing with this call can leave one LED wrong until the
+     * next call (10 ms while active); on release it is the requested state
+     * again, which the next board_led() or this call restores. */
+    for (int i = 0; i < LED_COUNT; i++) {
+        if (i != LED_POWER) {
+            led_write((enum led)i, active ? on : led_req[i] != 0);
+        }
     }
 }
 

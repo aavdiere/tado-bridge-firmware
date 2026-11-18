@@ -91,9 +91,62 @@ static void test_held_at_boot(void) {
     CHECK_EQ(at, 3u + 100u - 1u);
 }
 
+/* Warning flicker: last 3 s of the 10 s hold, 500 ms off then 500 ms on. */
+static void test_warn(void) {
+    CHECK_EQ(button_warn_led(0, 10000), BUTTON_LED_NORMAL);
+    CHECK_EQ(button_warn_led(6990, 10000), BUTTON_LED_NORMAL);
+    CHECK_EQ(button_warn_led(7000, 10000), BUTTON_LED_OFF);
+    CHECK_EQ(button_warn_led(7499, 10000), BUTTON_LED_OFF);
+    CHECK_EQ(button_warn_led(7500, 10000), BUTTON_LED_ON);
+    CHECK_EQ(button_warn_led(7999, 10000), BUTTON_LED_ON);
+    CHECK_EQ(button_warn_led(8000, 10000), BUTTON_LED_OFF);
+    CHECK_EQ(button_warn_led(9500, 10000), BUTTON_LED_ON);
+    CHECK_EQ(button_warn_led(9990, 10000), BUTTON_LED_ON);
+    CHECK_EQ(button_warn_led(10000, 10000), BUTTON_LED_NORMAL);
+    CHECK_EQ(button_warn_led(20000, 10000), BUTTON_LED_NORMAL);
+    CHECK_EQ(button_warn_led(500, 1000), BUTTON_LED_NORMAL); /* hold shorter than the warning */
+
+    /* Through the button: normal until 7 s, flicker, normal at the hold,
+     * and normal at once when the release starts (first released reading). */
+    struct button b;
+    button_init(&b, true);
+    feed(&b, false, 3, HOLD, NULL);
+    feed(&b, true, 3, HOLD, NULL);
+    unsigned flick = 0, first = 0, last = 0;
+    enum button_led prev = BUTTON_LED_NORMAL;
+    for (unsigned i = 4; i <= HOLD + 50u; i++) {
+        button_poll(&b, true, HOLD);
+        enum button_led l = button_warn_poll(&b, 10, HOLD);
+        if (l != BUTTON_LED_NORMAL) {
+            first = first ? first : i;
+            last  = i;
+        }
+        flick += l != prev && l != BUTTON_LED_NORMAL;
+        prev = l;
+    }
+    CHECK_EQ(flick, 6); /* off, on, off, on, off, on */
+    CHECK_EQ(first, 700u + 2u);
+    CHECK_EQ(last, HOLD - 1u + 2u);
+    CHECK_EQ(button_warn_poll(&b, 10, HOLD), BUTTON_LED_NORMAL);
+    /* Released during the flicker: normal on the first released reading. */
+    button_init(&b, true);
+    feed(&b, false, 3, HOLD, NULL);
+    feed(&b, true, 800, HOLD, NULL);
+    CHECK(button_warn_poll(&b, 10, HOLD) != BUTTON_LED_NORMAL);
+    button_poll(&b, false, HOLD);
+    CHECK_EQ(button_warn_poll(&b, 10, HOLD), BUTTON_LED_NORMAL);
+    feed(&b, false, 5, HOLD, NULL);
+    CHECK_EQ(button_warn_poll(&b, 10, HOLD), BUTTON_LED_NORMAL);
+    /* Held from power-on: no flicker, no erase. */
+    button_init(&b, true);
+    feed(&b, true, 800, HOLD, NULL);
+    CHECK_EQ(button_warn_poll(&b, 10, HOLD), BUTTON_LED_NORMAL);
+}
+
 int main(void) {
     test_debounce();
     test_hold();
     test_held_at_boot();
+    test_warn();
     return TEST_REPORT("test_button");
 }

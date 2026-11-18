@@ -48,6 +48,13 @@ void board_power_led_force(void);
 /* Atomic (BSRR); safe from any task. */
 void board_led(enum led led, bool on);
 
+/* Factory reset warning (housekeeping task, owner request 2026-11-18): while
+ * active, the router, cloud and pairing LEDs show `on` whatever board_led()
+ * is asked, and board_led() keeps the requested states for when the override
+ * ends. The power LED (fault code) is never overridden. Called every poll
+ * while active; a byte store and a few BSRR writes, no lock, no wait. */
+void board_led_override(bool active, bool on);
+
 /* Raw (undebounced) logical state: true = pressed. */
 bool board_reset_button_raw(void);
 bool board_pair_button_raw(void);
