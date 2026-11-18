@@ -82,7 +82,7 @@ The commercial bridge uses a random backoff of 0-6 × 640 µs and a 3.97 ms list
 ## Porting to the F411 [I]
 
 - Freedo splits radio and serial across two ESP32 cores. The F411 has one core, so radio work belongs in interrupts or a high-priority task.
-- Radio and flash share SPI1. Flash access must never run during a train, ACK window or ACK transmission.
+- Radio and flash share SPI1. Flash access must never run during a train, ACK window or ACK transmission. **As built (#22, 2026-11-18) [I]:** flash work starts only at a quiet moment of the radio task (no frame arriving, no coordinator transaction, so no train); no flash bus transaction starts while a frame arrives or a frame of ours (an ACK) is on the air; during a program or erase cycle the radio task keeps pumping the FIFO and preparing ACKs (`design.md`, "Implementation: flash work during radio traffic (#22)").
 - Freedo's host-to-radio split goes away: the ring, queue and CCM all run on the F411.
 
 ## P2 receive-only implementation (#9) [I]
@@ -144,7 +144,7 @@ Host-tested, built; the TX-off image was reviewed (`fw-reviewer`, "safe to flash
 | Channel | 26, receive-only | 16 (`RADIO_CHANNEL`; 10 until 2026-11-17) | The test network's channel (`test-bench.md`, owner decision 2026-11-17); the bridge no longer listens on the stock channel |
 | `IOCFG2` | `00` RX FIFO threshold | `07` packet received with CRC OK (`datasheets/cc110l.txt:2919`) | Its rising edge is the end of a good frame: the interrupt that sends the Enhanced ACK |
 | FIFO pump | On the threshold interrupt, else every 2 or 100 ms | Every tick (1 ms) from the sync edge to the end of the frame, else every 100 ms or sooner if the coordinator needs it | No threshold interrupt any more; 1 ms is 6 bytes of the 64-byte FIFO |
-| Work that can wait (flash ID, health check, minute log) | Any time | Only while no packet is arriving and no transaction holds the air | Nothing may sit between a frame and its ACK |
+| Work that can wait (flash ID, health check, minute log) | Any time | Only while no packet is arriving and no transaction holds the air; asked again after each step that may touch the flash, since flash work receives frames (#22) | Nothing may sit between a frame and its ACK |
 
 **Enhanced ACK path.** Differs from the plan in `radio.md`, "ACK prebuild", in two points: the ACK bytes go into the TX FIFO in the interrupt, not during reception, and `STX` is strobed from IDLE, not from RX. From RX, `STX` only works if the channel is clear (`MCSM1` CCA_MODE 3, `datasheets/cc110l.txt:2253-2262`), which right after a packet it may not be; from IDLE no assessment applies.
 

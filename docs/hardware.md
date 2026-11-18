@@ -57,7 +57,7 @@ The MCU has a 96-bit unique ID and 16 OTP blocks of 32 bytes (`stm32f411ce.txt:4
 
 The earlier guess of PA8 for the cloud LED was wrong; PA8 is not accounted for.
 
-**Factory reset button is on PB10** (package pin 21), confirmed by continuity (2026-11-11). The button connects PB10 to ground, so it is **active low: pressed reads 0** (2026-11-11). Enable the internal pull-up; it is harmless if the board also has an external one **[I]**.
+**Factory reset button is on PB10** (package pin 21), confirmed by continuity (2026-11-11). The button connects PB10 to ground, so it is **active low: pressed reads 0** (2026-11-11). Enable the internal pull-up; it is harmless if the board also has an external one **[I]**. **Firmware use (P6, built 2026-11-18, not yet flashed) [I]:** held 10 s, after having read released since power-on, it erases the network record and the counter log, keeps the identity record and restarts the bridge (`design.md`, "Implementation: factory reset (P6)"). Only PB10 is read; no other pin changes (`src/board.c`).
 
 **Pair button is on PC15** (package pin 4), **active high: pressed reads 1** [V], found 2026-11-11 with `tools/bench/io_check.tcl`: three presses gave three clean 0-1-0 transitions on PC15 and nothing else, with the internal pull-down on. On the board the button switches 3V3 through a diode next to a 3-pin IC marked `AHt`; that IC's role is unknown and not needed for firmware. PC15 is a current-limited pin (`stm32f411ce.txt:2734`), which is fine for an input.
 

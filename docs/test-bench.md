@@ -361,6 +361,22 @@ Decoding: `demod.py` (channels 10-18 on A, 20-28 on B), `burstscan.py` on all fo
 
 **What this means for #18 [V]/[I].** The Enhanced ACK goes out on time while the net task is inside a TLS handshake step. All 21 such cases fell in the long P-256 steps, the worst case for a preemption failure, and none missed or came late. The gaps match those outside handshakes. The three slower ACKs (228.6-233.9 us) are of the same size as those seen outside handshakes on other runs (231.2, 233.9, 239.3 us), so they do not come from the handshake **[I]** (more likely the interrupt waiting for an SPI1 access, as noted earlier). This confirms the design argument (radio task above the net task, ACK sent from the CRC-OK interrupt) on air. Both conditions of #18 now hold.
 
+## Flash work during traffic (#22) and factory reset, plan [I]
+
+Not run yet. Code: `design.md`, "Implementation: flash work during radio traffic (#22)" and "Implementation: factory reset (P6)". Gates: a `fw-reviewer` "safe to flash" verdict on both (they change radio timing and erase records), then main flashed with `tools/flash.sh` (OpenOCD verify, no option bytes). The bench edit of `src/airtime.h` (budget 3600 s per hour) stays local and uncommitted, as before.
+
+**1. Flash work while the spare device talks (#22), no owner hand work.** Normal operation writes the flash too rarely to test (one counter-log entry per 2048 frames sent, one sector erase per 512 entries), so the writes are forced over SWD in RAM, with no test code in the image. Symbols from the flashed ELF (`arm-none-eabi-nm -S`; the addresses change with every build): `limit` in `src/network.c` (4 bytes, the reservation's end as the network module last saw it) and `ctr` in `src/store.c` (20 bytes; `next`, the next log slot, at offset 16).
+- One program: lower `limit` by 2100 while it stays above the link's counter. The next quiet moment then runs `store_counter_extend()`, which appends one 8-byte entry above every entry already in the log, so no counter is reused [I]. Needs at least one frame sent since the last reservation (wake trains, Router Advertisements), otherwise the write is refused and retried after 10 s.
+- One erase: set `ctr.next` to 512 first. The next append then moves to the other sector and erases it (58-240 ms, `datasheets/mx25r1635f.txt:3340-3341`).
+- Run: tanoclo sends a setpoint to the spare device every 20-30 s, so that it sends uplinks; an OpenOCD Tcl loop forces an erase every 2-5 s (each one about 2-12 % of the time in an erase) for 30-60 minutes; RTT and the SDR on channel 16 as in "ACK timing (#18)". Wear: one erase per sector per forced erase, far below 100,000 cycles.
+- Pass: the minute line `flash: 60 s: radio served N times during flash work, frames N, acks N` shows ACKs during flash work; `link: 60 s: acks prepared N sent N too late 0`; no overflow; no `gave up`; every CRC-OK uplink on air has its ACK, with the gap as without flash work (225-240 us); the counter log reads back after a reset (boot line `network: record seq ..., frame counter ..., reserved below ...` above every counter seen on air). Also note the radio stack in the "alive:" line.
+
+**2. Factory reset (owner hand work: the button, then re-pairing).**
+1. Hold the factory reset button (PB10) for less than 10 s: only `button: factory reset (PB10) pressed/released`, nothing erased.
+2. Hold it 10 s: RTT `button: factory reset held 10 s: factory reset requested`, `factory reset: erasing the network record and the counter log; the identity stays`, `factory reset: done; restarting`, then a boot with the identity record's seq 1 and `network: no network record: no key, nothing sent`. The spare device's frames are no longer acknowledged.
+3. Optional: power up (USB) with the button already held and keep it held 15 s: nothing is erased until it has been released once.
+4. Re-pair: hold the pair button 1 s (a new network is created on channel 16), put the spare device into pairing mode, then check downlink and uplink through tanoclo, and that a reset keeps the new network.
+
 ## Bench network
 
 Tested 2026-11-11 without changing anything.
