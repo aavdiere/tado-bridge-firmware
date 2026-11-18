@@ -451,3 +451,15 @@ bool store_counter_extend(uint32_t next, uint32_t *limit) {
     *limit = next + STORE_CTR_AHEAD;
     return true;
 }
+
+/* --- Factory reset ------------------------------------------------------------- */
+bool store_factory_reset(void) {
+    /* Network first: see store.h. */
+    static const uint32_t order[] = {FLASH_NET_A, FLASH_NET_B, FLASH_CTR_A, FLASH_CTR_B};
+    bool                  ok      = true;
+    for (unsigned i = 0; ok && i < sizeof order / sizeof order[0]; i++) {
+        ok = erase_verified(order[i]);
+    }
+    store_ctr_forget(); /* the log is read again before its next use */
+    return ok;
+}

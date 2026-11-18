@@ -900,6 +900,149 @@ static void test_network_flow_cuts(void) {
     CHECK(cases >= n_steps);
 }
 
+/* --- Factory reset ---------------------------------------------------------------- */
+/* A bridge with a network: a record (one or two generations) and a counter
+ * log that has changed sectors once, so both log sectors hold entries.
+ * *used: one past the highest counter that may have been used on the air. */
+static void factory_setup(unsigned records, uint32_t *used) {
+    flash_stock();
+    reboot();
+    for (unsigned r = 0; r < records; r++) {
+        struct store_net n = make_net((uint8_t)(60u + r), 0);
+        CHECK(store_net_write(&n, NULL));
+    }
+    uint32_t first = 0, limit = 0;
+    CHECK(store_counter_boot(0, &first, &limit));
+    for (unsigned k = 0; k < STORE_CTR_ENTRIES + 20u; k++) {
+        CHECK(store_counter_extend(limit - 1u, &limit));
+    }
+    *used = limit; /* everything below the reservation may be used */
+    reboot();
+}
+
+static bool sector_blank(uint32_t a) {
+    for (uint32_t i = 0; i < FLASH_SECTOR; i++) {
+        if (mem[a + i] != 0xFF) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Uncut: no network, an empty counter log, and nothing else changed; a new
+ * network may then be created. */
+static void test_factory_reset(void) {
+    uint32_t used = 0;
+    factory_setup(2, &used);
+    CHECK(fm.ctr_erases > 0); /* the log changed sectors */
+    uint32_t sum = outside_sum(); /* the identity sectors included */
+    unsigned ops = fm.ops;
+    CHECK(store_factory_reset());
+    CHECK_EQ(fm.ops - ops, 4); /* four sector erases, no programs */
+    reboot();
+    struct store_net got;
+    uint32_t         seq = 0, max = 0;
+    bool             any = true, found = true;
+    CHECK(!store_net_load(&got, &seq));
+    CHECK(store_net_probe(&any));
+    CHECK(!any); /* "no network record": network_create() may run */
+    CHECK(store_ctr_highest(&max, &found));
+    CHECK(!found);
+    CHECK(sector_blank(FLASH_NET_A) && sector_blank(FLASH_NET_B));
+    CHECK(sector_blank(FLASH_CTR_A) && sector_blank(FLASH_CTR_B));
+    CHECK_EQ(outside_sum(), sum);
+    /* A new network, as network_create() writes it. */
+    struct store_net n = make_net(70, 0);
+    CHECK(store_net_commit(&n, &got, &seq));
+    CHECK_EQ(seq, 1);
+    uint32_t first = 0, limit = 0;
+    CHECK(store_counter_boot(n.counter_floor, &first, &limit));
+    CHECK_EQ(first, 0);
+    /* Twice in a row is fine. */
+    CHECK(store_factory_reset());
+    CHECK(store_factory_reset());
+    CHECK_EQ(outside_sum(), sum);
+}
+
+/* A cut at every step, from one and from two records: after the reboot a
+ * network that still loads has its whole counter log (no counter below
+ * `used` can be handed out again), and a second factory reset finishes the
+ * job. */
+static void test_factory_reset_cuts(void) {
+    unsigned cases = 0, kept = 0, gone = 0, damaged = 0;
+    for (unsigned records = 1; records <= 2; records++) {
+        for (unsigned k = 1; k <= 4u; k++) {
+            for (unsigned seed = 0; seed < 8; seed++) {
+                uint32_t used = 0;
+                factory_setup(records, &used);
+                uint32_t sum = outside_sum();
+                uint8_t  log_before[2 * FLASH_SECTOR];
+                memcpy(log_before, mem + FLASH_CTR_A, sizeof log_before);
+                fm.rnd    = seed * 104729u + k;
+                fm.cut_in = k;
+                CHECK(!store_factory_reset());
+                CHECK_EQ(fm.cut_in, 0); /* four erases: the cut came */
+                cases++;
+                reboot();
+                struct store_net got;
+                uint32_t         seq = 0;
+                bool             any = false;
+                bool             net = store_net_load(&got, &seq);
+                CHECK(store_net_probe(&any));
+                if (net) {
+                    kept++;
+                    CHECK_MEM(mem + FLASH_CTR_A, log_before, sizeof log_before);
+                    uint32_t first = 0, limit = 0;
+                    CHECK(store_counter_boot(got.counter_floor, &first, &limit));
+                    CHECK(first >= used);
+                } else if (any) {
+                    damaged++; /* no key; the owner presses again */
+                } else {
+                    gone++;
+                }
+                CHECK_EQ(outside_sum(), sum);
+                reboot();
+                CHECK(store_factory_reset());
+                reboot();
+                CHECK(!store_net_load(&got, &seq));
+                CHECK(store_net_probe(&any));
+                CHECK(!any);
+                CHECK(sector_blank(FLASH_CTR_A) && sector_blank(FLASH_CTR_B));
+                CHECK_EQ(outside_sum(), sum);
+            }
+        }
+    }
+    printf("test_store: factory reset cut at every step: %u cases, network kept %u, damaged %u, "
+           "gone %u\n",
+           cases,
+           kept,
+           damaged,
+           gone);
+    CHECK(cases == 64u && kept > 0 && gone > 0);
+}
+
+/* With the power on, a network erase that fails (fail flag, partial, or
+ * silent and caught by the blank check) stops the reset before the counter
+ * log. */
+static void test_factory_reset_failing(void) {
+    for (unsigned how = FAIL_NOTHING; how <= FAIL_SILENT; how++) {
+        uint32_t used = 0;
+        factory_setup(1, &used);
+        uint8_t log_before[2 * FLASH_SECTOR];
+        memcpy(log_before, mem + FLASH_CTR_A, sizeof log_before);
+        unsigned ctr_erases = fm.ctr_erases;
+        fm.erase_fail       = how;
+        CHECK(!store_factory_reset());
+        CHECK_EQ(fm.ctr_erases, ctr_erases);
+        CHECK_MEM(mem + FLASH_CTR_A, log_before, sizeof log_before);
+        reboot();
+        CHECK(store_factory_reset());
+        bool any = true;
+        CHECK(store_net_probe(&any));
+        CHECK(!any);
+    }
+}
+
 int main(void) {
     test_crc();
     test_record_basic();
@@ -913,5 +1056,8 @@ int main(void) {
     test_counter_failing_erases();
     test_counter_run();
     test_network_flow_cuts();
+    test_factory_reset();
+    test_factory_reset_cuts();
+    test_factory_reset_failing();
     return TEST_REPORT("test_store");
 }

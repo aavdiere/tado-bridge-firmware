@@ -161,4 +161,17 @@ bool store_counter_boot(uint32_t floor, uint32_t *first, uint32_t *limit);
  * after the highest entry's, it stays false until the next boot). */
 bool store_counter_extend(uint32_t next, uint32_t *limit);
 
+/* --- Factory reset (P6, docs/design.md "Lifecycle") ------------------------- */
+/* Erases both network slots, then, only once both read back blank, both
+ * counter-log sectors. The identity sectors are not touched (and lie
+ * outside the flash driver's write range, src/flash_layout.h). The order
+ * keeps the counter log as long as any network record can still be loaded,
+ * so a power cut at any step never leaves a network whose counters restart
+ * below ones already used on the air: a cut leaves the old network (with
+ * its whole counter log), a damaged record (no key, no new network over
+ * it), or no network. False if an erase failed or a sector did not read
+ * back blank; the counter log is then untouched unless both network slots
+ * were already blank. Call again to finish. */
+bool store_factory_reset(void);
+
 #endif
