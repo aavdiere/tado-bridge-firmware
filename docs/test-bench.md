@@ -426,19 +426,21 @@ Not run yet. Code and recovery: `design.md`, "Implementation: bootloader and boo
 - A `fw-reviewer` "safe to flash" verdict on the bootloader commits (`c69ad4b..` HEAD of the #24 branch). Rule 4 applies twice over: the image is bootloader code, and the default build transmits.
 - Build from the reviewed commit with the bench `config/local.cmake`.
 - No option bytes, and every write verified, as always.
+- **Verdict A of `fw-reviewer` (2026-11-18) [D]:** plan accepted with the changes below (steps 1, 2 and 5, and the build check). Its non-blocking notes are at the end of this section.
+- **Build check before flashing:** a clean `make` from the reviewed commit. Confirm with `arm-none-eabi-readelf -l` that the bootloader ELF loads at `0x08000000` (under `0x4000` bytes) and the application at `0x08010000`. Never pass a stale pre-P7 `build/tado-bridge.elf` to `tools/flash.sh`. The main tree's uncommitted `src/airtime.h` bench edit is not covered by the review: build without it, or the owner confirms it for this image.
 
 The application's radio code does not change in #24, but it now runs from `0x08010000`. Since the bootloader writes no boot state, the bench keeps its network, counter log and identity records.
 
-**1. First flash.** `tools/flash.sh` writes the bootloader to sector 0 and the application to sectors 4-5. Each `program` erases only the sectors it covers and verifies (expect `Verified OK` twice). The old image's remains in sectors 1-3 are never executed. Expected RTT output: the usual boot log, with a new line `image: <size> bytes at 08010000, VTOR 08010000` before the reset cause, then session ready and the radio as before. `tools/flash.sh` with two images in one OpenOCD run is itself new **[I]**: if the second `program` fails, run `tools/flash.sh build/tado-bridge.elf` again; the board shows LED code 5 meanwhile, and nothing else can go wrong.
+**1. First flash.** `tools/flash.sh` writes the bootloader to sector 0 and the application to sectors 4-5. Each `program` erases only the sectors it covers and verifies (expect `Verified OK` twice). The old image's remains in sectors 1-3 are never executed. Expected RTT output: the usual boot log, with a new line `image: <size> bytes at 08010000, VTOR 08010000` before the reset cause, then session ready and the radio as before. `tools/flash.sh` with two images in one OpenOCD run is itself new **[I]**: if the second `program` fails, run `tools/flash.sh build/tado-bridge.elf` again; if OpenOCD fails, the core usually stays halted, so LED code 5 appears only after a reset or a power cycle. If the cut falls during the sector-0 write, the core locks up; recover by running `tools/flash.sh` again with both images, not the application-only form. Nothing else can go wrong.
 
-**2. Boot without a boot state.** Check the boot-state sectors are still blank. The bootloader must have written nothing: it never does without a state, and the application does not write one yet. The time from reset to the first RTT line should grow by only a few milliseconds over the 2 s delay (flash wake 1-2 ms, JEDEC ID, record load, descriptor check).
+**2. Boot without a boot state.** There is no tool to check that the boot-state sectors are blank, so this check is dropped **[D]**: the no-state path has no write path, shown by the disassembly and the host test. Only a reviewed read-only `identity.tcl` variant that drives PA4 high first (as `identity.tcl:113-125`) would be allowed. Never improvise SPI1 traffic from OpenOCD after a reset halt (PA4, the CC110L's CSn, floats, and a stray TX strobe is possible), and never take a full SPI dump (`0x102000` holds the network key). The bootloader writes nothing without a state, and the application does not write one yet. The time from reset to the first RTT line should grow by only a few milliseconds over the 2 s delay (flash wake 1-2 ms, JEDEC ID, record load, descriptor check).
 
 **3. Power cycle (owner: unplug and replug USB).** The board boots again. Reset cause `POR/PDR` and the identity and network records as before.
 
 **4. Debugger halt.** `halt`, wait 70 s (longer than the bootloader's longest IWDG timeout), `resume`. No reset happens: `DBG_IWDG_STOP` is set (the next boot log must not show `IWDG`).
 
 **5. Recovery rehearsal, LED code 5.**
-1. `reset halt`, then `flash erase_sector 0 4 4` (sector 4 only: the application's vector table and commit mark), then `reset run`.
+1. `reset halt`, then `flash info 0` and confirm that sector 4 is `0x08010000`, 64 KB. Then exactly `flash erase_address 0x08010000 0x10000` (the application's vector table and commit mark), then `reset run`. Nothing else is allowed: no `stm32f2x mass_erase`, no `options_write`, no lock, unlock or `flash protect`.
 2. The power LED shows 5 flashes every 2.5 s. The owner confirms by eye, or it is read over SWD as for code 3: PB1's ODR bit sampled every 20 ms (`hardware.md`, "LED roles").
 3. `tools/flash.sh` restores the board; verify the boot log.
 
@@ -447,6 +449,11 @@ This proves the recovery path in "Recovery over SWD (#24)", step 1, before any u
 **6. ACK timing regression.** One `ackgap.py` run on channel 16 as in "ACK timing (#18)" (SDR, spare device sending). The ACK code is unchanged but sits at new addresses; the gap should stay at 225-240 us. PB8 is not needed: the SDR measures on the air.
 
 **Later, with the application's update side (not built):** an update installs (`TESTING`, then `CONFIRMED`); a candidate that never confirms is rolled back after 3 starts; the owner cuts USB power during an install (the power LED flickers while it runs) and the board recovers on the next power-up.
+
+**Non-blocking notes from verdict A (2026-11-18) [D]/[I]:**
+- Step 4's halt test only regresses `DBG_IWDG_STOP` **[I]**; it does not exercise the bootloader's own watchdog handling.
+- `BSY_SPIN` of 50M iterations takes about 15-20 s **[I]**, close to the 22.3 s IWDG minimum (`bl_hw.c:363`).
+- With no boot state the bootloader trusts the descriptor and head checks without a SHA-256 **[D]**; `verify` after the SWD write catches torn writes.
 
 ## Bench network
 
