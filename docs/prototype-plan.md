@@ -2,7 +2,7 @@
 
 Builds the IB01 firmware in stages. Each stage ends in something testable and settles specific open questions (`open-questions.md`). Design: `design.md`. Pins: `hardware.md`.
 
-**Status (2026-11-18): P0 to P4 and P3.1 are done and verified on the bench. P5 is nearly done (2026-11-18): #17, #18 and #19 done, #21 (P6) closed (#18 closed with the TLS-handshake ACK measurement, commit 45735e2); #20 skipped for now (owner decision 2026-11-18), #11 open. P6: #22 and the factory reset built and host-tested 2026-11-18, waiting for review and the bench. P7 started: size check done 2026-11-18 (#23), layout kept. P8 is not started.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
+**Status (2026-11-18): P0 to P4 and P3.1 are done and verified on the bench. P5 is nearly done (2026-11-18): #17, #18 and #19 done, #21 (P6) closed (#18 closed with the TLS-handshake ACK measurement, commit 45735e2); #20 skipped for now (owner decision 2026-11-18), #11 open. P6: #22 and the factory reset built and host-tested 2026-11-18, reviewed and flashed; #22 measured on air (ACKs during sector erases), the factory reset check waits for the owner. P7 started: size check done 2026-11-18 (#23), layout kept. P8 is not started.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
 
 ## Progress tracking on GitHub
 
@@ -206,7 +206,7 @@ Restructured in the 2026-11-16 review. The steps run in this order, because each
 ### P6: Storage
 
 - Identity record in external flash (`design.md`); provision the serial and EUI-64 from P0 into it instead of the build-time `config/local.cmake` (#21). The network and counter records moved to P5 (#37). **Status (2026-11-18):** built and host-tested (`design.md`, "Implementation: identity record (#21)"; provisioning with `tools/identity/provision.sh`, `build.md`); reviewed, provisioned and flashed on the bench 2026-11-18, identity record seq 1, kept over a power cycle together with the network record **[V]** (`design.md`). #21 closed; the Ethernet MAC from the original bridge follows as #39 (end of P7).
-- Erase and program while radio traffic runs (open question 19, #22). **Status (2026-11-18):** built and host-tested (`design.md`, "Implementation: flash work during radio traffic (#22)"); next `fw-reviewer`, then the bench check (`test-bench.md`, "Flash work during traffic (#22) and factory reset, plan").
+- Erase and program while radio traffic runs (open question 19, #22). **Status (2026-11-18):** built and host-tested (`design.md`, "Implementation: flash work during radio traffic (#22)"), reviewed and on the bench; part 1 of the bench check measured 2026-11-18: ACKs during sector erases at 226 us, nothing late, one late short train after an erase (`test-bench.md`, "Flash work during traffic (#22) result"). Open: read-back after a reset, the late-train fix, and the factory reset check (owner hand work).
 - Factory reset (PB10): erases the network and counter records, keeps the identity. **Status (2026-11-18):** built and host-tested, 10 s hold (`design.md`, "Implementation: factory reset (P6)"); next `fw-reviewer`, then the bench test (owner presses the button and re-pairs the spare device).
 - **Done when:** identity and network survive power cycles, a factory reset re-pairs cleanly, and no ACK is missed during flash work.
 
