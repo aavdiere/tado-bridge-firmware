@@ -319,8 +319,10 @@ class Demod:
             "t_sync": (t0 + r_sync) * ts,
             "t_pre": (t0 + self.raw_of_ds(t_start - npre * bit)) * ts,
             "t_end": (t0 + r_end) * ts,
-            "env_on": (t0 + env_on) * ts,
-            "env_off": (t0 + env_off) * ts,
+            # float(): pw is float32, so without it the edge stays float32 and
+            # loses tens of us a few hundred seconds into a file (numpy 2).
+            "env_on": (t0 + float(env_on)) * ts,
+            "env_off": (t0 + float(env_off)) * ts,
             "sample_sync": t0 + r_sync,
             "len": length,
             "crc_ok": crc_ok,

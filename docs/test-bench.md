@@ -66,6 +66,7 @@ The backup shows the bench IB01 is configured for **channel 26**, the same chann
 - `tools/sdr/chanscan.py`, `tools/sdr/frames.py`: channel activity and tado frame decoding.
 - `tools/sdr/demod.py`: per-frame GFSK demodulator with sub-microsecond timestamps, carrier offset and MAC header fields (#26). Usage and accuracy below.
 - `tools/sdr/burstscan.py`: power-versus-time scan of a whole capture; every energy burst per channel must be a decoded frame, spill-over from a stronger channel, or is listed with duration, centroid, width and symbol rate. Used to confirm that a receive-only image emits nothing.
+- `tools/sdr/ackgap.py`: Data end to Enhanced ACK preamble per frame from a `demod.py --csv` file, uplinks and downlinks apart, unanswered uplinks listed, each pair on host time and tagged when it falls in a TLS handshake from the RTT log (#18). Usage and results: "ACK timing (#18)".
 - `tools/sdr/burstzoom.py`: per-pulse close look at one stretch of a capture (edges, carrier, tone/sweep/FSK, -10 dB width, optional PNG), for bursts `burstscan.py` cannot explain.
 
 ## RTL-SDR uses
@@ -292,6 +293,47 @@ No B visit overlapped a transmission of the bridge, since A is held while channe
 - `d/pair` came 2 s later than designed (see above); the device accepted it.
 - The bridge's ACK, at 226 us, is faster than the stock devices' (375 us) and far faster than the stock coordinator's (1.5-2.0 ms). The device accepted all 24 at first try (dup 0).
 - The wake-up step is 4047.6 us; stock uses 3.94-3.99 or 4.40-4.45 ms. Every train was delivered on its first attempt.
+
+## ACK timing (#18) (2026-11-18) [V]
+
+Enhanced ACK turnaround of the bench bridge over the air, in normal operation and around TLS reconnects. Receive-only on the SDR; the bridge and the ST-Link were not touched (no flash, no reset, RTT read over the running OpenOCD's port 19021). Image: the local build of `c2d545c` on the bench (transmitter on, spare device named in `config/local.cmake`, plus the uncommitted local edit of `src/airtime.h`: the minute log shows a budget of 3600000 ms per hour instead of the committed 30000 ms; the last hour used 5.7-8.9 s). Captures in `~/ib01-captures/ack18/` and `~/ib01-captures/ack18b/`, outside git. Senders are named by role; no address is recorded.
+
+**Method.** `hopcap.py` as for the pairing test (A 865.924158 MHz, channels 9-19; B 867.923670 MHz, channels 19-29), `--max-a-hard 20`, tuner gain **12.5 dB** (19.7 dB clipped the bridge in the pairing test; here the bridge read -7.6 dBFS, the spare device -8.8 dBFS, 0 clipped samples in every row). RTT logged with a host-time prefix.
+- Run 1, 01:24:10-01:29:40, 330 s: observation only, plus `docker restart tanoclo-ws` at 60, 130, 200 and 270 s to make the bridge reconnect (4 TLS handshakes).
+- Run 2, 01:31:11-01:38:21, 430 s: every 50 s an overlay PUT on zone 1 of the local bench server (bench user, password-grant token, 21.5 and 21.0 °C alternately), each giving one downlink to the spare device and its reply; in 6 of the 8 cycles `docker restart tanoclo-ws` 1.5-7.0 s after the PUT (6 handshakes). The overlay was left as found (MANUAL 21 °C, read back afterwards).
+
+Decoding: `demod.py` (channels 10-18 on A, 20-28 on B), `burstscan.py` on all four files, and the new `tools/sdr/ackgap.py`, which pairs each CRC-OK unicast Data frame with the Enhanced ACK of the same sequence number, separates uplinks (our bridge ACKs) from downlinks (the device ACKs) as `demod.py --summary` does, maps each pair to host time through `run.segments.csv` and tags pairs that fall in a TLS handshake taken from the RTT `tls: ... handshake N ms` lines. **Resolution:** gaps are from Data end (last CRC bit) to ACK preamble start, both from `demod.py` sync fits (least squares over every bit-boundary zero crossing at 600 kS/s, 1.667 us per sample), good to well under 1 us ("Demodulator", accuracy); envelope edges are half-amplitude crossings interpolated between 600 kS/s samples. Host times are good to a few ms, plus 20-100 ms RTT line latency, far below the 1 s handshake windows.
+
+| Item | Result |
+| :--- | :--- |
+| Bridge ACK, this run | Data end to ACK preamble start **225.3-233.9 us, median 226.0 us, std 2.8 us (n=7)**; 6 of 7 within 225.3-226.1 us. Envelope off to envelope on 200.1-208.6 us, median 200.3 us |
+| Bridge ACK, with the pairing test | Same tool on the pairing capture reproduces 225.3-239.3 us, median 226.0 us (n=24). Together: **n=31, 225.3-239.3 us, median 226.0 us, mean 226.8 us, std 2.8 us; 28 of 31 at or below 226.2 us** |
+| Against the target | Target: start within 1 ms of the Data frame's end (`radio.md`, "Conflicts", ACK timing). Worst case 239.3 us: **0.76 ms of margin** |
+| Unanswered uplinks | 0 of the decoded uplinks. The RTT counts acks prepared 12, sent 12, too late 0, failed 0, refused for airtime 0 in run 2 (0 in run 1). 7 were decoded on A; the other 5 fell in B visits (checked against `run.segments.csv`). The device repeated none (link `dup 0`) |
+| Reference | Spare device's ACK to the bridge's downlinks 360.4-392.7 us, median 384.1 us (n=8). On 26: stock devices 376.6-392.6 us (n=10), stock coordinator 1471.8-1963.3 us (n=9) |
+| TLS handshakes | 10, all `TLSv1.2 TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256`: 1059-1064 ms each, 1043-1044 ms CPU in 19-21 steps, longest step 361 ms; each reconnect ready on attempt 1 |
+| **ACK during a handshake** | **Not measured: no device Data frame fell in any handshake window** (handshake -0.3 s to +0.2 s). See "Why no ACK during a handshake" below |
+| ACK during server work | Each of the 7 measured ACKs answered the device's reply 0.28 s after a downlink. By then the net task had received the server's TLS record, decrypted it and handed the datagram to the radio, and it then relayed the acknowledged uplink back over TLS (`to server, acked`). The gaps did not differ from those of the pairing test |
+| Wake-up trains | Step 4046.6 us median, std 2.2 us (n=172); Data 0.4 ms after the last wake-up; short trains of 21-29 wake-ups (the device is anchored) |
+
+**Why no ACK during a handshake [V]/[I].** The bridge has a handshake only after the server closes the connection. It then waits 1.5-2.5 s before it retries (75-125 % of 2 s, `src/session.c:250-251`), so the handshake starts at least 2.1 s after the close. The device sent uplinks only in two cases. It answered a downlink 0.2-0.3 s after it, and a downlink needs a live session: a PUT sent while the bridge was reconnecting (run 2, 01:37:20) was never delivered. Or it started an exchange of its own, which happened once in about 15 minutes (01:37:55-01:38:08, 4 uplinks). So no server action can place a device frame inside a handshake, and none fell there by chance. Measuring it needs a device uplink at a known time during a handshake. Options: a bench image that reconnects on a timer, then PB8 against GDO0 on a scope as the issue proposes, or a long observation while the device reports on its own. **[I] By design the handshake cannot delay the ACK.** The radio task runs above the net task (`PRIO_RADIO` +3, `PRIO_NET` +2, `src/app.c:17-19`), so it prepares the ACK while a P-256 step runs. The interrupt on the CRC-OK edge sends it (`radio-runtime.md`, "Enhanced ACK path"). The handshake uses neither SPI1 nor the radio.
+
+**Reconnect back-off [V].** With restarts 50 s apart the retry delay doubled: 1.7, 4.8, 8.6, 16.2, 34.3, 47.1 s. With restarts 70 s apart it stayed at 1.8-2.1 s. This is as designed: the back-off returns to 2 s only after a session has been ready for 60 s (`STABLE_MS`, `src/session.c:42,248`).
+
+**Nothing on channel 26 or off channel 16:**
+
+| Item | Result |
+| :--- | :--- |
+| Count, run 1 | The RTT counts 500 tx frames (two periodic Router Advertisement trains of 249 wake-ups plus the `49 e8` frame each) and 0 ACKs. Channel 16 decoded **500 of 500** (498 wake-ups, 2 broadcasts) |
+| Count, run 2 | The RTT counts 279 tx frames (12 datagrams of 21-29 wake-ups plus the frame) and 12 ACKs. On A: 180 wake-ups, 8 Data frames and 7 ACKs, i.e. 8 trains and 7 ACKs. The other 4 trains and 5 ACKs fall in B visits, each at the time of its RTT line |
+| Channel 26 | B on air 54.8 s (16.6 %) in run 1 and 68.9 s (16.0 %) in run 2: 191 and 201 CRC-OK frames from the stock coordinator and 6 stock devices. **No frame had the bridge's or the spare device's address as source or destination.** `burstscan.py`: every burst on 26 is a decoded frame, except one, the tail of a stock coordinator train whose last wake-up failed its CRC (run 2, 01:36:38, the bridge silent since 01:36:31) |
+| B while the bridge transmitted | 4 B visits in run 2 overlapped a short train, its Data frame, the device's ACK and the bridge's ACK. Channel 26 then held only 2 broadcasts of 52 bytes from a stock device that sends about 20 per minute of B in both runs. The bridge's frames showed up in B only as receiver products about 43 dB below their level on A: CRC-OK wake-ups at -50 dBFS on channel 28 (channel 16 + 2.4 MHz alias), the same frames at the same instants on channel 23, and short bursts on 19-21 and 29. The spare device's frames appeared there the same way, so the dongle makes them **[I]** |
+| A, off channel 16 | `burstscan.py`: every burst on channels 9-15 and 17-19 is spill-over from a stronger channel-16 frame (run 1: 5515, run 2: 2405), none other; `demod.py` decoded no CRC-OK frame on 10-15, 17 or 18 in run 1. On channel 16 every burst is a decoded frame (2 and 15). No narrowband tone at either centre frequency in either run |
+| Carrier offset (#7) | Bridge +8.48 ppm (run 1) and +8.11 ppm (run 2) against the dongle; stock coordinator +6.69 and +6.19 ppm. Bridge minus coordinator is +1.8 to +1.9 ppm (medians per run, not paired in time), against -0.12 ppm in the pairing test. The bridge now sits 6.0 ppm below the spare device (5229 Hz), against 7.8 ppm on 2026-11-17. So the bridge moved about +1.8 ppm against both since then **[I]**. Still inside the spread of the stock devices, so no trim **[I]** |
+
+**Tool fix.** `demod.py` wrote the envelope edges (`env_on`, `env_off`) as float32: under numpy 2, float32 plus a Python int stays float32. A few hundred seconds into a file that gives steps of 10-60 us. The sync-fit times (`t_sync`, `t_pre`, `t_end`) were float64 and not affected. Fixed. Earlier envelope-to-envelope figures (for example 4030.0 us in "Pairing test (#19) result") carry that coarse step; the preamble and end times beside them do not.
+
+**What this means for #16 and #18 [I].** The ACK starts 226 us after the Data frame in normal operation, also right after server and TLS record traffic: a quarter of the 1 ms target, faster than stock devices (about 0.38 ms) and the stock coordinator (1.5-2.0 ms). The target holds. The second condition of #18, "also during a TLS handshake", is still unmeasured on air; only the design argues for it. #18 stays open until a device frame is caught during a handshake.
 
 ## Bench network
 
