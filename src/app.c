@@ -78,7 +78,7 @@ static void housekeeping_task(void *arg) {
          * press. */
         unsigned ev = button_poll(&reset, board_reset_button_raw(), FACTORY_HOLD_MS / POLL_MS);
         button_log("factory reset (PB10)", ev);
-        /* Last 3 s of the hold: router, cloud and pairing LEDs flicker
+        /* Last 3 s of the hold: router, power and cloud LEDs flicker
          * together, 500 ms off, 500 ms on. Back to normal at once on release,
          * and at the hold itself (the erase starts). */
         enum button_led warn = button_warn_poll(&reset, POLL_MS, FACTORY_HOLD_MS / POLL_MS);

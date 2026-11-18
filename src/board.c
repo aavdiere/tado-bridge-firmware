@@ -114,7 +114,13 @@ void board_init(void) {
     gpio_mode_setup(GPIOC, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, BOARD_ENC_RESET_PIN);
 }
 
+/* The states the tasks asked for, one byte each, and the factory reset warning
+ * override (see board_led()), declared here because the panic path clears it. */
+static volatile uint8_t led_req[LED_COUNT];
+static volatile uint8_t led_ovr;
+
 void board_power_led_force(void) {
+    led_ovr = 0; /* a panic during the warning must still show its fault code */
     RCC_AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
     (void)RCC_AHB1ENR;
     GPIO_BSRR(GPIOB) = (uint32_t)led_pin[LED_POWER] << 16; /* off */
@@ -122,11 +128,9 @@ void board_power_led_force(void) {
     GPIO_MODER(GPIOB) = (GPIO_MODER(GPIOB) & ~(3u << 2u)) | (1u << 2u); /* PB1 output */
 }
 
-/* The states the tasks asked for, one byte each (atomic stores, no
- * read-modify-write shared between tasks), and the factory reset warning
+/* led_req: the states the tasks asked for (atomic byte stores, no
+ * read-modify-write shared between tasks). led_ovr: the factory reset warning
  * override: 0 off (no override), 1 forced off, 2 forced on. */
-static volatile uint8_t led_req[LED_COUNT];
-static volatile uint8_t led_ovr;
 
 static bool led_overridden(enum led led) {
     return led_ovr != 0 && led != LED_PAIRING;
