@@ -42,6 +42,7 @@ static struct {
     unsigned int_prog_fail, int_erase_fail; /* enum fail, power on */
     unsigned ext_prog_fail;
     bool     ext_dead_reads; /* every external read fails */
+    long     flip_read_in;   /* corrupt one byte of the n-th image read from now; 0: none */
     uint64_t now_us;         /* simulated time */
     uint64_t last_kick_us;
     uint64_t max_gap_us;
@@ -96,6 +97,11 @@ bool store_port_read(uint32_t addr, uint8_t *dst, size_t n) {
     }
     m.now_us += 10u + EXT_READ_US_PER_BYTE * n;
     memcpy(dst, ext + addr, n);
+    /* A bad read on the bus (the flash itself is fine). */
+    if (m.flip_read_in > 0 && addr % FLASH_SLOT_SIZE >= FLASH_SLOT_IMAGE && addr < FLASH_ID_A
+        && --m.flip_read_in == 0) {
+        dst[rnd() % n] ^= (uint8_t)(1u << (rnd() % 8u));
+    }
     return true;
 }
 
@@ -572,7 +578,7 @@ static void test_rollback(void) {
 
 /* Bad slots at install time: nothing installed, A keeps running. */
 static void test_rejected(void) {
-    for (int which = 0; which < 4; which++) {
+    for (int which = 0; which < 5; which++) {
         reset_model();
         ext_stock();
         int_put(0);
@@ -587,8 +593,11 @@ static void test_rejected(void) {
             case 2: /* candidate whole, but not the one named */
                 slot_put(FLASH_SLOT_CAND, 2);
                 break;
-            default: /* header CRC */
+            case 3: /* header CRC */
                 ext[FLASH_SLOT_CAND + 12u] ^= 1u;
+                break;
+            default: /* previous slot whole, but not the image named */
+                slot_put(FLASH_SLOT_PREV, 3);
                 break;
         }
         CHECK_EQ(boot(), BOOTCTL_JUMP);
@@ -661,6 +670,33 @@ static void test_int_failures(void) {
         CHECK_EQ(r, BOOTCTL_JUMP);
         CHECK(running() == 0 || running() == 1);
     }
+}
+
+/* A bad read of the candidate between its check and the copy: the copy
+ * holds a wrong byte that the chunk read-back cannot see (it compares with
+ * what was read); the SHA-256 of internal flash before the commit mark
+ * catches it, the install is repeated, and the right image runs. */
+static void test_bad_read(void) {
+    unsigned caught = 0;
+    for (unsigned k = 1; k < 660u; k += 37u) {
+        reset_model();
+        m.rnd = 99u + k;
+        ext_stock();
+        int_put(0);
+        app_update(0, 1);
+        /* The two slot checks read head and image of each slot first (in
+         * 256-byte chunks); aim past them, into the copy. */
+        unsigned verify_reads =
+            (1u + (img[1].size + 255u) / 256u) + (1u + (img[0].size + 255u) / 256u);
+        m.flip_read_in = (long)(verify_reads + k);
+        CHECK_EQ(boot(), BOOTCTL_JUMP);
+        CHECK_EQ(running(), 1);
+        caught += rep.installs > 1;
+    }
+    CHECK(caught > 0);
+    printf("test_boot: bad read during the copy: %u of 18 caught by the SHA-256 before the commit\n",
+           caught);
+    CHECK_EQ(caught, 18);
 }
 
 /* The boot state cannot be written: the bootloader still starts something
@@ -776,6 +812,18 @@ static void test_cut_everywhere(void) {
                     }
                 }
                 CHECK_EQ(m.cuts, 1);
+                /* Right after the cut, the boot state is out of reach: the
+                 * commit mark alone must keep a torn image from starting
+                 * (boot() checks every start). */
+                if (tear == 0) {
+                    m.ext_dead_reads = true;
+                    (void)boot();
+                    m.ext_dead_reads = false;
+                } else if (tear == 1) {
+                    m.ext_prog_fail = FAIL_NOTHING;
+                    (void)boot();
+                    m.ext_prog_fail = FAIL_NONE;
+                }
                 int end = settle(1, good, &starts);
                 /* A good candidate ends up running, a bad one is rolled back. */
                 CHECK_EQ(end, good ? 1 : 0);
@@ -882,6 +930,7 @@ int main(void) {
     test_external();
     test_int_failures();
     test_state_unwritable();
+    test_bad_read();
     test_largest();
     test_cut_everywhere();
     test_random();
