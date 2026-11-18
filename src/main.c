@@ -6,6 +6,7 @@
 #include "cc110l.h"
 #include "clock.h"
 #include "faults.h"
+#include "image_desc.h"
 #include "log.h"
 #include "provision.h"
 #include "radio.h"
@@ -16,6 +17,8 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include <libopencm3/cm3/scb.h>
+#include <libopencm3/cm3/vector.h>
 #include <libopencm3/stm32/flash.h>
 #include <libopencm3/stm32/pwr.h>
 #include <libopencm3/stm32/rcc.h>
@@ -28,6 +31,13 @@
 #endif
 
 int main(void) {
+    /* Our own vector table at 0x08010000 (#24). The bootloader sets VTOR
+     * before the jump; set it again so a start by other means (a debugger
+     * setting PC) still takes this image's handlers. No interrupt is
+     * enabled before this point. */
+    SCB_VTOR = (uint32_t)&vector_table;
+    __asm__ volatile("dsb\n isb" ::: "memory");
+
     /* Radio CSn and flash CS# high before the delay (#28): otherwise PA4 and
      * PB9 float as inputs for 2 s and either device may see itself selected.
      * Two pins only; see board_cs_early(). */
@@ -58,6 +68,10 @@ int main(void) {
             : "off (no PAIR_TARGET_EUI64 in the build): the pair button opens no window");
     LOG("tado-bridge: Ethernet with lwIP (DHCP, DNS), PA3 entropy and CTR_DRBG, TLS and "
         "WebSocket to tanoclo");
+    LOG("image: %lu bytes at %08lx, VTOR %08lx",
+        (unsigned long)image_size(),
+        (unsigned long)FWIMG_APP_BASE,
+        (unsigned long)SCB_VTOR);
     watchdog_log_reset_cause();
     LOG("clock: SYSCLK %lu Hz, APB1 %lu Hz, APB2 %lu Hz, from %s",
         (unsigned long)clock_hz,

@@ -3,6 +3,8 @@ DEVICE			?= STM32F411CE
 BUILD_TYPE 		?= Release
 BUILD_DIR		?= build
 FIRMWARE		?= $(BUILD_DIR)/$(BINARY).elf
+# The bootloader (#24), built with the application by the same CMake run.
+BOOTLOADER		:= $(BUILD_DIR)/$(BINARY)-boot.elf
 # Radio transmitter (cmake/CMakeLists.txt, owner decision 2026-11-17):
 # 1 builds it in (test channel only), 0 a receive-only image.
 RADIO_TX_ALLOWED	?= 1
@@ -65,12 +67,13 @@ identity-tool:
 	$(MAKE) -C tools/identity --no-print-directory
 
 size: $(FIRMWARE)
-	arm-none-eabi-size $(FIRMWARE)
+	arm-none-eabi-size $(BOOTLOADER) $(FIRMWARE)
 
 # OpenOCD only: the IB01 test points carry no NRST, so never use
-# --connect-under-reset or st-flash.
+# --connect-under-reset or st-flash. Bootloader and application together
+# (#24): the pair always matches.
 flash: $(FIRMWARE)
-	tools/flash.sh $(FIRMWARE)
+	tools/flash.sh $(BOOTLOADER) $(FIRMWARE)
 
 rtt:
 	tools/rtt.sh

@@ -259,6 +259,7 @@ add_executable(${BINARY}
     ../src/relay.c
     ../src/link.c
     ../src/pair.c
+    ../src/image_desc.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c
@@ -303,9 +304,10 @@ target_compile_options(${BINARY} PRIVATE
 )
 
 # Linker script per target, so a cmake re-run cannot repeat it; relink when it
-# changes.
-target_link_options(${BINARY} PRIVATE -T${LINKER_SCRIPT})
-set_target_properties(${BINARY} PROPERTIES LINK_DEPENDS ${LINKER_SCRIPT})
+# changes. Both images INCLUDE cmake/sections.ld (#24), found through -L.
+set(SECTIONS_LD "${CMAKE_CURRENT_SOURCE_DIR}/sections.ld")
+target_link_options(${BINARY} PRIVATE -T${LINKER_SCRIPT} -L${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(${BINARY} PROPERTIES LINK_DEPENDS "${LINKER_SCRIPT};${SECTIONS_LD}")
 
 target_link_libraries(${BINARY} PRIVATE
     -L${OPENCM3_DIR}/lib
@@ -315,3 +317,47 @@ target_link_libraries(${BINARY} PRIVATE
 print_section_sizes(${BINARY})
 create_hex_output(${BINARY})
 create_bin_output(${BINARY})
+
+################################################################################
+# Bootloader (#24): sectors 0-3 at 0x08000000 (cmake/boot.ld); installs,
+# tests and rolls back the application from the update slots in external
+# flash (docs/design.md "Implementation: bootloader and boot state (#24)").
+# Polling SPI1 and flash drivers, SHA-256, the IWDG; no RTOS, no logging.
+set(BOOT ${BINARY}-boot)
+set(BOOT_LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/boot.ld")
+add_executable(${BOOT}
+    ../src/boot/main.c
+    ../src/boot/bl_hw.c
+    ../src/boot/bootctl.c
+    ../src/fwimg.c
+    ../src/store.c
+    ${MBEDTLS_DIR}/library/sha256.c
+    ${MBEDTLS_DIR}/library/platform_util.c
+)
+target_include_directories(${BOOT} PRIVATE
+    ${OPENCM3_DIR}/include
+    ../src/boot
+    ../src
+    ${MBEDTLS_DIR}/include
+)
+target_compile_definitions(${BOOT} PRIVATE
+    ${MCU_FAMILY}
+    MBEDTLS_CONFIG_FILE="bl_mbedtls_config.h"
+)
+target_compile_options(${BOOT} PRIVATE
+    -MD
+    -fmacro-prefix-map=${REPO_ROOT}/=
+    -Wundef
+)
+# Its own map file: the cache's linker flags name ${BINARY}.map, and the
+# last -Map wins.
+target_link_options(${BOOT} PRIVATE -T${BOOT_LINKER_SCRIPT} -L${CMAKE_CURRENT_SOURCE_DIR}
+    -Wl,-Map=${BOOT}.map)
+set_target_properties(${BOOT} PROPERTIES LINK_DEPENDS "${BOOT_LINKER_SCRIPT};${SECTIONS_LD}")
+target_link_libraries(${BOOT} PRIVATE
+    -L${OPENCM3_DIR}/lib
+    -lopencm3_${MCU_LIBNAME}
+)
+print_section_sizes(${BOOT})
+create_hex_output(${BOOT})
+create_bin_output(${BOOT})
