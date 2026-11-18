@@ -23,7 +23,7 @@ Requirement (user, 2026-11-11): progress is tracked in a GitHub repo on the user
 | Self-update sizes | 20 | #23 |
 | Listen-before-transmit delivery | 25 | #20 |
 | Entropy | 26 | #14, #35 (closed) |
-| Storage of key and counters | 27 | #37 (network, counters), #21 (identity) |
+| Storage of key and counters | 27 | #37 (network, counters), #21 (identity; done), #39 (MAC, v2) |
 | Beacon answer | 28 | #19 |
 - **Never pushed:** firmware dumps (they hold the bridge's secrets), keys, datasheet PDFs and their text extracts (third-party copyright). Enforced by `.gitignore`, `tools/check-no-firmware.sh` as a pre-commit hook, and the `no-firmware` CI scan of the whole history.
 
@@ -204,7 +204,7 @@ Restructured in the 2026-11-16 review. The steps run in this order, because each
 
 ### P6: Storage
 
-- Identity record in external flash (`design.md`); provision the serial and EUI-64 from P0 into it instead of the build-time `config/local.cmake` (#21). The network and counter records moved to P5 (#37). **Status (2026-11-18):** built and host-tested (`design.md`, "Implementation: identity record (#21)"; provisioning with `tools/identity/provision.sh`, `build.md`); next `fw-reviewer` for the storage format, then provisioning and flashing on the bench.
+- Identity record in external flash (`design.md`); provision the serial and EUI-64 from P0 into it instead of the build-time `config/local.cmake` (#21). The network and counter records moved to P5 (#37). **Status (2026-11-18):** built and host-tested (`design.md`, "Implementation: identity record (#21)"; provisioning with `tools/identity/provision.sh`, `build.md`); reviewed, provisioned and flashed on the bench 2026-11-18, identity record seq 1, kept over a power cycle together with the network record **[V]** (`design.md`). #21 closed; the Ethernet MAC from the original bridge follows as #39 (end of P7).
 - Erase and program while radio traffic runs (open question 19, #22).
 - Factory reset (PB10): erases the network and counter records, keeps the identity.
 - **Done when:** identity and network survive power cycles, a factory reset re-pairs cleanly, and no ACK is missed during flash work.
@@ -214,6 +214,7 @@ Restructured in the 2026-11-16 review. The steps run in this order, because each
 - **First the size check (open question 20, #23):** measure the release application size and estimate the bootloader size. Confirm the layout fits, or adjust it. Data point at P4: the application is 131.7 KB of the 448 KB planned for it (`make` size report, 2026-11-16) **[V]**.
 - Bootloader at `0x08000000`, application at `0x08010000`, update and rollback as in `design.md`.
 - Uploader through tanoclo (`POST /api/send-raw` or one added handler).
+- **Last step, Ethernet MAC from the original bridge (#39, owner decision 2026-11-18):** the owner gives the MAC by hand, or it is copied from the stock firmware in the backup (location not yet known, `design.md`); identity record version 2; runs after the bootloader and before P8.
 - **Done when:** an update installs, a broken image rolls back, and a power cut during install recovers.
 
 ### P8: Code clean-up checkpoint
