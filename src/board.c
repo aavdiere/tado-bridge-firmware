@@ -129,7 +129,7 @@ static volatile uint8_t led_req[LED_COUNT];
 static volatile uint8_t led_ovr;
 
 static bool led_overridden(enum led led) {
-    return led_ovr != 0 && led != LED_POWER;
+    return led_ovr != 0 && led != LED_PAIRING;
 }
 
 static void led_write(enum led led, bool on) {
@@ -151,7 +151,7 @@ void board_led_override(bool active, bool on) {
      * next call (10 ms while active); on release it is the requested state
      * again, which the next board_led() or this call restores. */
     for (int i = 0; i < LED_COUNT; i++) {
-        if (i != LED_POWER) {
+        if (i != LED_PAIRING) {
             led_write((enum led)i, active ? on : led_req[i] != 0);
         }
     }

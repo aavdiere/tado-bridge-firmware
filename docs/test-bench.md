@@ -375,7 +375,7 @@ Part 1 run on 2026-11-18, see "Flash work during traffic (#22) result" below; pa
 
 **2. Factory reset (owner hand work: the button, then re-pairing).**
 1. Hold the factory reset button (PB10) for less than 10 s: only `button: factory reset (PB10) pressed/released`, nothing erased.
-   Also watch the LEDs (owner, by eye): from 7 s the router, cloud and pairing LEDs flicker together, 500 ms off then 500 ms on, until 10 s; released before 10 s they must return to their normal state at once (try a release at about 8 s) [I].
+   Also watch the LEDs (owner, by eye): from 7 s the router, power and cloud LEDs flicker together (the pairing LED does not take part), 500 ms off then 500 ms on, until 10 s; released before 10 s they must return to their normal state at once (try a release at about 8 s) [I].
 2. Hold it 10 s: RTT `button: factory reset held 10 s: factory reset requested`, `factory reset: erasing the network record and the counter log; the identity stays`, `factory reset: done; restarting`, then a boot with the identity record's seq 1 and `network: no network record: no key, nothing sent`. The spare device's frames are no longer acknowledged.
 3. Optional: power up (USB) with the button already held and keep it held 15 s: nothing is erased until it has been released once.
 4. Re-pair: hold the pair button 1 s (a new network is created on channel 16), put the spare device into pairing mode, then check downlink and uplink through tanoclo, and that a reset keeps the new network.
