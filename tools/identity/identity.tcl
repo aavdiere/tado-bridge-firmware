@@ -132,6 +132,11 @@ if {$ID_MODE eq "read"} {
     }
     # load_image <file> <offset> bin <min> <len>: the whole file into g_buf.
     load_image $ID_FILE $BUF_ADDR bin $BUF_ADDR $SECTOR
+    # Read the buffer back before the erase: a bad SWD load is never written.
+    if {[catch {verify_image $ID_FILE $BUF_ADDR bin} err]} {
+        puts "identity.tcl: load to RAM does not verify ($err); nothing erased"
+        shutdown error
+    }
     if {![stub_run 1 $ID_ADDR 0x22]} {
         puts "identity.tcl: write failed; the other slot is untouched"
         shutdown error

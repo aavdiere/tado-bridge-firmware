@@ -15,7 +15,8 @@
 #
 # Steps: build the host tool; check tanoclo's SPI stub against its address
 # file; read both identity sectors (each until two reads agree); build the
-# new sector with the tool; ask before writing; write that one sector (the
+# new sector with the tool (its messages go to <workdir>/make.log, masked;
+# the full values need the tool's --show); ask before writing; write that one sector (the
 # stub erases, programs and verifies every page); read both sectors again
 # and check that the record loads as the firmware loads it; reset the
 # bridge so it boots with the new record.
@@ -67,8 +68,12 @@ ocd -c "set ID_MODE read; set ID_DIR {$WORK/before}"
 
 OUT="$WORK/sector.bin"
 rm -f "$OUT"
-MSG="$("$TOOL" make "${REPLACE[@]}" "${ID[@]}" "$WORK/before/slot_a.bin" "$WORK/before/slot_b.bin" "$OUT")"
-echo "$MSG"
+# The tool's messages (masked identity) go to the log; the terminal gets the
+# sector line and the masked new-record line only.
+LOG="$WORK/make.log"
+"$TOOL" make "${REPLACE[@]}" "${ID[@]}" "$WORK/before/slot_a.bin" "$WORK/before/slot_b.bin" "$OUT" >"$LOG" || { cat "$LOG" >&2; die "identity tool refused (see above)"; }
+MSG="$(cat "$LOG")"
+grep '^sector ' "$LOG"
 ADDR="$(awk '$1 == "sector" { print $2 }' <<<"$MSG")"
 if [[ $ADDR == none ]]; then
     echo "provision: the bridge already holds this identity: nothing written"
@@ -77,14 +82,16 @@ fi
 [[ $ADDR == 0x100000 || $ADDR == 0x101000 ]] || die "unexpected sector '$ADDR'"
 [[ $ADDR == 0x100000 ]] && echo "provision: note: slot A (0x100000) holds the stock data in a stock image; it is replaced (the backup keeps it)"
 
-read -r -p "provision: write sector $ADDR now? [y/N] " yes
+echo "provision: $(grep '^new record:' "$LOG")"
+read -r -p "provision: write this identity to sector $ADDR now? [y/N] " yes
 [[ $yes == y || $yes == Y ]] || die "not written"
 
 ocd -c "set ID_MODE write; set ID_ADDR $ADDR; set ID_FILE {$OUT}"
 
 echo "provision: reading back"
 ocd -c "set ID_MODE read; set ID_DIR {$WORK/after}"
-"$TOOL" check "${ID[@]}" "$WORK/after/slot_a.bin" "$WORK/after/slot_b.bin"
+"$TOOL" check "${ID[@]}" "$WORK/after/slot_a.bin" "$WORK/after/slot_b.bin" >"$WORK/check.log" || { cat "$WORK/check.log" >&2; die "read-back check failed"; }
+grep '^identity record OK' "$WORK/check.log"
 # The sector not written must be as it was.
 if [[ $ADDR == 0x100000 ]]; then other=slot_b.bin; mine=slot_a.bin; else other=slot_a.bin; mine=slot_b.bin; fi
 cmp -s "$WORK/before/$other" "$WORK/after/$other" || die "the other slot changed"

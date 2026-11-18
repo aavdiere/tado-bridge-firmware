@@ -27,7 +27,12 @@ printf '\xd2\x02\x96\x49' | dd of="$T/backup.img" bs=1 seek=$((0x400e)) conv=not
 printf '\x00\x1b\xc5\x07\x00\x00\x00\x2a' | dd of="$T/backup.img" bs=1 seek=$((0x4032)) conv=notrunc status=none
 
 out="$("$TOOL" from-backup "$T/backup.img")"
+expect '[[ $out == "backup: serial IB.. (12 characters), EUI-64 ..:..:..:..:..:..:..:2a" ]]'
+out="$("$TOOL" --show from-backup "$T/backup.img")"
 expect '[[ $out == "backup: serial IB1234567890, EUI-64 00 1b c5 07 00 00 00 2a" ]]'
+# Default output of every command carries no full serial or EUI-64.
+out="$("$TOOL" from-backup "$T/backup.img" 2>&1)"
+expect '[[ $out != *1234567890* && $out != *"00 1b c5"* ]]'
 
 # Stock image: slot A holds stock data, slot B blank. The first record goes
 # to slot A, the invalid one.

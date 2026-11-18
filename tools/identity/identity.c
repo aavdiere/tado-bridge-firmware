@@ -228,17 +228,29 @@ static bool parse_eui(const char *s, uint8_t eui[8]) {
     return k == 8;
 }
 
+static bool show_secrets; /* --show: print serial and EUI-64 in full */
+
+/* By default only a masked form (serial prefix and length, last EUI-64 byte)
+ * reaches the terminal and logs; the full values need --show. */
 static void print_id(const char *what, const struct store_id *id) {
-    printf("%s serial %s, EUI-64 %02x %02x %02x %02x %02x %02x %02x %02x\n",
+    if (show_secrets) {
+        printf("%s serial %s, EUI-64 %02x %02x %02x %02x %02x %02x %02x %02x\n",
+               what,
+               id->serial,
+               id->eui64[0],
+               id->eui64[1],
+               id->eui64[2],
+               id->eui64[3],
+               id->eui64[4],
+               id->eui64[5],
+               id->eui64[6],
+               id->eui64[7]);
+        return;
+    }
+    printf("%s serial %.2s.. (%u characters), EUI-64 ..:..:..:..:..:..:..:%02x\n",
            what,
            id->serial,
-           id->eui64[0],
-           id->eui64[1],
-           id->eui64[2],
-           id->eui64[3],
-           id->eui64[4],
-           id->eui64[5],
-           id->eui64[6],
+           (unsigned)strlen(id->serial),
            id->eui64[7]);
 }
 
@@ -276,14 +288,25 @@ static bool same_id(const struct store_id *a, const struct store_id *b) {
 
 static int usage(void) {
     fprintf(stderr,
-            "usage: identity from-backup <internal.bin>\n"
-            "       identity make [--replace] <id> <slot_a.bin> <slot_b.bin> <out.bin>\n"
-            "       identity check <id> <slot_a.bin> <slot_b.bin>\n"
+            "usage: identity [--show] from-backup <internal.bin>\n"
+            "       identity [--show] make [--replace] <id> <slot_a.bin> <slot_b.bin> <out.bin>\n"
+            "       identity [--show] check <id> <slot_a.bin> <slot_b.bin>\n"
+            "  --show: print serial and EUI-64 in full (default: masked)\n"
             "  <id>: --backup <internal.bin> | --serial <S> --eui64 <hex>\n");
     return 2;
 }
 
 int main(int argc, char **argv) {
+    /* --show anywhere on the command line: full values in the output. */
+    for (int k = 1; k < argc;) {
+        if (strcmp(argv[k], "--show") == 0) {
+            show_secrets = true;
+            memmove(&argv[k], &argv[k + 1], (size_t)(argc - k) * sizeof *argv);
+            argc--;
+        } else {
+            k++;
+        }
+    }
     if (argc < 2) {
         return usage();
     }
