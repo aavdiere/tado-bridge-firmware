@@ -98,6 +98,17 @@ proc read_sector {addr out} {
     return 0
 }
 
+# OpenOCD's work area must stay clear of the stub. stm32f4x.cfg puts it at
+# 0x20000000 with no backup (target/stm32f4x.cfg:50), exactly where the
+# stub's code is linked (-Ttext=0x20000000), and verify_image runs a CRC
+# routine there (OpenOCD contrib/loaders/checksum/armv7m_crc.s, bkpt at
+# +0x2e). On the bench (2026-11-18) that overwrote spi1_xfer, so the write
+# stopped on the routine's bkpt at 0x2000002e before any SPI byte went out
+# (docs/design.md, "Implementation: identity record (#21)"). 0x20010000-0x20017FFF lies
+# above the stub's last symbol (provision.sh checks _end) and below its stack,
+# which starts at 0x20020000 and uses well under 1 KB.
+[target current] configure -work-area-phys 0x20010000 -work-area-size 0x8000 -work-area-backup 0
+
 init
 reset halt
 
@@ -135,6 +146,12 @@ if {$ID_MODE eq "read"} {
     # Read the buffer back before the erase: a bad SWD load is never written.
     if {[catch {verify_image $ID_FILE $BUF_ADDR bin} err]} {
         puts "identity.tcl: load to RAM does not verify ($err); nothing erased"
+        shutdown error
+    }
+    # And the stub's code, last: nothing loaded or run since load_image may
+    # have changed it.
+    if {[catch {verify_image $STUB_ELF} err]} {
+        puts "identity.tcl: stub code in RAM does not verify ($err); nothing erased"
         shutdown error
     }
     if {![stub_run 1 $ID_ADDR 0x22]} {

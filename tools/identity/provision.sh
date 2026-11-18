@@ -59,6 +59,9 @@ for pair in STUB_ENTRY:stub_entry BUF_ADDR:g_buf G_LEN:g_flash_len G_ADDR:g_flas
     v="${pair%%:*}" s="${pair##*:}"
     [[ -n $(sym "$s") && $(( $(sym "$s") )) -eq $(( $(tclv "$v") )) ]] || die "spi_stub.elf: $s is not at $v in spi_stub_addrs.tcl"
 done
+# identity.tcl moves OpenOCD's work area to 0x20010000; the stub must end
+# below it, or verify_image's CRC routine overwrites the stub (#21).
+[[ -n $(sym _end) && $(( $(sym _end) )) -le $(( 0x20010000 )) ]] || die "spi_stub.elf reaches into OpenOCD's work area at 0x20010000"
 
 ocd() { "${OCD[@]}" -c "set ID_STUB_DIR {$STUB_DIR}" "$@" -f "$REPO/tools/identity/identity.tcl"; }
 
