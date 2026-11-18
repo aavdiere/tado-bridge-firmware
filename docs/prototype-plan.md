@@ -2,7 +2,7 @@
 
 Builds the IB01 firmware in stages. Each stage ends in something testable and settles specific open questions (`open-questions.md`). Design: `design.md`. Pins: `hardware.md`.
 
-**Status (2026-11-18): P0 to P4 and P3.1 are done and verified on the bench. P5 is nearly done (2026-11-18): #17, #18 and #19 done, #21 (P6) closed (#18 closed with the TLS-handshake ACK measurement, commit 45735e2); #20 skipped for now (owner decision 2026-11-18), #11 open. P6: #22 and the factory reset built and host-tested 2026-11-18, waiting for review and the bench. P7 and P8 are not started.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
+**Status (2026-11-18): P0 to P4 and P3.1 are done and verified on the bench. P5 is nearly done (2026-11-18): #17, #18 and #19 done, #21 (P6) closed (#18 closed with the TLS-handshake ACK measurement, commit 45735e2); #20 skipped for now (owner decision 2026-11-18), #11 open. P6: #22 and the factory reset built and host-tested 2026-11-18, waiting for review and the bench. P7 started: size check done 2026-11-18 (#23), layout kept. P8 is not started.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
 
 ## Progress tracking on GitHub
 
@@ -212,7 +212,7 @@ Restructured in the 2026-11-16 review. The steps run in this order, because each
 
 ### P7: Size check, bootloader and self-update
 
-- **First the size check (open question 20, #23):** measure the release application size and estimate the bootloader size. Confirm the layout fits, or adjust it. Data point at P4: the application is 131.7 KB of the 448 KB planned for it (`make` size report, 2026-11-16) **[V]**.
+- **First the size check (open question 20, #23):** measure the release application size and estimate the bootloader size. Confirm the layout fits, or adjust it. Data point at P4: the application is 131.7 KB of the 448 KB planned for it (`make` size report, 2026-11-16) **[V]**. **Status (2026-11-18): done, the layout fits and is kept.** Release image at `9c36419` 161392 bytes with the transmitter on, 154860 with `RADIO_TX_ALLOWED=0` (35.2 % and 33.8 % of 448 KB) **[V]**; bootloader estimated at 6-8 KB of its 64 KB **[I]**; the 512 KB external update slots hold a full 448 KB image plus header (`design.md`, "Size check (#23)").
 - Bootloader at `0x08000000`, application at `0x08010000`, update and rollback as in `design.md`.
 - Uploader through tanoclo (`POST /api/send-raw` or one added handler).
 - **Last step, Ethernet MAC from the original bridge (#39, owner decision 2026-11-18):** the owner gives the MAC by hand, or it is copied from the stock firmware in the backup (location not yet known, `design.md`); identity record version 2; runs after the bootloader and before P8.

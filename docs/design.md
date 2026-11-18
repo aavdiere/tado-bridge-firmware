@@ -432,7 +432,7 @@ Freedo's job pool of 128 (`freedo/firmware/cc1101_bridge/cc1101_bridge.ino:203`)
 
 About 200-250 KB of 512 KB: mbedTLS 100, lwIP 40, FreeRTOS 10, application 60-100. Stock reaches past 360 KB (`tanoclo/patch_ib_firmware/patch_endpoint.sh:24`).
 
-**Flash, measured [V]:** text 142640 bytes of 512 KB (28 %) at `88c7894` (`arm-none-eabi-size`), below the 200-250 KB estimate. Bootloader and second slot (#20) still have to fit beside it.
+**Flash, measured [V]:** text 142640 bytes of 512 KB (28 %) at `88c7894` (`arm-none-eabi-size`), below the 200-250 KB estimate. Bootloader and second slot (#20) still have to fit beside it. **Update (#23, 2026-11-18) [V]:** 161256 bytes text, 161392 bytes image at `9c36419`; the layout fits ("Size check (#23)" below).
 
 ### To prove on a prototype
 
@@ -446,16 +446,60 @@ A Nucleo-F411 with ENC28J60 and CC1101 modules could test all three without touc
 
 ### Internal flash layout
 
-**Before building (user request, 2026-11-11): first check the required sizes** to confirm this layout is possible: the real bootloader size against its 64 KB, the application image against the 448 KB region, and the image plus header against the 512 KB update slots in external flash. Adjust the layout if anything does not fit.
+**Before building (user request, 2026-11-11): first check the required sizes** to confirm this layout is possible: the real bootloader size against its 64 KB, the application image against the 448 KB region, and the image plus header against the 512 KB update slots in external flash. Adjust the layout if anything does not fit. **Done 2026-11-18 (#23): everything fits, the layout is kept** ("Size check (#23)" below).
 
 F411 sectors: 4 × 16 KB, 1 × 64 KB, 3 × 128 KB (`datasheets/rm0383.txt:2023-2031`).
 
 | Address | Sectors | Size | Use |
 | :--- | :--- | :--- | :--- |
-| `0x08000000` | 0-3 | 64 KB | Bootloader, expected about 16 KB, the rest spare |
-| `0x08010000` | 4-7 | 448 KB | Application (estimated 200-250 KB) |
+| `0x08000000` | 0-3 | 64 KB | Bootloader, estimated 6-8 KB without `printf` (size check below), the rest spare |
+| `0x08010000` | 4-7 | 448 KB | Application (161392 bytes at `9c36419`, size check below) |
 
 Stock's own layout (`tanoclo/patch_ib_firmware/check_firmware.sh`) does not apply: first flash replaces all of it, and the backup keeps the original.
+
+### Size check (#23, 2026-11-18)
+
+**Result: the planned layout fits with wide headroom; no change is proposed.**
+
+**Application, measured [V]:** HEAD `9c36419` (P6 commits, `src/airtime.h` working-tree edit left out), Release build (`-Os -flto`, `--gc-sections`; `cmake/toolchain-arm-none-eabi.cmake:111,148`), `arm-none-eabi-size`. The image is text + data, and equals the `.bin` size.
+
+| Build | text | data | Image | Share of the 448 KB region |
+| :--- | ---: | ---: | ---: | ---: |
+| Default, transmitter on, bench `config/local.cmake` (pairing target) | 161256 | 136 | 161392 | 35.2 % |
+| `RADIO_TX_ALLOWED=0`, same config | 154724 | 136 | 154860 | 33.8 % |
+| Default, no `config/local.cmake` (fresh clone) | 151824 | 136 | 151960 | 33.1 % |
+| Debug (`-Og -g`), transmitter on, bench config | 197084 | 136 | 197220 | 43.0 % |
+
+The largest image (default, bench config) leaves 458752 - 161392 = 297360 bytes (290 KB) of the application region free, so it can grow 2.8 times. Growth so far: 131.7 KB at P4 (`prototype-plan.md`, P7), 142640 bytes text at P5 (`88c7894`, "Flash, measured" above), 161256 now. P7 itself adds the Block1 receiver, slot and boot-state writes and the header check, estimated 5-10 KB, and #39 under 1 KB **[I]**, so about 170 KB after P7, under 40 % of the region. A Debug build also fits.
+
+**Bootloader, estimated [I]:** no code yet. Sizes of the pieces it would share with the application, from `arm-none-eabi-nm -S` of the default ELF above **[V]**: vector table 428 B, `reset_handler` 160 B; SHA-256 with `MBEDTLS_SHA256_SMALLER` (`src/tado_mbedtls_config.h:45`) about 0.9 KB (block function 304 B, update 126 B, finish 150 B, the 256 B constant table and init); CRC-32 52 B (bitwise, `store_crc32`); slotted-record load 116 B; MX25R read path under 0.2 KB (`spi1_xfer` 48 B, `mx25r_read` 68 B, `mx25r_read_id` 48 B).
+
+| Part | KB |
+| :--- | ---: |
+| Vector table and startup (16 MHz HSI, no clock setup) | 0.6 |
+| SPI1 polling and MX25R read, page program, sector and 64 KB block erase, WIP poll, wake | 0.8 |
+| Internal flash unlock, sector erase, word program, lock | 0.4 |
+| SHA-256 | 1.0 |
+| CRC-32 and the boot-state slotted record (load and write) | 0.6 |
+| Image header check, install copy and read-back verify, rollback, vector table check and jump | 1.5-2.5 |
+| IWDG, LED GPIO, RCC clock enables | 0.3 |
+| Small `memcpy`/`memset`, fault handlers | 0.3 |
+| **Total without logging** | **about 6-8** |
+| Optional RTT log of fixed strings and hex numbers, no `printf` | +1 |
+| Optional newlib `printf` instead | +5-8 |
+
+Even with `printf` this stays near the 16 KB already expected, which is a quarter of the 64 KB in sectors 0-3, and it fits sector 0 alone. The rest stays spare for growth (for example a recovery path) **[I]**. Not proposed: moving the application down to `0x08004000` would add 48 KB that is not needed and would leave the bootloader no room to grow in place.
+
+**Update staging in external flash [D]/[I]:** the candidate and previous images live in the MX25R1635F, 2 MB (`datasheets/mx25r1635f.txt:205`), in two 512 KB slots at `0x000000` and `0x080000` ("Layout (external flash)"). Both are 64 KB-block aligned, so a slot erases as 8 block erases (`mx25r1635f.txt:219,482-484`). The binding limit is the internal region, not the slot: an image of up to 448 KB plus the header (`magic | version | size | SHA-256`, under 64 bytes, "Image format" below) leaves at least 64 KB of each slot unused. The current image fills 30.8 % of a slot. The stock firmware uses the same two slots: the bench unit's backup has data in `0x000000-0x03DFFF` and `0x080000-0x0BEFFF` ("Stock contents of the external flash" above), so stock images reach about 248 KB **[V]** (4 KB sector map only), against its internal image past 360 KB (`tanoclo/patch_ib_firmware/patch_endpoint.sh:24`).
+
+**Install time and the watchdog [D]/[I]:** at 3.3 V with 32-bit parallelism (PSIZE x32, allowed from 2.7 to 3.6 V, `datasheets/stm32f411ce.txt:5343`; `rm0383.txt:2269-2291`), sector 4 (64 KB) erases in 550 ms typical, 1.1 s max, and each 128 KB sector in 1 s typical, 2 s max; a word program takes 16 us typical, 100 us max (`stm32f411ce.txt:5305,5320-5334`). Erasing sectors 4-7 takes 3.55 s typical, 7.1 s max, and programming 161392 bytes (40348 words) 0.65 s typical, 4.0 s max. The bootloader must refresh the IWDG between sectors, with a timeout above 2 s. Erasing only the sectors the image covers (4 and 5, 192 KB, for today's image) would halve the erase time; that is a detail for the bootloader, not a layout change.
+
+**For the P7 build (not layout changes) [I]:**
+
+- Nothing sets `SCB_VTOR` today: libopencm3's `reset_handler` (`vendor/libopencm3/lib/cm3/vector.c:62-82`) does not, and `src/` does not. An application at `0x08010000` needs the bootloader to set VTOR before the jump, or the application to set it first thing. `0x08010000` is 64 KB aligned, enough for any vector table.
+- The application linker script (`cmake/stm32f411ce.ld`) becomes `ORIGIN = 0x08010000, LENGTH = 448K`, with a new one for the bootloader (`0x08000000`, 64K). The linker then fails the build if either outgrows its region.
+- The external-flash write guard (`src/flash_layout.h`, `FLASH_WRITE_BEGIN`/`END` = `0x102000-0x106000`) must widen to the update slots and boot state (`0x000000-0x0FFFFF`, `0x106000-0x107FFF`) for the update path, still excluding the identity sectors.
+- The running image must know its own length to be saved into the previous slot (step 3 of the update flow), for example from a linker symbol at the end of `.data`'s load image.
 
 ### Bootloader
 
@@ -481,7 +525,7 @@ If there is no valid application and no valid previous slot: stay in the bootloa
 
 - Stock downloads its own firmware over the WebSocket (`tanoclo/docs/coap_tlv.md:547`), but the byte format is undocumented and tanoclo has no handler, so this is **our own format**.
 - Use a bridge-only path, for example `b/fw`, so it cannot be confused with the devices' `d/fw`.
-- Use 1024-byte blocks: about 250 blocks.
+- Use 1024-byte blocks: about 160 blocks for today's 161392-byte image (#23), at most 448 for a full region.
 - `POST /api/send-raw` (`tanoclo/docs/websocket.md:249-250`) may let a small uploader run with tanoclo unchanged. Check it can see the ACKs **[I]**. Otherwise add one additive handler to tanoclo.
 
 ### Image format
