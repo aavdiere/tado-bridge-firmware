@@ -140,8 +140,9 @@ bool csl_on_frame(const uint8_t *frame, size_t len, bool crc_ok, uint64_t end_us
 bool csl_may_ack(void);
 
 /* True while a transaction has reserved the air: from the start of its
- * listen to its end. Flash access on the shared bus has to wait
- * (docs/design.md "Sharing SPI1 with the radio"). Same as
+ * listen to its end. Short work of the radio task (register checks, a
+ * flash read) has to wait (docs/design.md "Sharing SPI1 with the radio");
+ * flash programs and erases wait for csl_idle() instead. Same as
  * !csl_quiet_for(10000). */
 bool csl_busy(void);
 
@@ -152,6 +153,24 @@ bool csl_busy(void);
  * transaction is set up only by csl_step(), and its listen starts after
  * that call. */
 bool csl_quiet_for(uint32_t us);
+
+/* No transaction set up: nothing scheduled that work outside the
+ * coordinator could push late. Flash program and erase cycles start only
+ * then (#22 bench finding, docs/design.md "Flash work and the
+ * coordinator"): csl_step() does not run during flash work, so a job
+ * waiting in its ST_WAIT, however far its listen, would start its train
+ * late by the length of the work (a sector erase: up to 240 ms). Stays
+ * true until the next csl_step(). Same as csl_quiet_for(UINT32_MAX). */
+bool csl_idle(void);
+
+/* Flash work is due (#22): while on, csl_step() starts no new transaction,
+ * so the coordinator becomes idle once the one in flight has ended (as
+ * usual, on its own timing; nothing is cut short) and the work cannot be
+ * put off by a full queue. Queued jobs wait; nothing else changes (frames
+ * are still taken and acknowledged, csl_take_seq_counter() still works).
+ * The radio task sets it on every loop pass and clears it as soon as the
+ * work is done; csl_init() clears it. */
+void csl_hold(bool on);
 
 /* --- Anchors -------------------------------------------------------------- */
 /* An Enhanced ACK from dev, with its CSL phase, ended at end_us. */

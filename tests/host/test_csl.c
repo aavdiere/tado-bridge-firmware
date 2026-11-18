@@ -844,6 +844,286 @@ static void test_quiet_for(void) {
     CHECK(csl_quiet_for(6u * CSL_LBT_SLOT_US));
 }
 
+/* --- Flash work and the coordinator (#22 bench finding) ------------------------
+ * The radio task loop (src/radio.c radio_task_run()) as far as flash work
+ * goes: on every pass the hold is set if work is due, csl_step() runs,
+ * then the work runs if the gate allows it. The work takes work_us with no
+ * csl_step(), as a sector erase does on the bridge (frames are still
+ * received during it, but nothing in the coordinator moves). frame_on_idle:
+ * the worst case for the hold, a frame arriving (which blocks flash work)
+ * on the first pass after every transaction. The loop sleeps at most
+ * 100 ms, and 1 ms while a frame arrives. */
+struct loop_sim {
+    bool (*gate)(void); /* the moment for flash work */
+    bool (*due)(void);  /* flash work wanted */
+    void (*done)(void); /* after one piece of work */
+    void (*refill)(void);
+    bool     use_hold, frame_on_idle;
+    uint32_t work_us;
+    uint64_t first_work_us; /* when the first piece started (0: never) */
+    unsigned works, at_limit;
+};
+
+static void run_loop(struct loop_sim *s, uint64_t until_us) {
+    bool was_idle = csl_idle();
+    for (unsigned guard = 0; guard < 4000000 && now_us < until_us; guard++) {
+        if (ack.pending && now_us >= ack.end_us) {
+            ack.pending = false;
+            (void)csl_on_frame(ack.frame, MAC_ACK_LEN, ack.crc_ok, ack.end_us);
+        }
+        if (s->refill) {
+            s->refill();
+        }
+        csl_hold(s->use_hold && s->due());
+        uint32_t wait = csl_step();
+        s->at_limit += csl_counter() >= csl_counter_limit();
+        bool idle  = csl_idle();
+        bool frame = s->frame_on_idle && idle && !was_idle;
+        was_idle   = idle;
+        if (s->due() && !frame && s->gate()) {
+            if (s->works++ == 0) {
+                s->first_work_us = now_us;
+            }
+            now_us += s->work_us;
+            s->done();
+            csl_hold(s->use_hold && s->due());
+            continue;
+        }
+        if (wait == 0) {
+            continue;
+        }
+        uint64_t next = now_us + (wait < 100000u ? wait : 100000u);
+        if (frame && next > now_us + 1000u) {
+            next = now_us + 1000u;
+        }
+        if (ack.pending && ack.end_us < next) {
+            next = ack.end_us;
+        }
+        now_us = next < until_us ? next : until_us;
+    }
+}
+
+static bool gate_old(void) { /* before the fix: quiet() in src/radio.c */
+    return !csl_busy();
+}
+
+static bool erase_pending;
+static bool erase_due(void) {
+    return erase_pending;
+}
+static void erase_done(void) {
+    erase_pending = false;
+}
+
+/* The first Data frame sent since `from`, and the wake-up frames before it. */
+static const struct sent *data_after(unsigned from, unsigned *wakes) {
+    *wakes = 0;
+    for (unsigned i = from; i < n_sent; i++) {
+        enum mac_class c = mac_classify(sent[i].frame, sent[i].len);
+        if (c == MAC_WAKEUP) {
+            (*wakes)++;
+        } else if (c == MAC_DATA || c == MAC_DATA_PENDING) {
+            return &sent[i];
+        }
+    }
+    return NULL;
+}
+
+/* A job waits in ST_WAIT for an anchored device's sample, its listen 80 ms
+ * away (csl_busy() false), when a 150 ms sector erase becomes due (the
+ * bench's longest cycle was 151 ms). */
+static struct device *setup_waiting_job(struct device *d) {
+    reset();
+    add_device(d, 0xA0, 300000, 0);
+    CHECK(csl_enqueue_data(d->eui, body, sizeof body, 1, 0, CSL_KEY_NETWORK));
+    run_until(now_us + 1500000); /* bootstrap; the ACK gives an anchor */
+    CHECK(csl_anchor_known(d->eui));
+    CHECK(csl_enqueue_data(d->eui, body, sizeof body, 2, 0, CSL_KEY_NETWORK));
+    uint32_t to_listen = csl_step();
+    CHECK(to_listen > 100000u);
+    now_us += to_listen - 80000u;
+    CHECK(!csl_busy());
+    erase_pending = true;
+    return d;
+}
+
+static void test_flash_waits_for_idle(void) {
+    struct device   d;
+    struct loop_sim s = {.due = erase_due, .done = erase_done, .work_us = 150000u};
+
+    /* The old gate: the erase runs in ST_WAIT and the short train starts
+     * about 70 ms late, as on the bench (4 wake-up frames, no ACK). */
+    setup_waiting_job(&d);
+    unsigned first = n_sent, r0 = n_reports, wakes = 0;
+    s.gate     = gate_old;
+    s.use_hold = false;
+    run_loop(&s, now_us + 3000000);
+    CHECK_EQ(s.works, 1);
+    CHECK(data_after(first, &wakes) != NULL);
+    CHECK(wakes < 10);
+    CHECK(n_reports > r0);
+    CHECK(reports[r0].outcome != CSL_DELIVERED);
+    CHECK_EQ(reports[r0].attempt, 1);
+
+    /* The fix: the erase waits for csl_idle(), after the transaction; the
+     * train is whole and delivered at the first attempt. */
+    setup_waiting_job(&d);
+    first = n_sent;
+    r0    = n_reports;
+    CHECK(!csl_idle());
+    s = (struct loop_sim){.gate     = csl_idle,
+                          .due      = erase_due,
+                          .done     = erase_done,
+                          .use_hold = true,
+                          .work_us  = 150000u};
+    run_loop(&s, now_us + 3000000);
+    CHECK_EQ(s.works, 1);
+    const struct sent *data = data_after(first, &wakes);
+    CHECK(data != NULL);
+    CHECK(wakes >= 19 && wakes <= 23);
+    CHECK_EQ(n_reports, r0 + 1u);
+    CHECK_EQ(reports[r0].outcome, CSL_DELIVERED);
+    CHECK_EQ(reports[r0].attempt, 1);
+    CHECK(reports[r0].anchored);
+    CHECK(data && s.first_work_us > data->end_us);
+    CHECK_EQ(d.heard, 2);
+
+    /* The longest wait for idle: a whole bootstrap train (about 1 s) and
+     * its ACK window; nothing in the coordinator is cut short. */
+    reset();
+    add_device(&d, 0xA0, 300000, 0);
+    CHECK(csl_enqueue_data(d.eui, body, sizeof body, 3, 0, CSL_KEY_NETWORK));
+    CHECK(csl_step() < CSL_LBT_MAX_US);
+    uint64_t t0   = now_us;
+    erase_pending = true;
+    s             = (struct loop_sim){.gate     = csl_idle,
+                                      .due      = erase_due,
+                                      .done     = erase_done,
+                                      .use_hold = true,
+                                      .work_us  = 240000u};
+    run_loop(&s, now_us + 3000000);
+    CHECK_EQ(n_reports, 1);
+    CHECK_EQ(reports[0].outcome, CSL_DELIVERED);
+    CHECK(count_class(MAC_WAKEUP, 0) > 240);
+    CHECK(s.first_work_us - t0 < CSL_LBT_MAX_US + CSL_BOOTSTRAP_US + CSL_ACK_WINDOW_US);
+}
+
+/* csl_hold(): no new transaction while on; the one in flight runs to its
+ * end as usual; idle stays idle; beacons still get their seq and counter. */
+static void test_hold(void) {
+    reset();
+    struct device d;
+    add_device(&d, 0xA0, 300000, 0);
+    CHECK(csl_enqueue_data(d.eui, body, sizeof body, 1, 0, CSL_KEY_NETWORK));
+    CHECK(csl_enqueue_data(d.eui, body, sizeof body, 2, 0, CSL_KEY_NETWORK));
+    csl_hold(true);
+    CHECK_EQ(csl_step(), UINT32_MAX);
+    CHECK(csl_idle());
+    CHECK(csl_quiet_for(UINT32_MAX));
+    run_until(now_us + 3000000);
+    CHECK_EQ(n_sent, 0);
+    CHECK_EQ(csl_counter(), 1000);
+    CHECK(csl_idle());
+    uint8_t  seq = 0;
+    uint32_t ctr = 0;
+    CHECK(csl_take_seq_counter(&seq, &ctr)); /* the beacon is not held */
+    CHECK_EQ(ctr, 1000);
+
+    /* Released: job 1 starts; held again while it waits: it still goes out
+     * whole and is delivered, and job 2 waits. */
+    csl_hold(false);
+    CHECK(csl_step() < CSL_LBT_MAX_US);
+    CHECK(!csl_idle());
+    csl_hold(true);
+    run_until(now_us + 3000000);
+    CHECK_EQ(n_reports, 1);
+    CHECK_EQ(reports[0].outcome, CSL_DELIVERED);
+    CHECK(count_class(MAC_WAKEUP, 0) > 240);
+    CHECK(csl_idle());
+    CHECK_EQ(d.heard, 1);
+    unsigned before = n_sent;
+    run_until(now_us + 2000000);
+    CHECK_EQ(n_sent, before);
+
+    csl_hold(false);
+    run_until(now_us + 1500000);
+    CHECK_EQ(n_reports, 2);
+    CHECK_EQ(reports[1].outcome, CSL_DELIVERED);
+    CHECK_EQ(d.heard, 2);
+
+    /* csl_init() (a new key) clears it. */
+    csl_hold(true);
+    reset();
+    CHECK(csl_enqueue_data(d.eui, body, sizeof body, 3, 0, CSL_KEY_NETWORK));
+    CHECK(csl_step() < CSL_LBT_MAX_US);
+}
+
+/* The counter reservation under continuous downlink traffic (#37, #22):
+ * two devices with a queue that never empties, a frame arriving on the
+ * first pass after every transaction, and the reservation's write taking
+ * a whole sector erase (240 ms). Scaled down: extend once fewer than
+ * CTR_LOW counters remain, CTR_AHEAD ahead (store.h: 2048, 4096). The
+ * hold makes the coordinator idle after the transaction in flight, so the
+ * write comes before the counter reaches the limit, and no train is late. */
+#define CTR_LOW   2u
+#define CTR_AHEAD 6u
+static struct device *traffic_dev[2];
+static unsigned       traffic_n;
+
+static bool ctr_due(void) {
+    return csl_counter_limit() - csl_counter() < CTR_LOW;
+}
+static void ctr_extend(void) {
+    csl_set_counter_limit(csl_counter() + CTR_AHEAD);
+}
+static void traffic_refill(void) {
+    while (csl_free_jobs() > CSL_JOB_POOL - 4u) {
+        struct device *d = traffic_dev[traffic_n % 2u];
+        CHECK(csl_enqueue_data(d->eui, body, sizeof body, (uint16_t)traffic_n, 0, CSL_KEY_NETWORK));
+        traffic_n++;
+    }
+}
+
+static void test_counter_reservation_under_traffic(void) {
+    struct device a, b;
+    for (int hold = 1; hold >= 0; hold--) {
+        reset();
+        struct csl_config cfg = {
+            .key = {&key, NULL}, .counter = 1000, .counter_limit = 1000 + CTR_AHEAD, .seq = 1};
+        memcpy(cfg.own, own, 8);
+        csl_init(&cfg);
+        traffic_dev[0]    = add_device(&a, 0xA0, 100000, 0);
+        traffic_dev[1]    = add_device(&b, 0xB0, 600000, 0);
+        traffic_n         = 0;
+        struct loop_sim s = {.gate          = csl_idle,
+                             .due           = ctr_due,
+                             .done          = ctr_extend,
+                             .refill        = traffic_refill,
+                             .use_hold      = hold != 0,
+                             .frame_on_idle = true,
+                             .work_us       = 240000u};
+        run_loop(&s, now_us + 30000000);
+        if (hold) {
+            printf("test_csl: reservation under traffic: %u writes, %u reports, counter %lu\n",
+                   s.works,
+                   n_reports,
+                   (unsigned long)csl_counter());
+            CHECK_EQ(s.at_limit, 0); /* never at the limit */
+            CHECK(s.works >= 8);
+            CHECK(n_reports >= 40);
+            for (unsigned i = 0; i < n_reports; i++) {
+                CHECK_EQ(reports[i].outcome, CSL_DELIVERED);
+                CHECK_EQ(reports[i].attempt, 1);
+            }
+        } else {
+            /* Without the hold the next job starts on the pass after each
+             * transaction, and the write waits until the limit stops the
+             * coordinator. */
+            CHECK(s.at_limit > 0);
+        }
+    }
+}
+
 int main(void) {
     ccm_set_key(&key, v_key.p);
     test_bootstrap_then_anchored();
@@ -862,5 +1142,8 @@ int main(void) {
     test_ra_pair();
     test_take_seq_counter();
     test_quiet_for();
+    test_flash_waits_for_idle();
+    test_hold();
+    test_counter_reservation_under_traffic();
     return TEST_REPORT("test_csl");
 }

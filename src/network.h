@@ -38,11 +38,16 @@ bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]);
  * next boot. Holds the radio task's loop for up to about 0.8 s (DRBG
  * reseed, sector erases); frames are received and acknowledged meanwhile
  * (#22, src/mx25r.h), but the coordinator waits: never while a pairing
- * window is open or a transaction is on the air. */
+ * window is open, and only with the coordinator idle (csl_idle()). */
 
-/* Radio task, at a quiet moment (no frame arriving, no transaction on the
- * air): moves the counter reservation up once less than 2048 remains. */
+/* Radio task, with no frame arriving and the coordinator idle
+ * (csl_idle(), #22): moves the counter reservation up once less than 2048
+ * remains (one counter-log append; a sector erase every 512 appends). */
 void network_service(uint32_t now_ms);
+/* network_service() would write now: a network is active, less than 2048
+ * counters remain reserved, and no retry wait after a failed write runs.
+ * No flash access. */
+bool network_service_due(uint32_t now_ms);
 
 /* A network is loaded and its key set. */
 bool network_active(void);

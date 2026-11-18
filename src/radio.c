@@ -1697,8 +1697,8 @@ static void beacon_answer(uint32_t fall_us, bool own_end) {
 }
 
 /* The pair button (#19): open a window for the device named in the build,
- * or close the one that is open. Runs at a quiet moment (no packet
- * arriving, no transaction on the air), never inside a window: creating a
+ * or close the one that is open. Runs at flash_quiet() (no packet
+ * arriving, no transaction set up), never inside a window: creating a
  * network blocks this task for up to about 0.8 s (fw-reviewer items 1-3 of
  * #19). The pairing trigger therefore needs, all of them: a target named in
  * config/local.cmake (PAIR_TARGET_EUI64), the transmitter built in
@@ -1861,7 +1861,8 @@ static void rx_service(uint32_t bits) {
 
 /* --- Flash work while frames arrive (#22, src/mx25r.h) -------------------------
  * Flash writes start only at a quiet moment of the task loop (no frame
- * arriving, no coordinator transaction), but a program cycle takes up to
+ * arriving, no coordinator transaction set up: flash_quiet()), but a
+ * program cycle takes up to
  * 10 ms and a sector erase up to 240 ms (mx25r1635f.txt:3337-3341), and
  * frames keep coming. The driver therefore calls back here: between its
  * status polls, and instead of starting a bus transaction while a frame
@@ -1914,6 +1915,17 @@ void mx25r_port_radio_serve(void) {
  * are taken in it (#22). */
 static bool quiet(void) {
     return !packet_arriving() && !csl_busy();
+}
+
+/* The moment for flash work (#22 bench finding, docs/design.md "Flash work
+ * and the coordinator"): no packet arriving, and no transaction set up at
+ * all. quiet() is not enough: it lets a job wait in ST_WAIT with its listen
+ * 10 ms or more away, csl_step() does not run during flash work, and a
+ * sector erase (up to 240 ms) then pushed a short train's start 72 ms late
+ * on the bench. Nothing but csl_step() sets a transaction up, so the
+ * coordinator stays idle for the whole of the work. */
+static bool flash_quiet(void) {
+    return !packet_arriving() && csl_idle();
 }
 
 #define HEALTH_PERIOD_MS    10000u
@@ -2046,28 +2058,37 @@ void radio_task_run(void) {
             cc110l_cal_expire();
         }
 
-        /* Everything below can wait for a quiet moment (quiet()). The flash
-         * work in it takes frames (#22), so quiet() is asked again after
-         * each step that may write or read the flash. */
+        /* Everything below can wait for a quiet moment. The flash work in
+         * it takes frames (#22), so the moment is asked for again after
+         * each step that may write or read the flash. Flash work waits for
+         * flash_quiet(): no transaction set up at all. While work that may
+         * program or erase is due (factory reset, pairing trigger, which
+         * may create a network, counter reservation), the coordinator is
+         * held: it starts nothing new, so it is idle by the end of the
+         * transaction in flight, however full its queue. The hold is
+         * dropped on the same pass as the work, before the next
+         * csl_step(). */
         flash_due |= (bits & NOTE_FLASH) != 0;
         pair_due |= (bits & NOTE_PAIR) != 0;
         reset_due |= (bits & NOTE_RESET) != 0;
-        if (flash_due && quiet()) {
+        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now));
+        if (flash_due && flash_quiet()) {
             flash_due = false;
             flash_check();
         }
-        if (reset_due && quiet()) {
+        if (reset_due && flash_quiet()) {
             factory_reset(); /* restarts the MCU; returns only without flash */
             reset_due = false;
             pair_due  = false;
         }
-        if (pair_due && quiet()) {
+        if (pair_due && flash_quiet()) {
             pair_due = false;
             pairing_trigger((uint32_t)now);
         }
-        if (quiet()) {
-            network_service((uint32_t)now);
+        if (flash_quiet()) {
+            network_service((uint32_t)now); /* writes only if network_service_due() */
         }
+        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now));
         if (quiet()) {
             if ((int32_t)(now - next_health) >= 0) {
                 next_health = now + pdMS_TO_TICKS(HEALTH_PERIOD_MS);

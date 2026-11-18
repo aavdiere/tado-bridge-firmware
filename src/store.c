@@ -438,11 +438,15 @@ bool store_counter_boot(uint32_t floor, uint32_t *first, uint32_t *limit) {
     return true;
 }
 
+bool store_counter_due(uint32_t next, uint32_t limit) {
+    return next > limit || limit - next < STORE_CTR_LOW;
+}
+
 bool store_counter_extend(uint32_t next, uint32_t *limit) {
     if (next > *limit) {
         return false; /* cannot happen: the coordinator stops at the limit */
     }
-    if (*limit - next >= STORE_CTR_LOW) {
+    if (!store_counter_due(next, *limit)) {
         return true;
     }
     if (next > UINT32_MAX - STORE_CTR_AHEAD || !ctr_append_retry(next + STORE_CTR_AHEAD)) {

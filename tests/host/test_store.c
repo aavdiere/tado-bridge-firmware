@@ -557,7 +557,16 @@ static void test_counter_run(void) {
             sent_upto = next;
         }
         uint32_t old_limit = limit;
+        unsigned ops0      = fm.ops;
+        bool     due       = store_counter_due(next, limit); /* the radio task's hold (#22) */
         bool     ok        = store_counter_extend(next, &limit);
+        if (!due) { /* nothing to write: the loop does not even call it */
+            CHECK(ok);
+            CHECK_EQ(limit, old_limit);
+            CHECK_EQ(fm.ops, ops0);
+        } else if (ok) {
+            CHECK(limit != old_limit);
+        }
         if (ok && limit != old_limit) {
             CHECK(limit > old_limit);
             CHECK(limit - next == STORE_CTR_AHEAD);

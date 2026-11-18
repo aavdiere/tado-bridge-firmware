@@ -147,8 +147,13 @@ bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]) {
     return ok;
 }
 
+bool network_service_due(uint32_t now_ms) {
+    return active && !(failing && (int32_t)(now_ms - retry_ms) < 0)
+           && store_counter_due(link_counter(), limit);
+}
+
 void network_service(uint32_t now_ms) {
-    if (!active || (failing && (int32_t)(now_ms - retry_ms) < 0)) {
+    if (!network_service_due(now_ms)) {
         return;
     }
     uint32_t lim = limit;

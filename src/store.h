@@ -160,6 +160,10 @@ bool store_counter_boot(uint32_t floor, uint32_t *first, uint32_t *limit);
  * again later; once failed writes have used up the slots of the sector
  * after the highest entry's, it stays false until the next boot). */
 bool store_counter_extend(uint32_t next, uint32_t *limit);
+/* Would store_counter_extend(next, &limit) try a write (or report the
+ * impossible next > limit)? No flash access: the radio task asks this on
+ * every loop pass, to hold the coordinator for the write (#22). */
+bool store_counter_due(uint32_t next, uint32_t limit);
 
 /* --- Factory reset (P6, docs/design.md "Lifecycle") ------------------------- */
 /* Erases both network slots, then, only once both read back blank, both

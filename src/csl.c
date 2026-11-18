@@ -83,6 +83,7 @@ static struct {
 
     /* The transaction in flight. Its job stays at the head of its queue. */
     enum state state;
+    bool       hold; /* csl_hold(): no new transaction (#22) */
     uint8_t    nb_idx;
     bool       anchored, saw_invalid;
     uint16_t   sent;
@@ -529,6 +530,11 @@ static uint32_t schedule(uint64_t now) {
     if (g.counter >= g.counter_limit) {
         return COUNTER_WAIT_US;
     }
+    /* Flash work is due: stay idle until the radio task has done it and
+     * released the hold; it calls csl_step() again on its next pass. */
+    if (g.hold) {
+        return UINT32_MAX;
+    }
     int      best       = -1;
     uint64_t best_start = 0, soonest = UINT64_MAX;
     for (unsigned step = 0; step < CSL_NEIGHBORS; step++) {
@@ -709,4 +715,12 @@ bool csl_quiet_for(uint32_t us) {
 bool csl_busy(void) {
     /* Waiting for a sample that is still far away leaves the bus free. */
     return !csl_quiet_for(10000u);
+}
+
+bool csl_idle(void) {
+    return g.state == ST_IDLE;
+}
+
+void csl_hold(bool on) {
+    g.hold = on;
 }
