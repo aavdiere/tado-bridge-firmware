@@ -227,6 +227,7 @@ add_executable(${BINARY}
     ../src/watchdog.c
     ../src/app.c
     ../src/button.c
+    ../src/pair_led.c
     ../src/hooks.c
     ../src/faults.c
     ../src/timebase.c

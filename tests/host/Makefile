@@ -20,7 +20,7 @@ AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o
 
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
          test_airtime test_cc110l test_cc110l_off test_store test_identity test_pair test_coap \
-         test_mx25r test_button
+         test_mx25r test_button test_pair_led
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -44,6 +44,8 @@ test_mx25r_SRCS := store.c store_port.c
 test_mx25r_DEPS := $(SRC)/mx25r.c
 # Debounce and long press of the buttons (factory reset, pair).
 test_button_SRCS := button.c
+# Pairing LED phase (#19).
+test_pair_led_SRCS := pair_led.c
 # The radio driver's transmit functions against a simulated chip
 # (cc110l_model.h). Both programs include src/cc110l.c themselves:
 # test_cc110l as the default firmware builds it, transmitter on;

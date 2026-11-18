@@ -81,6 +81,7 @@
 #include "mx25r.h"
 #include "network.h"
 #include "pair.h"
+#include "pair_led.h"
 #include "provision.h"
 #include "rng.h"
 #include "spi1.h"
@@ -1929,7 +1930,6 @@ static bool flash_quiet(void) {
 }
 
 #define HEALTH_PERIOD_MS    10000u
-#define PAIR_LED_HALF_MS    500u /* pairing LED flash: 0.5 s on, 0.5 s off */
 #define STATS_PERIOD_MS     60000u
 #define RETRY_PERIOD_MS     10000u
 #define STORM_REINIT_MIN_MS 1000u
@@ -1982,15 +1982,17 @@ void radio_task_run(void) {
         }
     }
 
-    radio_running              = true;
-    TickType_t next_health     = xTaskGetTickCount() + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
-    TickType_t next_stats      = xTaskGetTickCount() + pdMS_TO_TICKS(STATS_PERIOD_MS);
-    TickType_t last_storm      = xTaskGetTickCount() - pdMS_TO_TICKS(STORM_REINIT_MIN_MS);
-    bool       flash_due       = false;
-    bool       pair_due        = false;
-    bool       reset_due       = false;
-    bool       window_was_open = false;
-    bool       was_engaged     = false;
+    radio_running                   = true;
+    TickType_t      next_health     = xTaskGetTickCount() + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
+    TickType_t      next_stats      = xTaskGetTickCount() + pdMS_TO_TICKS(STATS_PERIOD_MS);
+    TickType_t      last_storm      = xTaskGetTickCount() - pdMS_TO_TICKS(STORM_REINIT_MIN_MS);
+    bool            flash_due       = false;
+    bool            pair_due        = false;
+    bool            reset_due       = false;
+    bool            window_was_open = false;
+    bool            was_engaged     = false;
+    struct pair_led pled;
+    pair_led_init(&pled, pair_stats()->paired);
     for (;;) {
         /* The coordinator first: it may send (a wake-up frame per call during
          * a train) and says how long it can wait. */
@@ -2007,6 +2009,10 @@ void radio_task_run(void) {
             wait = 0;
         } else if (hint != UINT32_MAX && hint / 1000u - 1u < wait) {
             wait = pdMS_TO_TICKS(hint / 1000u - 1u);
+        }
+        if (wait > 20 && link_pair_engaged((uint32_t)xTaskGetTickCount())) {
+            wait = 20; /* the quick flash of the pairing LED (100 ms halves) needs a pass every 20
+                          ms */
         }
         if (wait > 1 && (rx.assembling || rx.in_packet)) {
             wait = 1; /* a frame is arriving: pump the FIFO every tick */
@@ -2103,16 +2109,17 @@ void radio_task_run(void) {
             }
         }
 
-        /* The pairing LED (#19, owner spec 2026-11-17): flashing while the
-         * window is open and waits for the target, lit during an exchange
-         * with it, off once the window has closed by itself (after
-         * PAIR_WINDOW_MS; a pairing does not close it) or by the button.
-         * The flash follows the tick clock, at this loop's pace (at most
-         * 100 ms late); at its 49.7-day wrap one phase is cut short. */
+        /* The pairing LED (#19, owner spec 2026-11-17, amended 2026-11-18;
+         * src/pair_led.h): slow flash while the window waits, quick flash
+         * during an exchange, lit for 2 s after a pairing, off once the
+         * window has closed (after PAIR_WINDOW_MS, or by the button; a
+         * pairing does not close it). On the tick clock at this loop's
+         * pace (at most 100 ms late); at its 49.7-day wrap one phase is
+         * cut short. */
         uint32_t t       = (uint32_t)xTaskGetTickCount();
         bool     open    = link_pair_active(t);
         bool     engaged = open && link_pair_engaged(t);
-        board_led(LED_PAIRING, engaged || (open && t % (2u * PAIR_LED_HALF_MS) < PAIR_LED_HALF_MS));
+        board_led(LED_PAIRING, pair_led_level(&pled, open, engaged, pair_stats()->paired, t));
         /* Their log lines wait for a quiet moment, as everything that logs
          * in this loop: an exchange starts on a frame of the target, and the
          * next frame's Enhanced ACK must not wait behind the log mutex. */
