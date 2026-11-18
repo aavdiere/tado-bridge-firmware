@@ -353,6 +353,40 @@ static void on_reply(const struct coap_msg *m) {
     }
 }
 
+/* CON PUT d/config to the bridge: the server's device registration push
+ * after a device paired, TLV 0x0001 serial, 0x0036 type, 0x003a firmware,
+ * 0x4000 zone, 0x4020 role (tanoclo/ws-server/lib/commands/device.js:773-827,
+ * called from lib/handlers/device-handlers.js:151). The server resends it at
+ * 6, 13, 26, 50 and 90 s until an ACK with its Message ID comes back from the
+ * bridge's address; it matches on the Message ID alone and reads neither
+ * code nor token (lib/coap-transport.js:34, 195-235, 237-265;
+ * lib/message-router/index.js:197, 542-549). The answer is what tanoclo
+ * itself gives a PUT: a piggybacked 2.04 with the request's token, no
+ * options (lib/handlers/coap-helpers.js:24-49, lib/coap.js:341-351). What
+ * stock does with the push, and what it answers, is not known [I]; nothing
+ * is stored, the bridge keeps no device table of its own. Stateless, so a
+ * resent copy (same Message ID) gets the same answer (RFC 7252 4.5). */
+static void on_config(const struct coap_msg *m) {
+    uint8_t        ack[4 + 8];
+    size_t         n    = coap_reply(m, COAP_CHANGED, ack, sizeof ack);
+    bool           sent = n != 0u && send_coap(ack, n);
+    const uint8_t *v;
+    size_t         vl;
+    char           dev[13] = "?";
+    if (tlv_find(m->payload, m->payload_len, 0x0001u, &v, &vl)) {
+        size_t i = 0;
+        for (; i < vl && i < sizeof dev - 1u && v[i] != 0u; i++) {
+            dev[i] = (v[i] >= 0x20u && v[i] < 0x7Fu) ? (char)v[i] : '?';
+        }
+        dev[i] = '\0';
+    }
+    LOG("session: PUT d/config for device %s (mid %04x, %u bytes payload, not stored): 2.04 %s",
+        dev,
+        (unsigned)m->mid,
+        (unsigned)m->payload_len,
+        sent ? "sent" : "not sent (send queue full; the server resends)");
+}
+
 /* Every binary message from the server (ws.c handler). */
 static void on_message(const uint8_t *d, size_t n) {
     if (n < FRAME_HDR || d[2] != 16u) {
@@ -395,10 +429,14 @@ static void on_message(const uint8_t *d, size_t n) {
         && take_time(m.payload, m.payload_len, "broadcast")) {
         return;
     }
+    if (to_us && m.type == COAP_CON && m.code == COAP_PUT && coap_path_is(&m, "d/config")) {
+        on_config(&m);
+        return;
+    }
     char path[40];
     coap_path(&m, path, sizeof path);
-    /* Requests for the bridge itself (d/rfkey, d/pair, ...) come with #19
-     * (docs/server-api.md "Bridge handles itself"). */
+    /* Other requests for the bridge itself (d/rfkey, d/pair, d/reboot, ...)
+     * are not answered yet (docs/server-api.md "Bridge handles itself"). */
     LOG("session: downlink %s type %u code %u.%02u mid %04x /%s (%u bytes payload) not handled yet",
         to_us ? "for the bridge" : "for no device address",
         (unsigned)m.type,

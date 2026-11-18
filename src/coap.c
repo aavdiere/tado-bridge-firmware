@@ -164,6 +164,36 @@ void coap_path(const struct coap_msg *m, char *out, size_t cap) {
     }
 }
 
+bool coap_path_is(const struct coap_msg *m, const char *uri) {
+    size_t         pos = 0, vlen;
+    unsigned       num = 0;
+    const uint8_t *val;
+    const char    *s    = uri;
+    bool           more = *s != '\0'; /* a segment of uri is still to match */
+    while (coap_next_option(m, &pos, &num, &val, &vlen)) {
+        if (num != COAP_OPT_URI_PATH) {
+            continue;
+        }
+        const char *e = strchr(s, '/');
+        size_t      n = e ? (size_t)(e - s) : strlen(s);
+        if (!more || vlen != n || memcmp(val, s, n) != 0) {
+            return false;
+        }
+        s += n;
+        more = e != NULL;
+        s += more ? 1u : 0u;
+    }
+    /* coap_parse() has checked every option, so the walk ends at the
+     * payload marker or the end of the message. */
+    return !more;
+}
+
+size_t coap_reply(const struct coap_msg *req, uint8_t code, uint8_t *buf, size_t cap) {
+    struct coap_writer w;
+    coap_begin(&w, buf, cap, COAP_ACK, code, req->mid, req->token, req->tkl);
+    return w.overflow ? 0u : w.len;
+}
+
 bool tlv_put(uint8_t *buf, size_t cap, size_t *len, uint16_t fid, const void *val, size_t vlen) {
     if (vlen > 255u || *len + 3u + vlen > cap) {
         return false;

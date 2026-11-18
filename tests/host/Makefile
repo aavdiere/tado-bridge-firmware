@@ -19,7 +19,7 @@ MBEDTLS_CFLAGS := -std=c11 -O1 -g -fsanitize=address,undefined -I. -I$(MBEDTLS)/
 AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o
 
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
-         test_airtime test_cc110l test_cc110l_off test_store test_pair
+         test_airtime test_cc110l test_cc110l_off test_store test_pair test_coap
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -30,6 +30,8 @@ test_relay_SRCS := relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
 test_link_SRCS := link.c pair.c relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
 # Pairing window, beacon and d/pair (#19).
 test_pair_SRCS := pair.c mac.c ccm.c
+# CoAP codec and the bridge's answer to PUT d/config (refs #19).
+test_coap_SRCS := coap.c
 # Network record and counter log against a flash model with power cuts (#37).
 test_store_SRCS := store.c
 # The radio driver's transmit functions against a simulated chip

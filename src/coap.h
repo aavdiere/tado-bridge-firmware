@@ -17,6 +17,8 @@
 #define COAP_CODE(c, dd) ((uint8_t)(((c) << 5) | (dd)))
 #define COAP_GET         COAP_CODE(0, 1)
 #define COAP_POST        COAP_CODE(0, 2)
+#define COAP_PUT         COAP_CODE(0, 3)
+#define COAP_CHANGED     COAP_CODE(2, 4)
 #define COAP_CONTENT     COAP_CODE(2, 5)
 #define COAP_UNAUTH      COAP_CODE(4, 1)
 
@@ -63,6 +65,15 @@ bool coap_next_option(
 
 /* Uri-Path segments joined with '/', for the log. */
 void coap_path(const struct coap_msg *m, char *out, size_t cap);
+
+/* True if the Uri-Path options are exactly the segments of uri ("d/config":
+ * two options, "d" and "config"), compared byte for byte. */
+bool coap_path_is(const struct coap_msg *m, const char *uri);
+
+/* Piggybacked response to a confirmable request (RFC 7252 5.2.1): an ACK
+ * with the request's Message ID and token, the given code, no options and
+ * no payload. Returns its length, or 0 if it does not fit in cap. */
+size_t coap_reply(const struct coap_msg *req, uint8_t code, uint8_t *buf, size_t cap);
 
 /* tado TLV: FID u16 big-endian, length u8, value (tanoclo/docs/coap_tlv.md:183-197). */
 bool tlv_put(uint8_t *buf, size_t cap, size_t *len, uint16_t fid, const void *val, size_t vlen);
