@@ -3,6 +3,7 @@
 #include "app.h"
 
 #include "board.h"
+#include "button.h"
 #include "log.h"
 #include "net.h"
 #include "radio.h"
@@ -42,48 +43,51 @@ static void net_task(void *arg) {
     net_task_run(); /* src/net.c; owns SPI2, watchdog check-in */
 }
 
-struct button {
-    const char *name;
-    bool        state;   /* debounced, true = pressed */
-    uint8_t     pending; /* consecutive samples that disagree with state */
-};
+#define POLL_MS         10
+#define KICK_MS         500   /* watchdog window (docs/build.md P1) */
+#define PAIR_HOLD_MS    1000  /* the pair button opens a pairing window (#19) */
+#define FACTORY_HOLD_MS 10000 /* the factory reset button erases the network (P6) */
 
-#define POLL_MS      10
-#define DEBOUNCE_N   3    /* 30 ms */
-#define KICK_MS      500  /* watchdog window (docs/build.md P1) */
-#define PAIR_HOLD_MS 1000 /* the pair button opens a pairing window (#19) */
-
-static void button_update(struct button *b, bool raw) {
-    if (raw == b->state) {
-        b->pending = 0;
-    } else if (++b->pending >= DEBOUNCE_N) {
-        b->state   = raw;
-        b->pending = 0;
-        LOG("button: %s %s", b->name, raw ? "pressed" : "released");
+/* Debounced press and release lines, as before the button module. */
+static void button_log(const char *name, unsigned ev) {
+    if (ev & BUTTON_PRESS) {
+        LOG("button: %s pressed", name);
+    }
+    if (ev & BUTTON_RELEASE) {
+        LOG("button: %s released", name);
     }
 }
 
 static void housekeeping_task(void *arg) {
     (void)arg;
-    struct button reset     = {.name = "factory reset (PB10)"};
-    struct button pair      = {.name = "pair (PC15)"};
+    struct button reset, pair;
     uint32_t      loops     = 0;
-    unsigned      pair_held = 0; /* polls the pair button has been held */
     TickType_t    next_kick = xTaskGetTickCount() + pdMS_TO_TICKS(KICK_MS);
+    /* The factory reset needs a release first: held from power-on (or PB10
+     * stuck low) it never fires (src/button.h). */
+    button_init(&reset, true);
+    button_init(&pair, false);
 
     for (TickType_t wake = xTaskGetTickCount();; loops++) {
         vTaskDelayUntil(&wake, pdMS_TO_TICKS(POLL_MS));
 
-        button_update(&reset, board_reset_button_raw());
-        button_update(&pair, board_pair_button_raw());
+        /* Holding the factory reset button FACTORY_HOLD_MS erases the
+         * network record and the counter log, keeps the identity, and
+         * restarts the bridge (radio task, which owns SPI1). Once per
+         * press. */
+        unsigned ev = button_poll(&reset, board_reset_button_raw(), FACTORY_HOLD_MS / POLL_MS);
+        button_log("factory reset (PB10)", ev);
+        if (ev & BUTTON_HOLD) {
+            LOG("button: factory reset held %u s: factory reset requested", FACTORY_HOLD_MS / 1000);
+            radio_request_factory_reset();
+        }
         /* The router LED shows Ethernet link and DHCP (net task, #13); the
          * pairing LED shows a pairing window and its exchanges (radio task,
-         * #19). Holding the
-         * pair button PAIR_HOLD_MS opens a window, or closes the open one;
-         * once per press. */
-        if (!pair.state) {
-            pair_held = 0;
-        } else if (pair_held < PAIR_HOLD_MS / POLL_MS && ++pair_held == PAIR_HOLD_MS / POLL_MS) {
+         * #19). Holding the pair button PAIR_HOLD_MS opens a window, or
+         * closes the open one; once per press. */
+        ev = button_poll(&pair, board_pair_button_raw(), PAIR_HOLD_MS / POLL_MS);
+        button_log("pair (PC15)", ev);
+        if (ev & BUTTON_HOLD) {
             LOG("button: pair held %u ms: pairing window requested", PAIR_HOLD_MS);
             radio_request_pairing();
         }

@@ -39,4 +39,10 @@ void radio_notify_link(void);
  * task. */
 void radio_request_pairing(void);
 
+/* The factory reset button was held (src/app.c, P6): at its next quiet
+ * moment the radio task erases the network record and the counter log
+ * (network_factory_reset()), keeps the identity record, and restarts the
+ * MCU, which then boots without a network. Any task. */
+void radio_request_factory_reset(void);
+
 #endif

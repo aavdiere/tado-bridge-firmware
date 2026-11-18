@@ -53,6 +53,15 @@ bool network_active(void);
  * network_boot() did not run (no identity, flash not ready). */
 bool network_absent(void);
 
+/* Factory reset (P6): the link drops its key and any pairing window at
+ * once (nothing is acknowledged or sent from here on), no network may be
+ * created in this boot, then store_factory_reset() erases the network
+ * slots and the counter log; the identity stays. Radio task, at a quiet
+ * moment; the caller restarts the MCU afterwards, success or not, so that
+ * the next boot reads what the flash now holds. Frames are still received
+ * during the erases (#22). */
+bool network_factory_reset(void);
+
 /* The key of the active network, read back from its record in flash (the
  * record the boot or network_create() activated, by seq), for a pairing
  * window to hand out. False if no network is active or the record no

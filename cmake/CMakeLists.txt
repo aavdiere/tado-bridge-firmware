@@ -226,6 +226,7 @@ add_executable(${BINARY}
     ../src/board.c
     ../src/watchdog.c
     ../src/app.c
+    ../src/button.c
     ../src/hooks.c
     ../src/faults.c
     ../src/timebase.c

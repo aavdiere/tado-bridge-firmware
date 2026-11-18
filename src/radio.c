@@ -93,6 +93,7 @@
 #include "mbedtls/platform_util.h"
 
 #include <libopencm3/cm3/nvic.h>
+#include <libopencm3/cm3/scb.h>
 #include <libopencm3/stm32/exti.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/rcc.h>
@@ -228,6 +229,7 @@ _Static_assert(FXOSC_HZ * 8u * 16u / (1u << 17) == 25390u, "deviation 25.39 kHz"
 #define NOTE_ACK_CHECK (1u << 6)
 #define NOTE_ACK_REARM (1u << 7)
 #define NOTE_PAIR      (1u << 8) /* the pair button: open or close a window (#19) */
+#define NOTE_RESET     (1u << 9) /* the factory reset button (P6) */
 
 /* FreeRTOS FromISR calls need a numeric priority >= 5 (FreeRTOSConfig.h,
  * configMAX_SYSCALL_INTERRUPT_PRIORITY = 0x50). */
@@ -378,6 +380,12 @@ void radio_notify_link(void) {
 void radio_request_pairing(void) {
     if (self) {
         xTaskNotify(self, NOTE_PAIR, eSetBits);
+    }
+}
+
+void radio_request_factory_reset(void) {
+    if (self) {
+        xTaskNotify(self, NOTE_RESET, eSetBits);
     }
 }
 
@@ -1765,6 +1773,27 @@ static void pairing_trigger(uint32_t now_ms) {
 #endif
 }
 
+/* Factory reset (P6, docs/design.md "Lifecycle"): erase the network record
+ * and the counter log, keep the identity, restart. At a quiet moment; the
+ * erases (four sectors, up to about 1 s) receive frames meanwhile (#22),
+ * which, without a key, are not acknowledged. The restart makes the next
+ * boot read what the flash holds: no network after a complete reset
+ * ("network: no network record"), or whatever survived a failed one. */
+#define FACTORY_LOG_MS 200u /* time for the debugger to read the last RTT lines */
+
+static void factory_reset(void) {
+    if (!flash_ready) {
+        LOG("factory reset: flash not ready at boot: nothing erased");
+        return;
+    }
+    LOG("factory reset: erasing the network record and the counter log; the identity stays");
+    bool ok = network_factory_reset();
+    LOG("factory reset: %s; restarting",
+        ok ? "done" : "FAILED (an erase failed or did not read back blank); hold the button again");
+    vTaskDelay(pdMS_TO_TICKS(FACTORY_LOG_MS));
+    scb_reset_system(); /* SYSRESETREQ, rm0383.txt:4551-4559 */
+}
+
 static const char *const outcome_name[] = {
     [CSL_DELIVERED] = "delivered",
     [CSL_NO_ACK]    = "no ack",
@@ -1947,6 +1976,7 @@ void radio_task_run(void) {
     TickType_t last_storm      = xTaskGetTickCount() - pdMS_TO_TICKS(STORM_REINIT_MIN_MS);
     bool       flash_due       = false;
     bool       pair_due        = false;
+    bool       reset_due       = false;
     bool       window_was_open = false;
     bool       was_engaged     = false;
     for (;;) {
@@ -2021,9 +2051,15 @@ void radio_task_run(void) {
          * each step that may write or read the flash. */
         flash_due |= (bits & NOTE_FLASH) != 0;
         pair_due |= (bits & NOTE_PAIR) != 0;
+        reset_due |= (bits & NOTE_RESET) != 0;
         if (flash_due && quiet()) {
             flash_due = false;
             flash_check();
+        }
+        if (reset_due && quiet()) {
+            factory_reset(); /* restarts the MCU; returns only without flash */
+            reset_due = false;
+            pair_due  = false;
         }
         if (pair_due && quiet()) {
             pair_due = false;

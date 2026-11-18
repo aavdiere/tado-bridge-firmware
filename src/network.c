@@ -168,3 +168,11 @@ void network_service(uint32_t now_ms) {
         (unsigned long)limit,
         RETRY_MS / 1000u);
 }
+
+bool network_factory_reset(void) {
+    link_clear_key(); /* also closes a pairing window */
+    active  = false;
+    failing = false;
+    found   = NET_RECORD; /* no network_create() until the next boot */
+    return store_factory_reset();
+}
