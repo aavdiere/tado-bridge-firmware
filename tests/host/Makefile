@@ -19,7 +19,8 @@ MBEDTLS_CFLAGS := -std=c11 -O1 -g -fsanitize=address,undefined -I. -I$(MBEDTLS)/
 AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o
 
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
-         test_airtime test_cc110l test_cc110l_off test_store test_identity test_pair test_coap
+         test_airtime test_cc110l test_cc110l_off test_store test_identity test_pair test_coap \
+         test_mx25r
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -36,6 +37,11 @@ test_coap_SRCS := coap.c
 test_store_SRCS := store.c
 # Identity record (#21), as the provisioning tool writes it and the boot loads it.
 test_identity_SRCS := store.c
+# Flash work while frames arrive (#22): the flash driver (included by the
+# test program) and the store above it, against a simulated flash on SPI1
+# and a simulated receiver with random traffic.
+test_mx25r_SRCS := store.c store_port.c
+test_mx25r_DEPS := $(SRC)/mx25r.c
 # The radio driver's transmit functions against a simulated chip
 # (cc110l_model.h). Both programs include src/cc110l.c themselves:
 # test_cc110l as the default firmware builds it, transmitter on;

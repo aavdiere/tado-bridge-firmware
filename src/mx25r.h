@@ -13,9 +13,50 @@
  *
  * Radio task only (it owns SPI1, docs/design.md "Sharing SPI1 with the
  * radio"). Every function below is a series of short bus transactions; the
- * erase and program waits release the bus between status polls. */
+ * erase and program waits release the bus between status polls.
+ *
+ * Flash work while frames arrive (#22). The CC110L and this chip share
+ * SPI1, and the Enhanced ACK depends on the radio task reading a Data
+ * frame's header out of the RX FIFO while the frame is still arriving
+ * (src/radio.c, ack_consider()). So the driver never holds the radio up:
+ *   - no bus transaction starts while mx25r_port_radio_busy() (a frame
+ *     arriving, or a frame of ours on the air): the driver serves the
+ *     radio instead (gate); after MX25R_GATE_MAX_US of continuous busy it
+ *     goes ahead anyway, since a pin stuck high must not stop the flash;
+ *   - between the status polls of a program or erase cycle, which run in
+ *     the chip with CS# high (mx25r1635f.txt:2149-2151, 2323-2325), it
+ *     serves the radio, about once per 1 ms tick.
+ * Erase/Program Suspend (mx25r1635f.txt:2581-2607) is not used: it exists to
+ * read the array during a cycle (:2583-2586), and the ACK path never
+ * touches the flash, only the bus, which is free while CS# is high. */
 
 #define MX25R_JEDEC_ID 0xC22815u /* C2 28 15, mx25r1635f.txt:1123-1125 */
+
+/* Longest wait for a quiet radio before a bus transaction: longer than the
+ * radio's own stale-frame limit (RX_STALE_US, 60 ms, src/radio.c) plus an
+ * Enhanced ACK on the air (8.5 ms with its margin, src/cc110l.c). */
+#define MX25R_GATE_MAX_US 100000u
+
+/* --- Radio port (src/radio.c; a simulated radio in tests/host) ------------- */
+/* True while no flash transaction may start: a frame is arriving or not yet
+ * taken from the FIFO, or a frame of ours is on the air. False before the
+ * radio runs. */
+bool mx25r_port_radio_busy(void);
+/* Serve the radio once and give the CPU away: wait for a radio interrupt or
+ * the next 1 ms tick, pump the RX FIFO (which prepares Enhanced ACKs and
+ * completes frames), check in with the watchdog. Never touches the flash.
+ * Before the radio runs: a one-tick delay and the watchdog check-in. */
+void mx25r_port_radio_serve(void);
+
+/* Counters since boot, for the radio task's minute log. */
+struct mx25r_stats {
+    uint32_t held;      /* transactions that waited for a quiet radio */
+    uint32_t gave_up;   /* ... and went ahead after MX25R_GATE_MAX_US */
+    uint32_t held_max;  /* longest such wait, us */
+    uint32_t cycles;    /* program and erase cycles waited out */
+    uint32_t cycle_max; /* longest cycle, us, from the command to WIP = 0 */
+};
+const struct mx25r_stats *mx25r_stats(void);
 
 /* Largest program or read per bus transaction. SPI1 transactions run in a
  * critical section (src/spi1.c), so they are kept short: 4 + 64 bytes at
@@ -36,7 +77,7 @@ bool mx25r_read_status(uint8_t *sr);
  * not reset the chip). While WIP = 1 the chip ignores reads of the array
  * and does not decode RDID (mx25r1635f.txt:556-557, 968-969); RDSR works
  * at any time (:1142-1144). False if WIP is still set: treat the flash as
- * unavailable. Yields between polls (radio task only). */
+ * unavailable. Serves the radio between polls (radio task only). */
 bool mx25r_wait_idle(void);
 
 /* READ 03h, any length, in transactions of at most MX25R_XFER_MAX bytes. */

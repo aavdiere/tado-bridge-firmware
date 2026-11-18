@@ -35,9 +35,10 @@ void network_boot(void);
  * sector erase (up to 240 ms). */
 bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]);
 /* Refused unless network_absent(); after any failure, refused until the
- * next boot. Blocks the radio task for up to about 0.8 s (DRBG reseed,
- * sector erases): never while a pairing window is open or a transaction
- * is on the air. */
+ * next boot. Holds the radio task's loop for up to about 0.8 s (DRBG
+ * reseed, sector erases); frames are received and acknowledged meanwhile
+ * (#22, src/mx25r.h), but the coordinator waits: never while a pairing
+ * window is open or a transaction is on the air. */
 
 /* Radio task, at a quiet moment (no frame arriving, no transaction on the
  * air): moves the counter reservation up once less than 2048 remains. */

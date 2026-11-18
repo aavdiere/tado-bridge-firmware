@@ -414,6 +414,10 @@ struct counters {
      * was not seen live, the channel was busy, it was too late, or the
      * driver refused or failed. */
     uint32_t beacon_sent, beacon_no_stamp, beacon_busy, beacon_late, beacon_fail;
+    /* Flash work while frames arrive (#22): radio services run from inside
+     * a flash program or erase, and the frames and Enhanced ACKs done in
+     * them. */
+    uint32_t flash_serve, flash_frames, flash_acks;
 };
 static struct counters minute, total;
 
@@ -1311,6 +1315,17 @@ static void log_minute(void) {
         (unsigned long)minute.flash_in_frame,
         (unsigned long)total.frames,
         (unsigned long)total.flash_bad);
+    const struct mx25r_stats *fs = mx25r_stats();
+    LOG("flash: 60 s: radio served %lu times during flash work, frames %lu, acks %lu; totals: "
+        "cycles %lu (longest %lu us), held %lu (longest %lu us, gave up %lu)",
+        (unsigned long)minute.flash_serve,
+        (unsigned long)minute.flash_frames,
+        (unsigned long)minute.flash_acks,
+        (unsigned long)fs->cycles,
+        (unsigned long)fs->cycle_max,
+        (unsigned long)fs->held,
+        (unsigned long)fs->held_max,
+        (unsigned long)fs->gave_up);
     LOG("radio: 60 s: freqest in packet %lu, none %lu (stale sample dropped %lu), sync rssi "
         "differs %lu",
         (unsigned long)minute.fe_pkt,
@@ -1780,6 +1795,98 @@ void csl_port_report(const struct csl_report *r) {
             : "");
 }
 
+/* --- The receiver's share of a task loop pass -------------------------------
+ * Run by the task loop, and from inside flash work (#22, below). bits: the
+ * notifications just taken. */
+#define RX_SERVICE_BITS (NOTE_GDO0 | NOTE_CRCOK | NOTE_SYNC | NOTE_ACK_CHECK | NOTE_ACK_REARM)
+
+static void rx_service(uint32_t bits) {
+    /* The ACK interrupt failed after it had made the chip IDLE: back to
+     * RX now, not at the next health check. CHECK: the interrupt strobed
+     * SRX and kept the RX FIFO, so the frame can still be read if the
+     * chip is receiving; otherwise, and on REARM, abort (SIDLE, SFTX)
+     * and flush and re-arm (SIDLE, SFRX, SRX), which drops the frame;
+     * its device sends it again. */
+    if (bits & (NOTE_ACK_CHECK | NOTE_ACK_REARM)) {
+        if ((bits & NOTE_ACK_REARM) || !wait_marcstate(CC_MARC_RX, 1000)) {
+            COUNT(ack_rearm);
+            cc110l_tx_abort();
+            if (!rx_flush_and_arm() || !wait_marcstate(CC_MARC_RX, 2000)) {
+                radio_reinit();
+            }
+        }
+    }
+
+    if (bits & NOTE_SYNC) {
+        rx.in_packet = true;
+        rx.sync_us   = timebase_us();
+    }
+    rx_pump();
+    if (bits & NOTE_SYNC) {
+        sample_in_packet(); /* after the pump: see fe_sample */
+    }
+    if (wake.active && (uint32_t)(timebase_us() - wake.last_us) > WAKE_GAP_US) {
+        wake_flush();
+    }
+}
+
+/* --- Flash work while frames arrive (#22, src/mx25r.h) -------------------------
+ * Flash writes start only at a quiet moment of the task loop (no frame
+ * arriving, no coordinator transaction), but a program cycle takes up to
+ * 10 ms and a sector erase up to 240 ms (mx25r1635f.txt:3337-3341), and
+ * frames keep coming. The driver therefore calls back here: between its
+ * status polls, and instead of starting a bus transaction while a frame
+ * arrives or a frame of ours is on the air. A pass here is the receiver's
+ * part of a task loop pass: the FIFO is pumped every tick from the sync
+ * edge on, so ack_consider() prepares the Enhanced ACK as in the loop, and
+ * complete frames are handled (frame_done(): link, beacon answer, log).
+ * Not here: the coordinator (csl_step(), so no transaction starts during
+ * flash work), the quiet-moment work, and the notifications for it, which
+ * stay in pending_bits for the loop. A flash access made from here would
+ * nest: there is none, and `serving` stops the nesting anyway. */
+static bool radio_running; /* bring-up done, the task loop runs */
+static bool serving;
+
+bool mx25r_port_radio_busy(void) {
+    return radio_running && (packet_arriving() || cc110l_tx_expected());
+}
+
+void mx25r_port_radio_serve(void) {
+    watchdog_checkin(WDG_RADIO);
+    if (!radio_running || serving) {
+        vTaskDelay(1);
+        return;
+    }
+    serving         = true;
+    uint32_t bits   = 0;
+    uint32_t frames = total.frames, acks = total.ack_sent;
+    /* As the loop: wake on a GDO interrupt, else at the next tick. */
+    (void)xTaskNotifyWait(0, UINT32_MAX, &bits, 1);
+    watchdog_checkin(WDG_RADIO);
+    bits |= pending_bits;
+    pending_bits = 0;
+    rx_service(bits);
+    pending_bits |= bits & ~RX_SERVICE_BITS;
+    COUNT(flash_serve);
+    minute.flash_frames += total.frames - frames;
+    total.flash_frames += total.frames - frames;
+    minute.flash_acks += total.ack_sent - acks;
+    total.flash_acks += total.ack_sent - acks;
+    (void)cc110l_tx_expected();
+    if (!tx_watch()) {
+        radio_reinit();
+    }
+    serving = false;
+}
+
+/* The loop's quiet moment: no packet arriving (its Enhanced ACK must not
+ * wait behind a log line or the flash), no transaction on the air. Checked
+ * again after each piece of work that may touch the flash, since frames
+ * are taken in it (#22). */
+static bool quiet(void) {
+    return !packet_arriving() && !csl_busy();
+}
+
 #define HEALTH_PERIOD_MS    10000u
 #define PAIR_LED_HALF_MS    500u /* pairing LED flash: 0.5 s on, 0.5 s off */
 #define STATS_PERIOD_MS     60000u
@@ -1834,6 +1941,7 @@ void radio_task_run(void) {
         }
     }
 
+    radio_running              = true;
     TickType_t next_health     = xTaskGetTickCount() + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
     TickType_t next_stats      = xTaskGetTickCount() + pdMS_TO_TICKS(STATS_PERIOD_MS);
     TickType_t last_storm      = xTaskGetTickCount() - pdMS_TO_TICKS(STORM_REINIT_MIN_MS);
@@ -1861,6 +1969,9 @@ void radio_task_run(void) {
         if (wait > 1 && (rx.assembling || rx.in_packet)) {
             wait = 1; /* a frame is arriving: pump the FIFO every tick */
         }
+        if (pending_bits) {
+            wait = 0; /* taken during a frame of ours or flash work (#22) */
+        }
 
         uint32_t bits = 0;
         /* Block with a timeout, never forever, so the watchdog check-in keeps
@@ -1887,33 +1998,7 @@ void radio_task_run(void) {
             }
         }
 
-        /* The ACK interrupt failed after it had made the chip IDLE: back to
-         * RX now, not at the next health check. CHECK: the interrupt strobed
-         * SRX and kept the RX FIFO, so the frame can still be read if the
-         * chip is receiving; otherwise, and on REARM, abort (SIDLE, SFTX)
-         * and flush and re-arm (SIDLE, SFRX, SRX), which drops the frame;
-         * its device sends it again. */
-        if (bits & (NOTE_ACK_CHECK | NOTE_ACK_REARM)) {
-            if ((bits & NOTE_ACK_REARM) || !wait_marcstate(CC_MARC_RX, 1000)) {
-                COUNT(ack_rearm);
-                cc110l_tx_abort();
-                if (!rx_flush_and_arm() || !wait_marcstate(CC_MARC_RX, 2000)) {
-                    radio_reinit();
-                }
-            }
-        }
-
-        if (bits & NOTE_SYNC) {
-            rx.in_packet = true;
-            rx.sync_us   = timebase_us();
-        }
-        rx_pump();
-        if (bits & NOTE_SYNC) {
-            sample_in_packet(); /* after the pump: see fe_sample */
-        }
-        if (wake.active && (uint32_t)(timebase_us() - wake.last_us) > WAKE_GAP_US) {
-            wake_flush();
-        }
+        rx_service(bits);
         if (lbt_listening) {
             if (csl_busy()) {
                 lbt_sample_rssi(); /* a pass inside the listen */
@@ -1931,21 +2016,23 @@ void radio_task_run(void) {
             cc110l_cal_expire();
         }
 
-        /* Everything below can wait for a quiet moment: no packet arriving
-         * (its Enhanced ACK must not wait behind a log line or the flash),
-         * no transaction on the air. */
+        /* Everything below can wait for a quiet moment (quiet()). The flash
+         * work in it takes frames (#22), so quiet() is asked again after
+         * each step that may write or read the flash. */
         flash_due |= (bits & NOTE_FLASH) != 0;
         pair_due |= (bits & NOTE_PAIR) != 0;
-        if (!packet_arriving() && !csl_busy()) {
-            if (flash_due) {
-                flash_due = false;
-                flash_check();
-            }
-            if (pair_due) {
-                pair_due = false;
-                pairing_trigger((uint32_t)now);
-            }
+        if (flash_due && quiet()) {
+            flash_due = false;
+            flash_check();
+        }
+        if (pair_due && quiet()) {
+            pair_due = false;
+            pairing_trigger((uint32_t)now);
+        }
+        if (quiet()) {
             network_service((uint32_t)now);
+        }
+        if (quiet()) {
             if ((int32_t)(now - next_health) >= 0) {
                 next_health = now + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
                 health_check();

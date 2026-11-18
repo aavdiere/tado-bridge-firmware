@@ -28,10 +28,6 @@
 #include "log.h"
 #include "spi1.h"
 #include "timebase.h"
-#include "watchdog.h"
-
-#include "FreeRTOS.h"
-#include "task.h"
 
 #define OP_READ   0x03
 #define OP_PP     0x02
@@ -50,12 +46,22 @@
 #define T_RDP_US 50u /* >= 45 us worst case, mx25r1635f.txt:3409 */
 
 /* Waits: twice the worst-case cycle times of either power mode. tPP max
- * 10 ms (ultra low power, mx25r1635f.txt:3337; 4 ms high performance,
- * :3432); tSE max 240 ms (:3340, :3435). WREN sets WEL at once (no cycle
- * time is given); allow a few polls. */
+ * 10 ms (ultra low power, mx25r1635f.txt:3337-3338; 4 ms high performance,
+ * :3432-3433); tSE max 240 ms (:3340-3341, :3435-3436). WREN sets WEL at
+ * once (no cycle time is given); allow a few polls. */
 #define PP_TIMEOUT_US 20000u
-#define SE_TIMEOUT_MS 480u
+#define SE_TIMEOUT_US 480000u
 #define WEL_POLLS     4u
+
+/* The longest transaction, a 64-byte READ or PP with its command and
+ * address, takes 68 x 8 SCK periods: 91 us at 6 MHz (src/spi1.c). A frame
+ * that starts while one runs has its sync word at least 8 bytes (1.28 ms)
+ * and its CRC-OK edge, which fires the Enhanced ACK, at least 12 bytes
+ * (1.92 ms) after its first preamble bit (src/cc110l.c airtime: 4
+ * preamble, 4 sync, length, CRC 2), so a transaction started on a quiet
+ * radio is over long before either edge [I]. */
+_Static_assert((4u + MX25R_XFER_MAX) * 8u * 1000u / 6000u < 1280u,
+               "a flash transaction ends before a frame begun under it is seen");
 
 _Static_assert(MX25R_XFER_MAX <= FLASH_PAGE, "a program stays within one page");
 _Static_assert(FLASH_WRITE_END <= FLASH_SIZE, "writable range inside the chip");
@@ -71,9 +77,49 @@ static void guard(uint32_t addr, size_t n) {
     }
 }
 
+static struct mx25r_stats stats;
+
+const struct mx25r_stats *mx25r_stats(void) {
+    return &stats;
+}
+
+/* After a give-up the radio counts as stuck (a pin held high, say): no more
+ * waits until it is seen quiet again, so one stuck pin costs one
+ * MX25R_GATE_MAX_US, not one per transaction. The radio task's health
+ * check deals with the radio after the flash work. */
+static bool radio_stuck;
+
+/* Before every bus transaction: not while the radio needs the bus quiet
+ * (#22). Serves the radio meanwhile, so its frames and ACKs go on. */
+static void gate(void) {
+    if (!mx25r_port_radio_busy()) {
+        radio_stuck = false;
+        return;
+    }
+    if (radio_stuck) {
+        return;
+    }
+    stats.held++;
+    uint32_t t0 = timebase_us();
+    uint32_t waited;
+    do {
+        mx25r_port_radio_serve();
+        waited = timebase_us() - t0;
+        if (waited > MX25R_GATE_MAX_US) {
+            stats.gave_up++;
+            radio_stuck = true;
+            break;
+        }
+    } while (mx25r_port_radio_busy());
+    if (waited > stats.held_max) {
+        stats.held_max = waited;
+    }
+}
+
 /* One command byte, optional 24-bit address, then n bytes out (src) or in
- * (dst). One CS# low period. */
+ * (dst). One CS# low period, started only on a quiet radio. */
 static void xfer(uint8_t op, const uint32_t *addr, const uint8_t *src, uint8_t *dst, size_t n) {
+    gate();
     spi1_lock();
     spi1_select(SPI1_DEV_FLASH);
     (void)spi1_xfer(op);
@@ -105,6 +151,7 @@ static uint8_t rdscur(void) {
 }
 
 bool mx25r_wake(void) {
+    gate();
     spi1_lock();
     spi1_select(SPI1_DEV_FLASH);
     delay_us(1); /* tCRDP >= 20 ns */
@@ -127,24 +174,36 @@ bool mx25r_read_status(uint8_t *sr) {
     return true;
 }
 
-/* RDSR until WIP = 0, giving the CPU to the other tasks between polls
- * (1 ms ticks); the radio task is the caller and checks in with the
- * watchdog (bounded by max_ms; the IWDG window is ~3 s). The last status
+/* RDSR until WIP = 0 or timeout_us, serving the radio between polls (#22):
+ * the cycle runs in the chip with CS# high (mx25r1635f.txt:2149-2151,
+ * 2323-2325), and RDSR may be read during it (:1142-1144). The last status
  * read is left in *sr. */
-static bool wait_idle_ms(unsigned max_ms, uint8_t *sr) {
-    for (unsigned ms = 0; (*sr = rdsr()) & SR_WIP; ms++) {
-        if (ms > max_ms) {
+static bool wait_wip(uint32_t timeout_us, uint8_t *sr) {
+    uint32_t t0 = timebase_us();
+    while ((*sr = rdsr()) & SR_WIP) {
+        if ((uint32_t)(timebase_us() - t0) > timeout_us) {
             return false;
         }
-        vTaskDelay(1);
-        watchdog_checkin(WDG_RADIO);
+        mx25r_port_radio_serve();
     }
     return true;
 }
 
+/* A program or erase cycle: wait it out and record its length. */
+static bool wait_cycle(uint32_t timeout_us, uint8_t *sr) {
+    uint32_t t0 = timebase_us();
+    bool     ok = wait_wip(timeout_us, sr);
+    uint32_t us = timebase_us() - t0;
+    stats.cycles++;
+    if (us > stats.cycle_max) {
+        stats.cycle_max = us;
+    }
+    return ok;
+}
+
 bool mx25r_wait_idle(void) {
     uint8_t sr;
-    return wait_idle_ms(SE_TIMEOUT_MS, &sr);
+    return wait_wip(SE_TIMEOUT_US, &sr);
 }
 
 bool mx25r_read(uint32_t addr, uint8_t *dst, size_t n) {
@@ -195,13 +254,10 @@ bool mx25r_program(uint32_t addr, const uint8_t *src, size_t n) {
         return false;
     }
     xfer(OP_PP, &addr, src, NULL, n);
-    uint32_t t0 = timebase_us();
-    uint8_t  sr;
-    while ((sr = rdsr()) & SR_WIP) {
-        if ((uint32_t)(timebase_us() - t0) > PP_TIMEOUT_US) {
-            return false;
-        }
-        delay_us(20);
+    uint8_t sr;
+    /* tPP: 3.2 ms typical, 10 ms max (mx25r1635f.txt:3337-3338). */
+    if (!wait_cycle(PP_TIMEOUT_US, &sr)) {
+        return false;
     }
     return cycle_ok(sr, SCUR_PFAIL);
 }
@@ -216,10 +272,9 @@ bool mx25r_erase_sector(uint32_t addr) {
     }
     xfer(OP_SE, &addr, NULL, NULL, 0);
     uint8_t sr;
-    /* 40-240 ms: give the CPU to the other tasks while the chip works. The
-     * radio task is the caller, so its own FIFO is not served meanwhile
-     * (docs/design.md "Counter log", erase cost). */
-    if (!wait_idle_ms(SE_TIMEOUT_MS, &sr)) {
+    /* tSE: 58 ms typical, 240 ms max (mx25r1635f.txt:3340-3341); the radio
+     * is served throughout (#22). */
+    if (!wait_cycle(SE_TIMEOUT_US, &sr)) {
         return false;
     }
     return cycle_ok(sr, SCUR_EFAIL);
