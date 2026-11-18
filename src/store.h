@@ -1,10 +1,12 @@
 #ifndef STORE_H
 #define STORE_H
 
-/* Network record and counter log in external flash (#37), docs/design.md
- * "Slotted records" and "Counter log". Hardware independent: the flash is
- * reached through the three store_port_* functions below (src/store_port.c
- * on the bridge, a flash model with power cuts in tests/host/test_store.c).
+/* Identity record (#21), network record and counter log in external flash
+ * (#37), docs/design.md "Slotted records" and "Counter log". Hardware
+ * independent: the flash is reached through the three store_port_*
+ * functions below (src/store_port.c on the bridge, flash models with power
+ * cuts in tests/host/test_store.c and test_identity.c, the sector image in
+ * tools/identity/identity.c).
  * Radio task only on the bridge (it owns SPI1).
  *
  * Power-cut rules [I]:
@@ -64,6 +66,41 @@ bool store_slot_write(uint32_t       slot_a,
                       uint32_t      *written);
 
 uint32_t store_crc32(const uint8_t *p, size_t n);
+
+/* --- Identity record (#21) ------------------------------------------------- */
+/* The bridge's serial and EUI-64, at FLASH_ID_A / FLASH_ID_B. Written once
+ * at provisioning by the host tool (tools/identity/), which links this file
+ * and calls store_id_write() against an image of the two sectors; the
+ * firmware only loads it (its flash driver refuses writes there). */
+#define STORE_ID_MAGIC      0x314E4449u /* "IDN1" */
+#define STORE_ID_VERSION    1u
+#define STORE_ID_SERIAL_MAX 16u
+#define STORE_ID_LEN        24u /* serial[16] ASCII, zero padded | EUI-64[8] */
+
+struct store_id {
+    char    serial[STORE_ID_SERIAL_MAX + 1u]; /* NUL terminated */
+    uint8_t eui64[8];                         /* stored order, 00 1b c5 first (docs/build.md P4) */
+};
+
+/* Is this an identity the bridge may use? Serial: 3 to 16 characters, two
+ * capital letters then capital letters or digits, as tanoclo keys its
+ * `devices` table ("IB" and 10 digits for a bridge), NUL after it. EUI-64:
+ * tado's OUI 00 1b c5 first (the wire suffix the radio checks,
+ * src/mac.c mac_eui_suffix). */
+bool store_id_valid(const struct store_id *id);
+/* Payload layout: false (and p zeroed) if !store_id_valid(id). */
+bool store_id_pack(const struct store_id *id, uint8_t p[STORE_ID_LEN]);
+/* False (and *out zeroed) if the payload does not make a valid identity:
+ * padding not zero, serial or EUI-64 refused by store_id_valid(). */
+bool store_id_unpack(const uint8_t p[STORE_ID_LEN], struct store_id *out);
+
+/* The newest valid identity record (highest seq), if store_id_unpack()
+ * accepts it. An older slot is not used in its place: a newest record
+ * that is refused leaves the bridge without identity. */
+bool store_id_load(struct store_id *out, uint32_t *seq);
+/* Host provisioning tool only: on the bridge, src/mx25r.c panics on a
+ * write to the identity sectors. Refuses an invalid identity. */
+bool store_id_write(const struct store_id *id, uint32_t *seq);
 
 /* --- Network record -------------------------------------------------------- */
 #define STORE_NET_MAGIC   0x3154454Eu /* "NET1" */

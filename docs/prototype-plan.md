@@ -204,7 +204,7 @@ Restructured in the 2026-11-16 review. The steps run in this order, because each
 
 ### P6: Storage
 
-- Identity record in external flash (`design.md`); provision the serial and EUI-64 from P0 into it instead of the build-time `config/local.cmake` (#21). The network and counter records moved to P5 (#37).
+- Identity record in external flash (`design.md`); provision the serial and EUI-64 from P0 into it instead of the build-time `config/local.cmake` (#21). The network and counter records moved to P5 (#37). **Status (2026-11-18):** built and host-tested (`design.md`, "Implementation: identity record (#21)"; provisioning with `tools/identity/provision.sh`, `build.md`); next `fw-reviewer` for the storage format, then provisioning and flashing on the bench.
 - Erase and program while radio traffic runs (open question 19, #22).
 - Factory reset (PB10): erases the network and counter records, keeps the identity.
 - **Done when:** identity and network survive power cycles, a factory reset re-pairs cleanly, and no ACK is missed during flash work.

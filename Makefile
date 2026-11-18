@@ -17,7 +17,7 @@ LINKER_SCRIPT	:= cmake/$(DEVICE_LC).ld
 DEVICE_STAMP	:= $(BUILD_DIR)/.device-$(DEVICE_LC)-$(BUILD_TYPE)-tx$(RADIO_TX_ALLOWED)
 OPENCM3_LIB		:= vendor/libopencm3/lib/libopencm3_$(FAMILY).a
 
-.PHONY: all format build cmake clean flash rtt size test
+.PHONY: all format build cmake clean flash rtt size test identity-tool
 
 all: build
 build: $(FIRMWARE)
@@ -59,6 +59,10 @@ clean:
 # Host-side unit tests of the protocol modules (tests/host, plain gcc).
 test:
 	$(MAKE) -C tests/host --no-print-directory
+
+# Host tool that builds the identity record (#21): tools/identity/provision.sh.
+identity-tool:
+	$(MAKE) -C tools/identity --no-print-directory
 
 size: $(FIRMWARE)
 	arm-none-eabi-size $(FIRMWARE)

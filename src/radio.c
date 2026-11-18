@@ -74,6 +74,7 @@
 #include "airtime.h"
 #include "cc110l.h"
 #include "csl.h"
+#include "identity.h"
 #include "link.h"
 #include "log.h"
 #include "mac.h"
@@ -1706,6 +1707,12 @@ static void pairing_trigger(uint32_t now_ms) {
         LOG("pair: %s: no window", !flash_ready ? "flash not ready at boot" : "no identity");
         return;
     }
+    /* CMake checked this against BRIDGE_EUI64 until the identity moved to
+     * flash (#21); before any network is created over it. */
+    if (memcmp(target, link_own(), MAC_EUI_LEN) == 0) {
+        LOG("pair: PAIR_TARGET_EUI64 is the bridge's own EUI-64: no window");
+        return;
+    }
     if (!gdo_irq_on || !cc110l_cal_ok()) {
         LOG("pair: radio not ready to transmit (no PLL lock or interrupts off): no window");
         return;
@@ -1779,25 +1786,26 @@ void csl_port_report(const struct csl_report *r) {
 #define RETRY_PERIOD_MS     10000u
 #define STORM_REINIT_MIN_MS 1000u
 
-/* Our wire EUI-64: the provisioned EUI-64 reversed (docs/radio.md "Source
- * address tail"). */
+/* Our wire EUI-64: the identity record's EUI-64 reversed (docs/radio.md
+ * "Source address tail"; #21). Without an identity the link has no own
+ * address: nothing is acknowledged, answered or sent. */
 static void link_start(void) {
-#ifdef PROVISION_EUI64
-    static const uint8_t eui[8] = PROVISION_EUI64;
-    uint8_t              own[MAC_EUI_LEN];
-    for (unsigned i = 0; i < MAC_EUI_LEN; i++) {
-        own[i] = eui[MAC_EUI_LEN - 1u - i];
+    const struct store_id *id = identity();
+    if (id) {
+        uint8_t own[MAC_EUI_LEN];
+        for (unsigned i = 0; i < MAC_EUI_LEN; i++) {
+            own[i] = id->eui64[MAC_EUI_LEN - 1u - i];
+        }
+        if (memcmp(own + 5, mac_eui_suffix, 3) == 0) {
+            link_init(own);
+            cc110l_set_identity(own);
+            LOG("link: identity set");
+            return;
+        }
+        LOG("link: identity EUI-64 does not start 00 1b c5; no identity"); /* store_id_valid() */
+    } else {
+        LOG("link: no bridge identity (identity record): radio link off, nothing sent");
     }
-    if (memcmp(own + 5, mac_eui_suffix, 3) == 0) {
-        link_init(own);
-        cc110l_set_identity(own);
-        LOG("link: identity set");
-        return;
-    }
-    LOG("link: BRIDGE_EUI64 does not start 00 1b c5; no identity");
-#else
-    LOG("link: no bridge identity built in (config/local.cmake); radio link off");
-#endif
     link_init(NULL);
 }
 
@@ -1808,6 +1816,7 @@ void radio_task_run(void) {
     watchdog_checkin(WDG_RADIO);
     bool flash_ok = flash_boot();
     flash_ready   = flash_ok;
+    identity_boot(flash_ok); /* before the link and before the session may authenticate (#21) */
     link_start();
     if (flash_ok) {
         network_boot(); /* key and counter reservation from flash, before the radio (#37) */

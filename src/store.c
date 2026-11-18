@@ -183,6 +183,73 @@ bool store_slot_write(uint32_t       slot_a,
     return ok;
 }
 
+/* --- Identity record (#21) ------------------------------------------------- */
+_Static_assert(STORE_ID_LEN == STORE_ID_SERIAL_MAX + 8u, "identity payload layout");
+_Static_assert(STORE_ID_LEN <= STORE_REC_PAYLOAD, "identity payload fits");
+_Static_assert(sizeof(((struct store_id *)0)->eui64) == 8u, "EUI-64");
+
+static bool upper(char c) {
+    return c >= 'A' && c <= 'Z';
+}
+
+bool store_id_valid(const struct store_id *id) {
+    size_t n = 0;
+    while (n <= STORE_ID_SERIAL_MAX && id->serial[n] != '\0') {
+        char c = id->serial[n];
+        if (!(upper(c) || (n >= 2u && c >= '0' && c <= '9'))) {
+            return false;
+        }
+        n++;
+    }
+    /* tado's OUI first, in stored order (docs/build.md P4). */
+    return n >= 3u && n <= STORE_ID_SERIAL_MAX && id->eui64[0] == 0x00 && id->eui64[1] == 0x1B
+           && id->eui64[2] == 0xC5;
+}
+
+bool store_id_pack(const struct store_id *id, uint8_t p[STORE_ID_LEN]) {
+    memset(p, 0, STORE_ID_LEN);
+    if (!store_id_valid(id)) {
+        return false;
+    }
+    memcpy(p, id->serial, strlen(id->serial));
+    memcpy(p + STORE_ID_SERIAL_MAX, id->eui64, 8u);
+    return true;
+}
+
+bool store_id_unpack(const uint8_t p[STORE_ID_LEN], struct store_id *out) {
+    memset(out, 0, sizeof *out);
+    memcpy(out->serial, p, STORE_ID_SERIAL_MAX); /* serial[16] stays NUL */
+    size_t n = strlen(out->serial);
+    for (size_t i = n; i < STORE_ID_SERIAL_MAX; i++) {
+        if (p[i] != 0) {
+            memset(out, 0, sizeof *out);
+            return false; /* padding must be zero: one way to write a serial */
+        }
+    }
+    memcpy(out->eui64, p + STORE_ID_SERIAL_MAX, 8u);
+    if (!store_id_valid(out)) {
+        memset(out, 0, sizeof *out);
+        return false;
+    }
+    return true;
+}
+
+bool store_id_load(struct store_id *out, uint32_t *seq) {
+    uint8_t p[STORE_ID_LEN];
+    bool    ok = store_slot_load(FLASH_ID_A, STORE_ID_MAGIC, STORE_ID_VERSION, p, sizeof p, seq)
+                 && store_id_unpack(p, out);
+    if (!ok) {
+        memset(out, 0, sizeof *out);
+    }
+    return ok;
+}
+
+bool store_id_write(const struct store_id *id, uint32_t *seq) {
+    uint8_t p[STORE_ID_LEN];
+    return store_id_pack(id, p)
+           && store_slot_write(FLASH_ID_A, STORE_ID_MAGIC, STORE_ID_VERSION, p, sizeof p, seq);
+}
+
 /* --- Network record -------------------------------------------------------- */
 _Static_assert(STORE_NET_LEN == 2u + 1u + 1u + CCM_KEY_LEN + 4u, "network payload layout");
 _Static_assert(STORE_NET_LEN <= STORE_REC_PAYLOAD, "network payload fits");

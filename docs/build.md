@@ -121,10 +121,19 @@ Code: `src/pa3_adc.c` (ADC1 channel 3 on PA3, register level), `src/entropy.c` (
 
 Code: `src/tls.c`, `src/ws.c`, `src/coap.c`, `src/session.c`; mbedTLS options in `src/tado_mbedtls_config.h`. Design and the reasons for each choice: `design.md`, "TLS and WebSocket (#15)". The net task runs it after DHCP and the server lookup (`src/net.c`).
 
-**Provisioning: `config/local.cmake` (gitignored).** Copy `config/local.cmake.example` and fill in `BRIDGE_SERIAL`, `BRIDGE_EUI64` and `SERVER_CA_PEM`. CMake writes them to `build/generated/provision.h`. It refuses a malformed serial or EUI-64, and a PEM file that holds a private key. Run `make clean` once after creating the file. Without it, the image builds and logs `session: no bridge identity built in ...`, and never connects. The serial and EUI-64 must never enter git (`CLAUDE.md`); `build/` and `config/local.cmake` are ignored. P6 replaces this with the identity record in external flash (`design.md`).
+**Provisioning: `config/local.cmake` (gitignored).** Copy `config/local.cmake.example` and fill in `SERVER_CA_PEM` (and `PAIR_TARGET_EUI64` for pairing, #19). CMake writes them to `build/generated/provision.h`. It refuses a PEM file that holds a private key. Run `make clean` once after creating the file. `build/` and `config/local.cmake` are ignored. **Since #21 (2026-11-18) the serial and EUI-64 are not build values:** they come from the identity record in external flash ("Identity record (#21)" below); `BRIDGE_SERIAL` and `BRIDGE_EUI64` in `config/local.cmake` are ignored with a CMake warning. Until #21 CMake wrote them into `provision.h`. The serial and EUI-64 must never enter git (`CLAUDE.md`).
+How the two values are read from the backup (`tools/identity/identity.c` does the same):
 - **EUI-64:** the 8 bytes at config start + 50, in stored order (`tanoclo/patch_ib_firmware/extract_rf_key.js:71`). They start with tado's OUI `00 1b c5`.
 - **Serial [I]:** the backup holds a u32 at the config marker + 8 (`extract_rf_key.js:58`). The serial is `IB` and that number in decimal, padded to 10 digits. Reasons: tado serials are `IB` plus 10 characters (`tanoclo/ws-server/test/ci_seed.sql:46`), a u32 has at most 10 decimal digits, and no ASCII `IB` serial appears anywhere in either dump (searched 2026-11-14). **The owner should compare this with the label on the bridge.** The bench test only needs the same string in tanoclo's database, so it works either way. A tanoclo import from the tado cloud would register the label's serial.
 - **Trust anchor:** for the bench, `~/tanoclo-bench/certs/bench-ca.pem` (`test-bench.md`, "Bench certificate"). It is a public certificate, built in as PEM text.
+
+**Identity record (#21).** Written once per bridge, over SWD, by `tools/identity/provision.sh` (`design.md`, "Implementation: identity record (#21)"); the firmware only reads it. Without it the bridge boots without identity: no radio link, no session, power LED code 4 (`hardware.md`, "LED roles"). Usage, with the work folder outside git:
+
+```
+tools/identity/provision.sh ~/ib01-backups/identity-$(date +%F) --backup ~/ib01-backups/<date>/a/unmodded.bin
+```
+
+or `--serial IB0123456789 --eui64 "00 1b c5 .."` instead of `--backup`. Bench rules as for flashing (`test-bench.md`): USB power with the ST-Link 3V3 wire off, OpenOCD only. It needs tanoclo next to this repository (`../tanoclo/patch_ib_firmware/spi_stub.elf`, or `TANOCLO_PATCH=<dir>`). It prints the identity it will write and the sector (`0x100000` or `0x101000`), asks before writing, then reads back and prints `identity record OK`. The host tool alone: `make identity-tool`, then `build/host-tools/identity from-backup <internal.bin>`, `make` and `check` (usage in `tools/identity/identity.c`). After provisioning, the boot log shows `identity: record seq N: serial IB..., EUI-64 set` and `link: identity set`.
 
 **Server port:** CMake cache value `NET_SERVER_PORT`, default 988 (`tanoclo/ws-server/lib/config.js:47`). The certificate must name `NET_SERVER_HOST`.
 

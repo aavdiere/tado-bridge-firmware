@@ -13,7 +13,7 @@ void log_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* Fault codes: number of short flashes of the power LED (docs/hardware.md,
  * "LED roles"). */
-enum fault_code { FAULT_PANIC = 1, FAULT_CPU = 2, FAULT_ENTROPY = 3 };
+enum fault_code { FAULT_PANIC = 1, FAULT_CPU = 2, FAULT_ENTROPY = 3, FAULT_IDENTITY = 4 };
 
 /* Fatal error: interrupts off, log over RTT without locking, flash the power
  * LED FAULT_PANIC (log.c, panic_flash), then reset through the watchdog.

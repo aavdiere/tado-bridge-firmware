@@ -14,9 +14,9 @@
 
 #include "board.h"
 #include "coap.h"
+#include "identity.h"
 #include "link.h"
 #include "log.h"
-#include "provision.h"
 #include "radio.h"
 #include "relay.h"
 #include "rng.h"
@@ -87,12 +87,11 @@ static bool       time_valid;
 static uint32_t   time_unix;
 static TickType_t time_tick;
 
+/* The serial from the identity record (#21, src/identity.h). Only called
+ * once identity_init() has found one. */
 static const char *serial(void) {
-#ifdef PROVISION_SERIAL
-    return PROVISION_SERIAL;
-#else
-    return "";
-#endif
+    const struct store_id *id = identity();
+    return id ? id->serial : "";
 }
 
 /* Fresh tick, signed difference: see elapsed() in src/ws.c. */
@@ -110,17 +109,16 @@ static void set_phase(enum phase p) {
  * unknown (docs/open-questions.md row 10) [I]; tanoclo keeps whatever the
  * bridge sends as its address (handlers.js:269, 289-291). */
 static bool identity_init(void) {
-#if defined(PROVISION_SERIAL) && defined(PROVISION_EUI64)
-    static const uint8_t eui[8] = PROVISION_EUI64;
+    const struct store_id *id = identity();
+    if (!id) {
+        return false;
+    }
     memset(bridge_ipv6, 0, sizeof bridge_ipv6);
     bridge_ipv6[0] = 0xFE;
     bridge_ipv6[1] = 0x80;
-    memcpy(bridge_ipv6 + 8, eui, 8);
+    memcpy(bridge_ipv6 + 8, id->eui64, 8);
     bridge_ipv6[8] ^= 0x02u;
     return true;
-#else
-    return false;
-#endif
 }
 
 /* --- Frames and requests ------------------------------------------------------ */
@@ -457,6 +455,28 @@ static void leds(void) {
     board_led(LED_CLOUD, on);
 }
 
+/* No identity record (#21): the power LED shows FAULT_IDENTITY, short
+ * flashes and a pause every 2.5 s, as fault_flash_ms() in src/net.c does
+ * for the entropy code (docs/hardware.md, "LED roles"), but without
+ * blocking: this task keeps its watchdog check-in and the Ethernet side.
+ * The net task drives the power LED only after the entropy check passed,
+ * so the two codes never mix. At the tick counter's wrap one cycle is cut
+ * short. */
+#define ID_FLASH_ON_MS    150u
+#define ID_FLASH_OFF_MS   250u
+#define ID_FLASH_CYCLE_MS 2500u
+_Static_assert(FAULT_IDENTITY *(ID_FLASH_ON_MS + ID_FLASH_OFF_MS) < ID_FLASH_CYCLE_MS,
+               "the flashes fit the cycle");
+static void identity_led(void) {
+    if (identity_state() != IDENTITY_NONE) {
+        return; /* TLS setup failed instead: tls.c logged it; LED stays steady */
+    }
+    uint32_t t  = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS) % ID_FLASH_CYCLE_MS;
+    uint32_t k  = t / (ID_FLASH_ON_MS + ID_FLASH_OFF_MS);
+    bool     on = k < FAULT_IDENTITY && t % (ID_FLASH_ON_MS + ID_FLASH_OFF_MS) < ID_FLASH_ON_MS;
+    board_led(LED_POWER, on);
+}
+
 /* Uplinks from devices, queued by the radio task: to the server while the
  * session is ready. Without a session they are dropped: the device's
  * Enhanced ACK has gone out, and it is CoAP that repeats a confirmable
@@ -491,12 +511,17 @@ void session_poll(bool net_up, const ip_addr_t *server, bool *busy) {
     *busy = false;
     relay_uplinks();
     if (!started) {
+        /* The radio task reads the identity record at boot (it owns SPI1):
+         * wait for its verdict, then decide once. */
+        if (identity_state() == IDENTITY_PENDING) {
+            return;
+        }
         started       = true;
         have_identity = identity_init();
         bool tls      = have_identity && tls_setup();
         if (!have_identity) {
-            LOG("session: no bridge identity built in (BRIDGE_SERIAL and BRIDGE_EUI64 in "
-                "config/local.cmake, docs/build.md P4); not connecting");
+            LOG("session: no bridge identity (no valid identity record in flash, src/identity.h): "
+                "not connecting, no server auth");
         } else if (!tls) {
             have_identity = false; /* tls.c logged why */
         } else {
@@ -509,6 +534,7 @@ void session_poll(bool net_up, const ip_addr_t *server, bool *busy) {
         mid = (uint16_t)rng_u32(); /* random start (RFC 7252 4.4) */
     }
     if (!have_identity) {
+        identity_led();
         return;
     }
 

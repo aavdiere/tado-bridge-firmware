@@ -19,7 +19,7 @@ MBEDTLS_CFLAGS := -std=c11 -O1 -g -fsanitize=address,undefined -I. -I$(MBEDTLS)/
 AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o
 
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
-         test_airtime test_cc110l test_cc110l_off test_store test_pair test_coap
+         test_airtime test_cc110l test_cc110l_off test_store test_identity test_pair test_coap
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -34,6 +34,8 @@ test_pair_SRCS := pair.c mac.c ccm.c
 test_coap_SRCS := coap.c
 # Network record and counter log against a flash model with power cuts (#37).
 test_store_SRCS := store.c
+# Identity record (#21), as the provisioning tool writes it and the boot loads it.
+test_identity_SRCS := store.c
 # The radio driver's transmit functions against a simulated chip
 # (cc110l_model.h). Both programs include src/cc110l.c themselves:
 # test_cc110l as the default firmware builds it, transmitter on;
@@ -52,9 +54,18 @@ test_cc110l_off_TX := 0
 .PHONY: all run
 all: run
 
-run: $(addprefix $(OUT)/,$(TESTS))
-	@fail=0; for t in $^; do $$t || fail=1; done; \
+# The identity provisioning tool (#21), built as tools/identity/ builds it,
+# run against made-up values by test_identity_tool.sh.
+IDENTITY_TOOL := $(ROOT)/build/host-tools/identity
+
+run: $(addprefix $(OUT)/,$(TESTS)) identity-tool
+	@fail=0; for t in $(addprefix $(OUT)/,$(TESTS)); do $$t || fail=1; done; \
+	./test_identity_tool.sh $(IDENTITY_TOOL) $(OUT)/identity-tool || fail=1; \
 	if [ $$fail = 0 ]; then echo "host tests: all passed"; else echo "host tests: FAILED"; exit 1; fi
+
+.PHONY: identity-tool
+identity-tool:
+	$(MAKE) -C $(ROOT)/tools/identity --no-print-directory
 
 $(OUT):
 	mkdir -p $@

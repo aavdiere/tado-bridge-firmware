@@ -56,8 +56,10 @@
 #define PHSTAT2_PLRITY  0x0020u /* :1303-1305 */
 
 /* PLACEHOLDER MAC address (#12): locally administered (bit 1 of the first
- * octet set) and unicast (bit 0 clear). Replace it with the address from the
- * identity record once #21 exists. Not 02:42:xx, the prefix Docker gives its
+ * octet set) and unicast (bit 0 clear). The identity record (#21) holds the
+ * serial and EUI-64 only: where the stock Ethernet address comes from is
+ * not known, so this stays an open owner decision (docs/design.md
+ * "Identity record (#21)"). Not 02:42:xx, the prefix Docker gives its
  * containers on the bench PC. */
 #define MAC0 0x02u
 _Static_assert((MAC0 & 0x03u) == 0x02u, "locally administered unicast");
