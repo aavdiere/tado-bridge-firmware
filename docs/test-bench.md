@@ -418,6 +418,36 @@ Part 1 of the plan above. Analysis was offline afterwards.
 - **Finding [I]:** a sector erase can delay a short train that is already scheduled. `quiet()` allows flash work when `csl_busy()` is false, and that holds while a job waits in `ST_WAIT` with its listen 10 ms or more away (`csl_quiet_for(10000)`, `src/csl.c:702-712`). `csl_step()` does not run during flash work, so an erase of up to 240 ms pushes the train's start past the device's sample; the Data frame still goes at `wake_end_us`, and the device misses it. Nothing is lost: the retry uses a full train. The cost is about 1 s of airtime and 2 s of latency per event. Seen once in 89 forced erases. From 21:31 on, the forces followed a delivered downlink or waited for the counter to stay still for 1 s, so few could fall just before a scheduled train. The rate in normal operation is therefore not measured. In normal use a sector erase comes once per 512 × 2048 frames sent, and a counter-entry program (at most 10 ms) is too short to matter. A possible fix, for `fw-critical` and review: start an erase only when `csl_quiet_for()` covers the erase's maximum, or move the train when it starts late.
 - **Finding resolved in code, not yet verified on air (2026-11-18):** flash programs and erases now start only with the coordinator idle, and while such work is due the coordinator starts no new transaction (`design.md`, "Flash work and the coordinator"); host-tested, the bench case reproduced and fixed in `tests/host/test_csl.c`. Needs a `fw-reviewer` "safe to flash" verdict, then a rerun of part 1 with the forces aimed at the worst case: `limit` lowered right after tanoclo queues a downlink, while its short train waits (from the PUT's response, before the RTT `delivered` line). Pass: every downlink during a force delivered at attempt 1 with 19-23 wake-up frames (a short train) or about 249 (a full one), in the RTT and on air; no `no ack` line with fewer wake-up frames; ACK gap and counts as in the first run; `limit` may now take up to about 2 s to move, since the write waits for the transaction in flight. The counter log's read-back after a reset is still open.
 
+## Bootloader (#24): first flash and checks, plan [I]
+
+Not run yet. Code and recovery: `design.md`, "Implementation: bootloader and boot state (#24)" and "Recovery over SWD (#24)".
+
+**Gates:**
+- A `fw-reviewer` "safe to flash" verdict on the bootloader commits (`c69ad4b..` HEAD of the #24 branch). Rule 4 applies twice over: the image is bootloader code, and the default build transmits.
+- Build from the reviewed commit with the bench `config/local.cmake`.
+- No option bytes, and every write verified, as always.
+
+The application's radio code does not change in #24, but it now runs from `0x08010000`. Since the bootloader writes no boot state, the bench keeps its network, counter log and identity records.
+
+**1. First flash.** `tools/flash.sh` writes the bootloader to sector 0 and the application to sectors 4-5. Each `program` erases only the sectors it covers and verifies (expect `Verified OK` twice). The old image's remains in sectors 1-3 are never executed. Expected RTT output: the usual boot log, with a new line `image: <size> bytes at 08010000, VTOR 08010000` before the reset cause, then session ready and the radio as before. `tools/flash.sh` with two images in one OpenOCD run is itself new **[I]**: if the second `program` fails, run `tools/flash.sh build/tado-bridge.elf` again; the board shows LED code 5 meanwhile, and nothing else can go wrong.
+
+**2. Boot without a boot state.** Check the boot-state sectors are still blank. The bootloader must have written nothing: it never does without a state, and the application does not write one yet. The time from reset to the first RTT line should grow by only a few milliseconds over the 2 s delay (flash wake 1-2 ms, JEDEC ID, record load, descriptor check).
+
+**3. Power cycle (owner: unplug and replug USB).** The board boots again. Reset cause `POR/PDR` and the identity and network records as before.
+
+**4. Debugger halt.** `halt`, wait 70 s (longer than the bootloader's longest IWDG timeout), `resume`. No reset happens: `DBG_IWDG_STOP` is set (the next boot log must not show `IWDG`).
+
+**5. Recovery rehearsal, LED code 5.**
+1. `reset halt`, then `flash erase_sector 0 4 4` (sector 4 only: the application's vector table and commit mark), then `reset run`.
+2. The power LED shows 5 flashes every 2.5 s. The owner confirms by eye, or it is read over SWD as for code 3: PB1's ODR bit sampled every 20 ms (`hardware.md`, "LED roles").
+3. `tools/flash.sh` restores the board; verify the boot log.
+
+This proves the recovery path in "Recovery over SWD (#24)", step 1, before any update code exists.
+
+**6. ACK timing regression.** One `ackgap.py` run on channel 16 as in "ACK timing (#18)" (SDR, spare device sending). The ACK code is unchanged but sits at new addresses; the gap should stay at 225-240 us. PB8 is not needed: the SDR measures on the air.
+
+**Later, with the application's update side (not built):** an update installs (`TESTING`, then `CONFIRMED`); a candidate that never confirms is rolled back after 3 starts; the owner cuts USB power during an install (the power LED flickers while it runs) and the board recovers on the next power-up.
+
 ## Bench network
 
 Tested 2026-11-11 without changing anything.
