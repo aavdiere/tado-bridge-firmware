@@ -2,7 +2,7 @@
 
 Builds the IB01 firmware in stages. Each stage ends in something testable and settles specific open questions (`open-questions.md`). Design: `design.md`. Pins: `hardware.md`.
 
-**Status (2026-11-18): P0 to P4 and P3.1 are done and verified on the bench. P5 is nearly done (2026-11-18): #17 and #19 done, #21 (P6) closed; #18 stays open for an ACK inside a TLS handshake, #20 skipped for now (owner decision 2026-11-18), #11 open. P7 and P8 are not started.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
+**Status (2026-11-18): P0 to P4 and P3.1 are done and verified on the bench. P5 is nearly done (2026-11-18): #17, #18 and #19 done, #21 (P6) closed (#18 closed with the TLS-handshake ACK measurement, commit 45735e2); #20 skipped for now (owner decision 2026-11-18), #11 open. P7 and P8 are not started.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
 
 ## Progress tracking on GitHub
 
@@ -196,7 +196,7 @@ Restructured in the 2026-11-16 review. The steps run in this order, because each
    - ACK start after the Data frame ends, idle and during a TLS handshake (open question 16, #18). Measured on air with `demod.py`, which timestamps to under 1 µs (`test-bench.md`, "Demodulator"). The pairing LED (PB8) as a marker on a logic analyser is only the fallback if a late ACK has to be traced inside the firmware.
    - Beacon answer time (open question 28, #19).
    - Delivery rate with listen-before-transmit on (open question 25, #20). **Skipped for now (owner decision, 2026-11-18)**; listen-before-transmit stays on.
-   - **Status (2026-11-18) [V]:** idle ACK 226 us median, n=31 (`test-bench.md`, "ACK timing (#18)"); beacon 4057 us after the request; #18 stays open for the ACK inside a TLS handshake.
+   - **Status (2026-11-18) [V]:** idle ACK 226 us median, n=31 (`test-bench.md`, "ACK timing (#18)"); beacon 4057 us after the request; ACK inside a TLS handshake 225.2-233.9 us, median 226 us, n=21 of 34 uplinks in handshake steps (`test-bench.md`, "ACK during a TLS handshake (#18)"). #18 closed.
 
 - **Device to test with: one spare real tado device** that is not part of the stock network (owner decision, 2026-11-16; replaces "none chosen yet" of 2026-11-11). The owner names it by its EUI-64, which goes into the gitignored `config/local.cmake`, never into git. tanoclo's ESP32 emulator is not used for now: it sends plain MAC ACKs and no channel scan, and its config defaults to channel 26, the protected channel (`tanoclo/esphome/tado_emulator/tado_emulator.yaml:47`), so it must never be powered up with that default near the stock network.
 - **tanoclo changes (#38, owner action point 2026-11-17):** a pull request to tanoclo will be needed in the end. Known item: tanoclo drops a paired device's uplinks until it has a `devices` row (`tanoclo/ws-server/lib/handlers.js:229-232`; open question 28b, answered no [V]); a real flow needs registration from the bridge's pairing report or an admin action. On the bench the row is added by hand to the local database, and `../tanoclo` stays unchanged. Open question 28c.

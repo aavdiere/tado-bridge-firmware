@@ -2,7 +2,7 @@
 
 Master list of what is still required. Details and citations are in `hardware.md`, `server-api.md` and `radio.md`. `wiki/` means `Tado_Hardware_Teardown.wiki/`.
 
-## Status (2026-11-17)
+## Status (2026-11-18)
 
 Enough is known to start building. What remains is gathered during the build:
 
