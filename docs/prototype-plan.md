@@ -2,7 +2,7 @@
 
 Builds the IB01 firmware in stages. Each stage ends in something testable and settles specific open questions (`open-questions.md`). Design: `design.md`. Pins: `hardware.md`.
 
-**Status (2026-11-16): P0 to P4 and P3.1 are done and verified on the bench. P5 has started (issue #17). P6 to P8 are not started.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
+**Status (2026-11-18): P0 to P4 and P3.1 are done and verified on the bench. P5 is nearly done (2026-11-18): #17 and #19 done, #21 (P6) closed; #18 stays open for an ACK inside a TLS handshake, #20 skipped for now (owner decision 2026-11-18), #11 open. P7 and P8 are not started.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
 
 ## Progress tracking on GitHub
 
