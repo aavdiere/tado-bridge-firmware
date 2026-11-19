@@ -717,7 +717,8 @@ bool enc28j60_init(const uint8_t mac[6], struct enc28j60_info *info) {
     for (size_t i = 0; i < sizeof checks / sizeof checks[0]; i++) {
         uint8_t got = rd(checks[i].reg);
         if (got != checks[i].want) {
-            LOG("eth: %s reads %02x, wrote %02x", checks[i].name, got, checks[i].want);
+            /* the written byte is part of the MAC: not logged */
+            LOG("eth: %s reads back a different value", checks[i].name);
             ok = false;
         }
     }

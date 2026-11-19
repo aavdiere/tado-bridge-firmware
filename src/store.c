@@ -183,13 +183,25 @@ bool store_slot_write(uint32_t       slot_a,
     return ok;
 }
 
-/* --- Identity record (#21) ------------------------------------------------- */
-_Static_assert(STORE_ID_LEN == STORE_ID_SERIAL_MAX + 8u, "identity payload layout");
-_Static_assert(STORE_ID_LEN <= STORE_REC_PAYLOAD, "identity payload fits");
+/* --- Identity record (#21, #39) -------------------------------------------- */
+#define ID_MAC_OFF (STORE_ID_SERIAL_MAX + 8u)
+_Static_assert(STORE_ID_LEN_V1 == STORE_ID_SERIAL_MAX + 8u, "identity payload layout, v1");
+_Static_assert(STORE_ID_LEN_V2 == STORE_ID_LEN_V1 + 6u && ID_MAC_OFF == STORE_ID_LEN_V1,
+               "identity payload layout, v2: the v1 payload, then the MAC");
+_Static_assert(STORE_ID_LEN_MAX <= STORE_REC_PAYLOAD, "identity payload fits");
 _Static_assert(sizeof(((struct store_id *)0)->eui64) == 8u, "EUI-64");
+_Static_assert(sizeof(((struct store_id *)0)->mac) == 6u, "Ethernet MAC");
 
 static bool upper(char c) {
     return c >= 'A' && c <= 'Z';
+}
+
+static bool mac_zero(const uint8_t m[6]) {
+    uint8_t any = 0;
+    for (unsigned i = 0; i < 6u; i++) {
+        any |= m[i];
+    }
+    return any == 0;
 }
 
 bool store_id_valid(const struct store_id *id) {
@@ -201,23 +213,43 @@ bool store_id_valid(const struct store_id *id) {
         }
         n++;
     }
+    /* A MAC only with has_mac, and then a unicast one (IEEE 802.3: the
+     * I/G bit, bit 0 of the first octet, clear), never all zero. */
+    bool mac_ok =
+        id->has_mac ? !mac_zero(id->mac) && (id->mac[0] & 0x01u) == 0u : mac_zero(id->mac);
     /* tado's OUI first, in stored order (docs/build.md P4). */
     return n >= 3u && n <= STORE_ID_SERIAL_MAX && id->eui64[0] == 0x00 && id->eui64[1] == 0x1B
-           && id->eui64[2] == 0xC5;
+           && id->eui64[2] == 0xC5 && mac_ok;
 }
 
-bool store_id_pack(const struct store_id *id, uint8_t p[STORE_ID_LEN]) {
-    memset(p, 0, STORE_ID_LEN);
+bool store_id_pack(const struct store_id *id,
+                   uint8_t                p[STORE_ID_LEN_MAX],
+                   uint16_t              *version,
+                   uint16_t              *len) {
+    memset(p, 0, STORE_ID_LEN_MAX);
+    *version = 0;
+    *len     = 0;
     if (!store_id_valid(id)) {
         return false;
     }
     memcpy(p, id->serial, strlen(id->serial));
     memcpy(p + STORE_ID_SERIAL_MAX, id->eui64, 8u);
+    if (id->has_mac) {
+        memcpy(p + ID_MAC_OFF, id->mac, 6u);
+        *version = STORE_ID_V2;
+        *len     = STORE_ID_LEN_V2;
+    } else {
+        *version = STORE_ID_V1;
+        *len     = STORE_ID_LEN_V1;
+    }
     return true;
 }
 
-bool store_id_unpack(const uint8_t p[STORE_ID_LEN], struct store_id *out) {
+bool store_id_unpack(uint16_t version, const uint8_t *p, struct store_id *out) {
     memset(out, 0, sizeof *out);
+    if (version != STORE_ID_V1 && version != STORE_ID_V2) {
+        return false;
+    }
     memcpy(out->serial, p, STORE_ID_SERIAL_MAX); /* serial[16] stays NUL */
     size_t n = strlen(out->serial);
     for (size_t i = n; i < STORE_ID_SERIAL_MAX; i++) {
@@ -227,6 +259,10 @@ bool store_id_unpack(const uint8_t p[STORE_ID_LEN], struct store_id *out) {
         }
     }
     memcpy(out->eui64, p + STORE_ID_SERIAL_MAX, 8u);
+    if (version == STORE_ID_V2) {
+        out->has_mac = true;
+        memcpy(out->mac, p + ID_MAC_OFF, 6u);
+    }
     if (!store_id_valid(out)) {
         memset(out, 0, sizeof *out);
         return false;
@@ -234,20 +270,97 @@ bool store_id_unpack(const uint8_t p[STORE_ID_LEN], struct store_id *out) {
     return true;
 }
 
-bool store_id_load(struct store_id *out, uint32_t *seq) {
-    uint8_t p[STORE_ID_LEN];
-    bool    ok = store_slot_load(FLASH_ID_A, STORE_ID_MAGIC, STORE_ID_VERSION, p, sizeof p, seq)
-                 && store_id_unpack(p, out);
+/* One identity slot: true if it holds a valid record (magic, header, CRC)
+ * of version 1 or 2; its payload, version and seq copied. A record's
+ * version field holds one value, so at most one of the two reads finds it;
+ * a slot with another magic is read for its first 4 bytes only, as by
+ * store_slot_load(). */
+static bool id_slot(uint32_t addr, uint8_t p[STORE_ID_LEN_MAX], uint16_t *version, uint32_t *seq) {
+    if (slot_read(addr, STORE_ID_MAGIC, STORE_ID_V2, p, STORE_ID_LEN_V2, seq)) {
+        *version = STORE_ID_V2;
+        return true;
+    }
+    if (slot_read(addr, STORE_ID_MAGIC, STORE_ID_V1, p, STORE_ID_LEN_V1, seq)) {
+        *version = STORE_ID_V1;
+        return true;
+    }
+    return false;
+}
+
+bool store_id_load(struct store_id *out, uint32_t *seq, uint16_t *version) {
+    uint8_t  pa[STORE_ID_LEN_MAX], pb[STORE_ID_LEN_MAX];
+    uint16_t ra = 0, rb = 0;
+    uint32_t sa = 0, sb = 0;
+    bool     va = id_slot(FLASH_ID_A, pa, &ra, &sa);
+    bool     vb = id_slot(FLASH_ID_A + FLASH_SECTOR, pb, &rb, &sb);
+    bool     ok = false;
+    /* The newest slot of either version, slot A on equal seq (as
+     * store_slot_load()); only that one is unpacked. */
+    if (vb && (!va || sb > sa)) {
+        ok   = store_id_unpack(rb, pb, out);
+        *seq = sb;
+        ra   = rb;
+    } else if (va) {
+        ok   = store_id_unpack(ra, pa, out);
+        *seq = sa;
+    }
     if (!ok) {
         memset(out, 0, sizeof *out);
+    }
+    if (version) {
+        *version = ok ? ra : 0u;
     }
     return ok;
 }
 
+/* store_slot_write() with the slot choice over both versions: the newest
+ * record of either version stays untouched, and the new seq is above both.
+ * store_slot_write() itself sees only records of the version it writes, so
+ * a version 2 write next to a single version 1 record would erase that one.
+ * The commit steps are store_slot_write()'s, repeated here rather than
+ * shared so that store_slot_write(), which the bootloader links for the
+ * boot state (src/fwimg.c), stays as it is: the bootloader image is the
+ * same with and without #39. */
 bool store_id_write(const struct store_id *id, uint32_t *seq) {
-    uint8_t p[STORE_ID_LEN];
-    return store_id_pack(id, p)
-           && store_slot_write(FLASH_ID_A, STORE_ID_MAGIC, STORE_ID_VERSION, p, sizeof p, seq);
+    uint8_t  p[STORE_ID_LEN_MAX], scratch[STORE_ID_LEN_MAX];
+    uint16_t version, len, ra = 0, rb = 0;
+    uint32_t sa = 0, sb = 0;
+    if (!store_id_pack(id, p, &version, &len)) {
+        return false;
+    }
+    bool va = id_slot(FLASH_ID_A, scratch, &ra, &sa);
+    bool vb = id_slot(FLASH_ID_A + FLASH_SECTOR, scratch, &rb, &sb);
+    /* The older or invalid slot: slot B on equal seq, so slot A, which
+     * store_id_load() takes then, stays. */
+    uint32_t target = (!va || (vb && sa < sb)) ? FLASH_ID_A : FLASH_ID_A + FLASH_SECTOR;
+    uint32_t newest = va && vb ? (sa > sb ? sa : sb) : va ? sa : vb ? sb : 0;
+    if (newest == 0xFFFFFFFEu) {
+        return false; /* seq space used up (never in practice) */
+    }
+
+    size_t total = STORE_REC_HDR + len + 4u;
+    put32(rec, STORE_ID_MAGIC);
+    put16(rec + 4, version);
+    put16(rec + 6, len);
+    put32(rec + 8, newest + 1u);
+    memcpy(rec + STORE_REC_HDR, p, len);
+    put32(rec + STORE_REC_HDR + len, store_crc32(rec, STORE_REC_HDR + len));
+
+    /* Write new, verify, then mark: the magic goes in last. */
+    bool ok = erase_verified(target) && program_verified(target + 4u, rec + 4, total - 4u)
+              && program_verified(target, rec, 4u);
+    wipe(rec, sizeof rec);
+    if (!ok) {
+        return false;
+    }
+    /* The whole record once more, as a boot would read it. */
+    uint32_t back = 0;
+    ok = slot_read(target, STORE_ID_MAGIC, version, scratch, len, &back) && back == newest + 1u
+         && memcmp(scratch, p, len) == 0;
+    if (ok && seq) {
+        *seq = back;
+    }
+    return ok;
 }
 
 /* --- Network record -------------------------------------------------------- */

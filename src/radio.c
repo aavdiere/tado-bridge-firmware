@@ -2045,7 +2045,9 @@ void radio_task_run(void) {
     watchdog_checkin(WDG_RADIO);
     bool flash_ok = flash_boot();
     flash_ready   = flash_ok;
-    identity_boot(flash_ok); /* before the link and before the session may authenticate (#21) */
+    /* Before the link, before the session may authenticate (#21) and before
+     * the net task sets the Ethernet MAC (#39, src/net.c mac_choose()). */
+    identity_boot(flash_ok);
     link_start();
     if (flash_ok) {
         network_boot(); /* key and counter reservation from flash, before the radio (#37) */

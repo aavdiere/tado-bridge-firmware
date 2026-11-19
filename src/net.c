@@ -9,6 +9,7 @@
 
 #include "board.h"
 #include "enc28j60.h"
+#include "identity.h"
 #include "link.h"
 #include "log.h"
 #include "rng.h"
@@ -55,15 +56,17 @@
 #define PHSTAT2_DPXSTAT 0x0200u /* :1299-1301 */
 #define PHSTAT2_PLRITY  0x0020u /* :1303-1305 */
 
-/* PLACEHOLDER MAC address (#12): locally administered (bit 1 of the first
- * octet set) and unicast (bit 0 clear). The identity record (#21) holds the
- * serial and EUI-64 only: where the stock Ethernet address comes from is
- * not known, so this stays an open owner decision (docs/design.md
- * "Identity record (#21)"). Not 02:42:xx, the prefix Docker gives its
- * containers on the bench PC. */
+/* The Ethernet MAC: the original bridge's, from a version 2 identity
+ * record (#39, owner decision 2026-11-18), set once by mac_choose() before
+ * lwIP and the chip see it, then fixed. Without one (a version 1 record, or
+ * no identity at all) the PLACEHOLDER of #12 below: locally administered
+ * (bit 1 of the first octet set) and unicast (bit 0 clear); not 02:42:xx,
+ * the prefix Docker gives its containers on the bench PC. */
 #define MAC0 0x02u
 _Static_assert((MAC0 & 0x03u) == 0x02u, "locally administered unicast");
-static const uint8_t mac_addr[6] = {MAC0, 0x7A, 0xD0, 0xB1, 0x00, 0x01};
+static const uint8_t mac_placeholder[6] = {MAC0, 0x7A, 0xD0, 0xB1, 0x00, 0x01};
+static uint8_t       mac_addr[6];
+static bool          mac_from_identity;
 _Static_assert(sizeof mac_addr == ETH_HWADDR_LEN, "Ethernet address");
 
 /* One full frame fits in the first pbuf of a pool chain, so the receive
@@ -138,6 +141,30 @@ static const char *mac_str(char *b, size_t sz, const uint8_t *m) {
     return b;
 }
 
+/* Before lwip_init(): the radio task reads the identity record at boot (it
+ * owns SPI1, src/identity.h); wait for its verdict, with the watchdog
+ * check-in, then take the record's MAC or the placeholder, once. The radio
+ * task publishes the verdict right after flash_boot() (src/radio.c), and a
+ * radio task that never gets there misses its own watchdog check-in.
+ * store_id_valid() has checked the MAC: unicast, not all zero. */
+static void mac_choose(void) {
+    while (identity_state() == IDENTITY_PENDING) {
+        idle_ms(POLL_MS);
+    }
+    const struct store_id *id = identity();
+    mac_from_identity         = id != NULL && id->has_mac;
+    memcpy(mac_addr, mac_from_identity ? id->mac : mac_placeholder, sizeof mac_addr);
+    if (mac_from_identity) {
+        /* A device address: not logged, like the EUI-64 (src/identity.c). */
+        LOG("eth: MAC from the identity record (version 2)");
+    } else {
+        char m[18];
+        LOG("eth: MAC %s, the placeholder: %s",
+            mac_str(m, sizeof m, mac_addr),
+            id ? "the identity record (version 1) holds none" : "no identity");
+    }
+}
+
 /* lwIP follows the PHY link: link up starts or reboots DHCP
  * (dhcp_network_changed_link_up(), vendor/lwip/src/core/ipv4/dhcp.c), link
  * down stops address probing; the lease is kept and re-requested on the next
@@ -176,9 +203,9 @@ static void bring_up(void) {
                 info.soft_reset ? ", reset by SPI command (RESET pin had no effect)" : "");
         }
         if (ok) {
-            LOG("eth: configured: MAC %s (placeholder), half duplex (PHCON1 %04x), RX 0000-19ff, "
+            LOG("eth: configured: MAC %s, half duplex (PHCON1 %04x), RX 0000-19ff, "
                 "TX 1a00-1fff, filter unicast+broadcast+CRC",
-                mac_str(m, sizeof m, mac_addr),
+                mac_from_identity ? "from the identity record" : mac_str(m, sizeof m, mac_addr),
                 (unsigned)info.phcon1);
             uint16_t st = enc28j60_phstat2();
             set_link((st & PHSTAT2_LSTAT) != 0u, st);
@@ -429,6 +456,7 @@ void net_task_run(void) {
     }
     board_led(LED_POWER, true); /* back to steady on */
 
+    mac_choose(); /* before netif_add() copies it and enc28j60_init() writes it */
     lwip_init();
     netif_add(&eth, IP4_ADDR_ANY4, IP4_ADDR_ANY4, IP4_ADDR_ANY4, NULL, eth_netif_init, netif_input);
     netif_set_default(&eth);

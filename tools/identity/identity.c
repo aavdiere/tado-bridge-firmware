@@ -13,17 +13,24 @@
  *       "sector 0x101000" and writes that sector's new contents (4096 bytes)
  *       to <out.bin>; prints "sector none" if the newest record already
  *       holds this identity. Refuses to replace a different valid identity
- *       unless --replace comes first.
+ *       unless --replace comes first. Adding a MAC to a version 1 record of
+ *       the same serial and EUI-64 is no replacement; changing or removing
+ *       a MAC is.
  *   identity check <id> <slot_a.bin> <slot_b.bin>
  *       Loads the record as the firmware does (store_id_load()) and exits 0
- *       only if it is valid and holds <id>.
+ *       only if it is valid and holds <id> (the MAC included).
  *
  *   <id> is either --backup <internal.bin> or --serial <S> --eui64 <hex>
- *   (8 bytes, stored order, 00 1b c5 first; separators ' ', ':' or '-').
+ *   (8 bytes, stored order, 00 1b c5 first; separators ' ', ':' or '-'),
+ *   then optionally the Ethernet MAC (#39) as --mac-file <file> (one line,
+ *   6 bytes in hex, as in ~/ib01-backups/, so the MAC stays off the command
+ *   line) or --mac <hex>. With a MAC the record is version 2, without one
+ *   version 1 (the firmware then uses its placeholder MAC).
  *
- * Device values (serial, EUI-64) only pass through files and the terminal:
- * keep every file outside git (CLAUDE.md). The network key next to them in
- * the backup is never read. */
+ * Device values (serial, EUI-64, MAC) only pass through files and the
+ * terminal: keep every file outside git (CLAUDE.md). The MAC is printed
+ * only with --show. The network key next to them in the backup is never
+ * read. */
 #include "store.h"
 
 #include "flash_layout.h"
@@ -211,7 +218,8 @@ static int hexval(char c) {
                                   : -1;
 }
 
-static bool parse_eui(const char *s, uint8_t eui[8]) {
+/* n bytes in hex, separators ' ', ':' or '-' between them. */
+static bool parse_hex(const char *s, uint8_t *out, unsigned n) {
     unsigned k = 0;
     while (*s) {
         if (*s == ' ' || *s == ':' || *s == '-') {
@@ -219,22 +227,54 @@ static bool parse_eui(const char *s, uint8_t eui[8]) {
             continue;
         }
         int hi = hexval(s[0]), lo = s[1] ? hexval(s[1]) : -1;
-        if (hi < 0 || lo < 0 || k == 8) {
+        if (hi < 0 || lo < 0 || k == n) {
             return false;
         }
-        eui[k++] = (uint8_t)(hi << 4 | lo);
+        out[k++] = (uint8_t)(hi << 4 | lo);
         s += 2;
     }
-    return k == 8;
+    return k == n;
 }
 
-static bool show_secrets; /* --show: print serial and EUI-64 in full */
+/* The MAC file: one line, 6 bytes in hex; white space around it is
+ * ignored, anything else is refused. The contents are never echoed. */
+static bool mac_from_file(const char *path, uint8_t mac[6]) {
+    size_t   n;
+    uint8_t *b = read_file(path, &n);
+    if (!b) {
+        return false;
+    }
+    char   line[64];
+    size_t s = 0, e = n;
+    while (s < e && (b[s] == ' ' || b[s] == '\t' || b[s] == '\n' || b[s] == '\r')) {
+        s++;
+    }
+    while (e > s && (b[e - 1] == ' ' || b[e - 1] == '\t' || b[e - 1] == '\n' || b[e - 1] == '\r')) {
+        e--;
+    }
+    bool ok = e - s < sizeof line;
+    if (ok) {
+        memcpy(line, b + s, e - s);
+        line[e - s] = '\0';
+        ok          = parse_hex(line, mac, 6);
+    }
+    memset(line, 0, sizeof line);
+    memset(b, 0, n);
+    free(b);
+    if (!ok) {
+        fprintf(stderr, "identity: %s: want one line with the MAC, 6 bytes in hex\n", path);
+    }
+    return ok;
+}
 
-/* By default only a masked form (serial prefix and length, last EUI-64 byte)
- * reaches the terminal and logs; the full values need --show. */
+static bool show_secrets; /* --show: print serial, EUI-64 and MAC in full */
+
+/* By default only a masked form (serial prefix and length, last EUI-64 byte,
+ * whether there is a MAC) reaches the terminal and logs; the full values
+ * need --show. */
 static void print_id(const char *what, const struct store_id *id) {
     if (show_secrets) {
-        printf("%s serial %s, EUI-64 %02x %02x %02x %02x %02x %02x %02x %02x\n",
+        printf("%s serial %s, EUI-64 %02x %02x %02x %02x %02x %02x %02x %02x",
                what,
                id->serial,
                id->eui64[0],
@@ -245,28 +285,44 @@ static void print_id(const char *what, const struct store_id *id) {
                id->eui64[5],
                id->eui64[6],
                id->eui64[7]);
+        if (id->has_mac) {
+            printf(", MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
+                   id->mac[0],
+                   id->mac[1],
+                   id->mac[2],
+                   id->mac[3],
+                   id->mac[4],
+                   id->mac[5]);
+        } else {
+            printf(", no MAC\n");
+        }
         return;
     }
-    printf("%s serial %.2s.. (%u characters), EUI-64 ..:..:..:..:..:..:..:%02x\n",
+    printf("%s serial %.2s.. (%u characters), EUI-64 ..:..:..:..:..:..:..:%02x, %s\n",
            what,
            id->serial,
            (unsigned)strlen(id->serial),
-           id->eui64[7]);
+           id->eui64[7],
+           id->has_mac ? "MAC set" : "no MAC");
 }
 
-/* <id>: --backup FILE | --serial S --eui64 HEX. Returns the next argv index. */
+/* <id>: --backup FILE | --serial S --eui64 HEX, then optionally
+ * --mac-file FILE | --mac HEX. Returns the next argv index. */
 static int parse_id(int argc, char **argv, int i, struct store_id *id) {
     if (i + 1 < argc && strcmp(argv[i], "--backup") == 0) {
-        return from_backup(argv[i + 1], id) ? i + 2 : -1;
-    }
-    if (i + 3 < argc && strcmp(argv[i], "--serial") == 0 && strcmp(argv[i + 2], "--eui64") == 0) {
+        if (!from_backup(argv[i + 1], id)) {
+            return -1;
+        }
+        i += 2;
+    } else if (i + 3 < argc && strcmp(argv[i], "--serial") == 0
+               && strcmp(argv[i + 2], "--eui64") == 0) {
         memset(id, 0, sizeof *id);
         if (strlen(argv[i + 1]) > STORE_ID_SERIAL_MAX) {
             fprintf(stderr, "identity: serial longer than %u characters\n", STORE_ID_SERIAL_MAX);
             return -1;
         }
         strcpy(id->serial, argv[i + 1]);
-        if (!parse_eui(argv[i + 3], id->eui64)) {
+        if (!parse_hex(argv[i + 3], id->eui64, 8)) {
             fprintf(stderr, "identity: EUI-64 must be 8 bytes in hex\n");
             return -1;
         }
@@ -276,14 +332,44 @@ static int parse_id(int argc, char **argv, int i, struct store_id *id) {
                     "or digits (IB0123456789), EUI-64 must start 00 1b c5\n");
             return -1;
         }
-        return i + 4;
+        i += 4;
+    } else {
+        fprintf(stderr,
+                "identity: want --backup FILE or --serial S --eui64 HEX, then optionally "
+                "--mac-file FILE or --mac HEX\n");
+        return -1;
     }
-    fprintf(stderr, "identity: want --backup FILE or --serial S --eui64 HEX\n");
-    return -1;
+    if (i + 1 < argc && (strcmp(argv[i], "--mac-file") == 0 || strcmp(argv[i], "--mac") == 0)) {
+        bool ok = strcmp(argv[i], "--mac") == 0 ? parse_hex(argv[i + 1], id->mac, 6)
+                                                : mac_from_file(argv[i + 1], id->mac);
+        if (!ok) {
+            if (strcmp(argv[i], "--mac") == 0) {
+                fprintf(stderr, "identity: MAC must be 6 bytes in hex\n");
+            }
+            return -1;
+        }
+        id->has_mac = true;
+        if (!store_id_valid(id)) {
+            fprintf(stderr,
+                    "identity: refused: the MAC must be unicast (first byte even) "
+                    "and not all zero\n");
+            return -1;
+        }
+        i += 2;
+    }
+    return i;
 }
 
 static bool same_id(const struct store_id *a, const struct store_id *b) {
-    return strcmp(a->serial, b->serial) == 0 && memcmp(a->eui64, b->eui64, 8) == 0;
+    return strcmp(a->serial, b->serial) == 0 && memcmp(a->eui64, b->eui64, 8) == 0
+           && a->has_mac == b->has_mac && memcmp(a->mac, b->mac, 6) == 0;
+}
+
+/* Is want only have plus a MAC (a version 1 record upgraded to version 2,
+ * #39)? That is no replacement. */
+static bool adds_mac(const struct store_id *have, const struct store_id *want) {
+    return !have->has_mac && want->has_mac && strcmp(have->serial, want->serial) == 0
+           && memcmp(have->eui64, want->eui64, 8) == 0;
 }
 
 static int usage(void) {
@@ -291,8 +377,9 @@ static int usage(void) {
             "usage: identity [--show] from-backup <internal.bin>\n"
             "       identity [--show] make [--replace] <id> <slot_a.bin> <slot_b.bin> <out.bin>\n"
             "       identity [--show] check <id> <slot_a.bin> <slot_b.bin>\n"
-            "  --show: print serial and EUI-64 in full (default: masked)\n"
-            "  <id>: --backup <internal.bin> | --serial <S> --eui64 <hex>\n");
+            "  --show: print serial, EUI-64 and MAC in full (default: masked)\n"
+            "  <id>: (--backup <internal.bin> | --serial <S> --eui64 <hex>)\n"
+            "        [--mac-file <file> | --mac <hex>]\n");
     return 2;
 }
 
@@ -334,13 +421,18 @@ int main(int argc, char **argv) {
         if (!load_sector(argv[i], 0) || !load_sector(argv[i + 1], 1)) {
             return 1;
         }
-        if (store_id_load(&have, &seq)) {
-            print_id("bridge now: record seq", &have);
+        uint16_t version = 0;
+        if (store_id_load(&have, &seq, &version)) {
+            printf(
+                "bridge now: record seq %lu, version %u:", (unsigned long)seq, (unsigned)version);
+            print_id("", &have);
             if (same_id(&have, &want)) {
                 printf("sector none\n");
                 return 0;
             }
-            if (!replace) {
+            if (adds_mac(&have, &want)) {
+                printf("adding the MAC to the same serial and EUI-64 (version 1 to 2)\n");
+            } else if (!replace) {
                 fprintf(stderr,
                         "identity: the bridge already holds a different valid identity; "
                         "refused without --replace\n");
@@ -352,7 +444,7 @@ int main(int argc, char **argv) {
             return 1;
         }
         /* Read back as the firmware will. */
-        if (!store_id_load(&have, &seq) || !same_id(&have, &want)) {
+        if (!store_id_load(&have, &seq, &version) || !same_id(&have, &want)) {
             fprintf(stderr, "identity: record built but does not load back\n");
             return 1;
         }
@@ -360,7 +452,19 @@ int main(int argc, char **argv) {
             return 1;
         }
         print_id("new record:", &want);
-        printf("record seq %lu\n", (unsigned long)seq);
+        printf("record seq %lu, version %u\n", (unsigned long)seq, (unsigned)version);
+        /* What a firmware from before #39 (version 1 only, for example the
+         * previous image after a rollback, #24) would load from these
+         * sectors. */
+        uint8_t  p1[STORE_ID_LEN_V1];
+        uint32_t s1 = 0;
+        if (!store_slot_load(FLASH_ID_A, STORE_ID_MAGIC, STORE_ID_V1, p1, sizeof p1, &s1)) {
+            printf("note: no version 1 record left: a firmware from before #39 finds no "
+                   "identity here\n");
+        } else if (s1 != seq) {
+            printf("note: a firmware from before #39 finds the version 1 record seq %lu\n",
+                   (unsigned long)s1);
+        }
         printf("sector 0x%06x\n", (unsigned)(WIN_BASE + (unsigned)erased * FLASH_SECTOR));
         return 0;
     }
@@ -376,11 +480,12 @@ int main(int argc, char **argv) {
         if (!load_sector(argv[i], 0) || !load_sector(argv[i + 1], 1)) {
             return 1;
         }
-        if (!store_id_load(&have, &seq)) {
+        uint16_t version = 0;
+        if (!store_id_load(&have, &seq, &version)) {
             fprintf(stderr, "identity: no valid identity record\n");
             return 1;
         }
-        printf("record seq %lu\n", (unsigned long)seq);
+        printf("record seq %lu, version %u\n", (unsigned long)seq, (unsigned)version);
         print_id("bridge:", &have);
         if (!same_id(&have, &want)) {
             fprintf(stderr, "identity: the record holds a different identity\n");

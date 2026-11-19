@@ -63,3 +63,4 @@ build-*/
 # path (cmake/CMakeLists.txt, docs/build.md P4). Template:
 # config/local.cmake.example
 config/local.cmake
+.claude/worktrees/
