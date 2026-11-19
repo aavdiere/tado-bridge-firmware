@@ -49,6 +49,17 @@ static struct {
     unsigned int_writes_by_app;
     bool     net_on; /* what the radio task reports: a network is active */
     unsigned restarts;
+    /* The radio task does not take operations (its loop does not run, #24
+     * review M1): fwupd_port_op() fails as radio_update_op() does after
+     * its time limit, with nothing run (src/handoff.h). */
+    bool     ops_lost;
+    unsigned lost;
+    /* After the commit mark of a boot-state record (a 4-byte program at the
+     * start of a boot-state sector), the next n boot-state reads fail: the
+     * record is whole, only its read-back fails (#24 review L1). */
+    long boot_rd_fail_after_mark, boot_rd_fail;
+    /* The next boot-state program by the application fails, nothing written. */
+    bool     boot_prog_fail;
     int      locked;
     uint32_t rnd;
 } m;
@@ -94,9 +105,17 @@ static bool cut_now(void) {
     return false;
 }
 
+static bool in_boot_area(uint32_t addr) {
+    return addr >= FLASH_BOOT_BEGIN && addr < FLASH_BOOT_END;
+}
+
 bool store_port_read(uint32_t addr, uint8_t *dst, size_t n) {
     CHECK(addr < FLASH_SIZE && n <= FLASH_SIZE - addr);
     if (m.dead) {
+        return false;
+    }
+    if (!m.in_boot && in_boot_area(addr) && m.boot_rd_fail > 0) {
+        m.boot_rd_fail--;
         return false;
     }
     memcpy(dst, ext + addr, n);
@@ -115,6 +134,13 @@ bool store_port_program(uint32_t addr, const uint8_t *src, size_t n) {
     }
     for (size_t i = 0; i < n; i++) {
         CHECK_EQ(ext[addr + i], 0xFF); /* never twice without an erase */
+    }
+    if (!m.in_boot && in_boot_area(addr) && m.boot_prog_fail) {
+        m.boot_prog_fail = false;
+        return false;
+    }
+    if (!m.in_boot && in_boot_area(addr) && addr % FLASH_SECTOR == 0 && n == 4u) {
+        m.boot_rd_fail = m.boot_rd_fail_after_mark; /* armed by the commit mark */
     }
     if (!m.in_boot) {
         m.app_programs++;
@@ -194,6 +220,12 @@ void bl_port_kick(void) {}
 /* --- fwupd port: the radio task's side, run in place ----------------------------- */
 bool fwupd_port_op(struct fwupd_op *op) {
     CHECK_EQ(m.locked, 0); /* no flash work under the status lock */
+    if (m.ops_lost) {
+        m.lost++;
+        op->ok   = false; /* withdrawn after the time limit: never run */
+        op->done = false;
+        return false;
+    }
     op->network = m.net_on;
     if (op->kind == FWUPD_OP_RESTART) {
         m.restarts++;
@@ -875,6 +907,231 @@ static void test_prev_damaged(void) {
     CHECK(int_is(img_b, SZ_B));
 }
 
+/* The radio task does not take operations (#24 review M1: radio_configure()
+ * failing, so its loop never runs). fwupd_init() returns without the boot
+ * state, which is read again every FWUPD_RETRY_MS; never read, the image
+ * restarts FWUPD_TEST_MAX_MS after its boot, as an unconfirmed candidate
+ * does, so a candidate under test is still rolled back after 3 starts.
+ * Before the fix the update task waited for ever in fwupd_init(), and a
+ * tick without the boot state never restarted. */
+static enum bootctl_result boot_rep(struct bootctl_report *r) {
+    m.in_boot              = true;
+    enum bootctl_result rc = bootctl_run(true, r);
+    m.in_boot              = false;
+    return rc;
+}
+
+static void test_boot_state_unread(void) {
+    make_image(img_a, SZ_A, 71);
+    make_image(img_b, SZ_B, 72);
+    make_image(img_c, SZ_C, 73);
+    struct fwupd_info in;
+    char              s[256];
+
+    /* B under test, the radio task never takes an operation: three starts,
+     * each restarting at 10 min, then the bootloader puts A back. */
+    reset_models();
+    install_int(img_a, SZ_A);
+    uint32_t t = 0;
+    app_boot(t);
+    CHECK_EQ(upload(img_b, SZ_B, t), FWUPD_DONE);
+    for (unsigned k = 1; k <= BOOTCTL_MAX_TRIES; k++) {
+        CHECK_EQ(boot(), BOOTCTL_JUMP);
+        CHECK(int_is(img_b, SZ_B));
+        CHECK_EQ(state().state, FWIMG_BOOT_TESTING);
+        CHECK_EQ(state().tries, k);
+        m.ops_lost = true;
+        m.lost     = 0;
+        t += 3000;
+        app_boot(t); /* returns: the boot-state read was not taken */
+        fwupd_info(&in);
+        CHECK(!in.boot_read && !in.testing);
+        CHECK(strstr(fwupd_why(), "not read") != NULL);
+        fwupd_status_text(s, sizeof s);
+        CHECK(strstr(s, " boot unread ") != NULL);
+        uint32_t t0 = t;
+        /* Healthy or not: the boot state decides, and it is not known. */
+        CHECK_EQ(ticks(&t, FWUPD_TEST_MAX_MS + 5000u, k != 2u), FWUPD_EV_RESTART);
+        CHECK(t - t0 >= FWUPD_TEST_MAX_MS && t - t0 <= FWUPD_TEST_MAX_MS + 1000u);
+        CHECK(strstr(fwupd_why(), "boot state not read within 10 min") != NULL);
+        /* Read at the boot and every 10 s after it, no more often. */
+        CHECK(m.lost >= FWUPD_TEST_MAX_MS / FWUPD_RETRY_MS);
+        CHECK(m.lost <= FWUPD_TEST_MAX_MS / FWUPD_RETRY_MS + 1u);
+        m.ops_lost = false;
+    }
+    CHECK_EQ(boot(), BOOTCTL_JUMP);
+    CHECK(int_is(img_a, SZ_A));
+    CHECK_EQ(state().state, FWIMG_BOOT_ROLLED_BACK);
+
+    /* The read fails at the boot and comes through 25 s later: the
+     * candidate under test is found and confirms as usual. */
+    reset_models();
+    install_int(img_a, SZ_A);
+    t = 0;
+    app_boot(t);
+    CHECK_EQ(upload(img_b, SZ_B, t), FWUPD_DONE);
+    CHECK_EQ(boot(), BOOTCTL_JUMP);
+    m.ops_lost = true;
+    app_boot(t);
+    CHECK_EQ(ticks(&t, 25000, true), FWUPD_EV_NONE);
+    m.ops_lost = false;
+    CHECK_EQ(ticks(&t, 10000, true), FWUPD_EV_BOOT_READ);
+    CHECK(strstr(fwupd_why(), "candidate under test") != NULL);
+    fwupd_info(&in);
+    CHECK(in.boot_read && in.testing);
+    CHECK_EQ(in.boot.state, FWIMG_BOOT_TESTING);
+    CHECK_EQ(ticks(&t, 59000, true), FWUPD_EV_NONE);
+    CHECK_EQ(ticks(&t, 3000, true), FWUPD_EV_CONFIRMED);
+    CHECK_EQ(state().state, FWIMG_BOOT_CONFIRMED);
+    CHECK_EQ(ticks(&t, 700000, true), FWUPD_EV_NONE); /* confirmed: no restart */
+
+    /* A confirmed image read late: no update pending, no restart. */
+    CHECK_EQ(boot(), BOOTCTL_JUMP);
+    m.ops_lost = true;
+    t += 1000;
+    app_boot(t);
+    CHECK_EQ(ticks(&t, 15000, false), FWUPD_EV_NONE);
+    m.ops_lost = false;
+    CHECK_EQ(ticks(&t, 10000, false), FWUPD_EV_BOOT_READ);
+    fwupd_info(&in);
+    CHECK(in.boot_read && !in.testing);
+    CHECK_EQ(ticks(&t, 700000, false), FWUPD_EV_NONE);
+
+    /* A confirmed image never read: it restarts at 10 min, and the
+     * bootloader starts it again without writing anything. */
+    m.ops_lost = true;
+    t += 1000;
+    app_boot(t);
+    uint32_t t0 = t;
+    CHECK_EQ(ticks(&t, FWUPD_TEST_MAX_MS + 5000u, true), FWUPD_EV_RESTART);
+    CHECK(t - t0 >= FWUPD_TEST_MAX_MS && t - t0 <= FWUPD_TEST_MAX_MS + 1000u);
+    m.ops_lost = false;
+    struct bootctl_report r;
+    CHECK_EQ(boot_rep(&r), BOOTCTL_JUMP);
+    CHECK_EQ(r.writes, 0);
+    CHECK_EQ(r.installs, 0);
+    CHECK(int_is(img_b, SZ_B));
+    CHECK_EQ(state().state, FWIMG_BOOT_CONFIRMED);
+
+    /* Block 0 while the boot state is unread and the operations still not
+     * taken: 5.00, nothing written. Once they are taken, block 0's read
+     * is the first one, so it finds B under test: refused, and the
+     * confirmation goes on from there. */
+    reset_models();
+    install_int(img_a, SZ_A);
+    t = 0;
+    app_boot(t);
+    CHECK_EQ(upload(img_b, SZ_B, t), FWUPD_DONE);
+    CHECK_EQ(boot(), BOOTCTL_JUMP);
+    m.ops_lost = true;
+    app_boot(t);
+    unsigned w0 = m.app_programs + m.app_erases;
+    CHECK_EQ(send(img_c, SZ_C, 0, t), FWUPD_FAILED);
+    CHECK(strstr(fwupd_why(), "radio task not running") != NULL);
+    m.ops_lost = false;
+    CHECK_EQ(send(img_c, SZ_C, 0, t), FWUPD_REFUSED);
+    CHECK(strstr(fwupd_why(), "under way") != NULL);
+    CHECK_EQ(m.app_programs + m.app_erases, w0);
+    fwupd_info(&in);
+    CHECK(in.boot_read && in.testing);
+    CHECK_EQ(ticks(&t, 62000, true), FWUPD_EV_CONFIRMED);
+    CHECK_EQ(m.int_writes_by_app, 0);
+    CHECK_EQ(fixed_sum(), fixed0);
+}
+
+/* The PENDING write lands but its read-back fails (#24 review L1): a
+ * reload finds PENDING with these ids, so the update is done and the
+ * restart follows (before the fix: 5.00 with PENDING in flash, and no
+ * restart until some later boot installed it). A write that did not land
+ * still fails. */
+static void test_pending_readback(void) {
+    make_image(img_a, SZ_A, 81);
+    make_image(img_b, SZ_B, 82);
+    uint8_t ida[FWIMG_ID_LEN], idb[FWIMG_ID_LEN];
+    id_of(img_a, SZ_A, ida);
+    id_of(img_b, SZ_B, idb);
+    struct fwupd_info in;
+
+    /* Landed, the read-back fails once: DONE, restart, install. */
+    reset_models();
+    install_int(img_a, SZ_A);
+    uint32_t t = 0;
+    app_boot(t);
+    m.boot_rd_fail_after_mark = 1;
+    CHECK_EQ(upload(img_b, SZ_B, t), FWUPD_DONE);
+    CHECK(strstr(fwupd_why(), "found on a reload") != NULL);
+    CHECK_EQ(m.boot_rd_fail, 0); /* the read-back did fail */
+    struct fwimg_boot b = state();
+    CHECK_EQ(b.state, FWIMG_BOOT_PENDING);
+    CHECK_MEM(b.cand_id, idb, FWIMG_ID_LEN);
+    CHECK_MEM(b.prev_id, ida, FWIMG_ID_LEN);
+    fwupd_info(&in);
+    CHECK(in.done && !in.active);
+    CHECK_EQ(in.boot.state, FWIMG_BOOT_PENDING);
+    CHECK_EQ(send(img_b, SZ_B, nblocks(SZ_B), t), FWUPD_DONE); /* its answer again */
+    CHECK_EQ(ticks(&t, 4000, true), FWUPD_EV_RESTART);
+    CHECK_EQ(boot(), BOOTCTL_JUMP);
+    CHECK(int_is(img_b, SZ_B));
+    CHECK_EQ(state().state, FWIMG_BOOT_TESTING);
+
+    /* Landed, but the reload fails too: 5.00 (the next boot still
+     * installs, as after a power cut past the commit mark). */
+    reset_models();
+    install_int(img_a, SZ_A);
+    t = 0;
+    app_boot(t);
+    m.boot_rd_fail_after_mark = 1000;
+    CHECK_EQ(upload(img_b, SZ_B, t), FWUPD_FAILED);
+    CHECK(strstr(fwupd_why(), "PENDING not written") != NULL);
+    fwupd_info(&in);
+    CHECK(!in.done);
+    m.boot_rd_fail = 0;
+    CHECK_EQ(state().state, FWIMG_BOOT_PENDING);
+
+    /* Not landed (a program of the record fails): the reload finds no
+     * PENDING, 5.00, and the old image stays. */
+    reset_models();
+    install_int(img_a, SZ_A);
+    t = 0;
+    app_boot(t);
+    enum fwupd_rc rc = FWUPD_CONTINUE;
+    for (uint32_t num = 0; num <= nblocks(SZ_B) && rc == FWUPD_CONTINUE; num++) {
+        m.boot_prog_fail = num == nblocks(SZ_B);
+        rc               = send(img_b, SZ_B, num, t);
+    }
+    CHECK_EQ(rc, FWUPD_FAILED);
+    CHECK(strstr(fwupd_why(), "PENDING not written") != NULL);
+    CHECK_EQ(state().state, FWIMG_BOOT_NONE);
+    fwupd_info(&in);
+    CHECK(!in.done);
+    CHECK_EQ(ticks(&t, 10000, true), FWUPD_EV_NONE);
+    CHECK_EQ(boot(), BOOTCTL_JUMP);
+    CHECK(int_is(img_a, SZ_A));
+
+    /* Not landed over an older record (CONFIRMED from an earlier update):
+     * the reload finds a record, but not this PENDING: 5.00. */
+    struct fwimg_boot old = {.state = FWIMG_BOOT_CONFIRMED};
+    memcpy(old.cand_id, ida, FWIMG_ID_LEN);
+    m.in_boot = true;
+    CHECK(fwimg_boot_write(&old));
+    m.in_boot = false;
+    app_boot(t);
+    rc = FWUPD_CONTINUE;
+    for (uint32_t num = 0; num <= nblocks(SZ_B) && rc == FWUPD_CONTINUE; num++) {
+        m.boot_prog_fail = num == nblocks(SZ_B);
+        rc               = send(img_b, SZ_B, num, t);
+    }
+    CHECK_EQ(rc, FWUPD_FAILED);
+    CHECK_EQ(state().state, FWIMG_BOOT_CONFIRMED);
+    fwupd_info(&in);
+    CHECK(!in.done);
+    CHECK_EQ(in.boot.state, FWIMG_BOOT_CONFIRMED); /* the reload shows what the flash holds */
+    CHECK_EQ(boot(), BOOTCTL_JUMP);
+    CHECK(int_is(img_a, SZ_A));
+    CHECK_EQ(m.int_writes_by_app, 0);
+    CHECK_EQ(fixed_sum(), fixed0);
+}
+
 static void test_status_text(void) {
     reset_models();
     make_image(img_a, SZ_A, 51);
@@ -999,5 +1256,7 @@ int main(int argc, char **argv) {
     test_largest();
     test_prev_damaged();
     test_status_text();
+    test_boot_state_unread();
+    test_pending_readback();
     return TEST_REPORT("test_fwupd");
 }

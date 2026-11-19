@@ -58,7 +58,7 @@
 #define FWUPD_TEST_MAX_MS 600000u /* not confirmed this long after the boot: restart */
 #define FWUPD_IDLE_MS     120000u /* a transfer without a block this long is dropped */
 #define FWUPD_RESTART_MS  3000u   /* after the last block: time for its answer to go out */
-#define FWUPD_RETRY_MS    10000u  /* after a failed CONFIRMED write */
+#define FWUPD_RETRY_MS    10000u  /* after a failed CONFIRMED write or boot-state read */
 
 /* --- Flash operations (the radio task runs them) ------------------------------- */
 enum fwupd_op_kind {
@@ -118,7 +118,8 @@ void fwupd_port_unlock(void);
 /* The running image: its bytes (internal flash at FWIMG_APP_BASE, image_size()
  * bytes), its descriptor's fw_version; now_ms: the tick clock. Hashes the
  * image (its id is the first FWIMG_ID_LEN bytes) and reads the boot state:
- * in TESTING with this image as the candidate, the confirmation is due. */
+ * in TESTING with this image as the candidate, the confirmation is due. If
+ * the read fails, fwupd_tick() tries again (and restarts in the end). */
 void fwupd_init(const uint8_t *image, uint32_t size, uint32_t fw_version, uint32_t now_ms);
 
 enum fwupd_rc {
@@ -156,19 +157,25 @@ enum fwupd_event {
     FWUPD_EV_CONFIRM_FAILED, /* the write failed; tried again after FWUPD_RETRY_MS */
     FWUPD_EV_DROPPED,        /* a transfer saw no block for FWUPD_IDLE_MS */
     FWUPD_EV_RESTART,        /* restart now: an update was written (PENDING), or the
-                              * candidate under test was not confirmed in FWUPD_TEST_MAX_MS */
+                              * candidate under test was not confirmed in FWUPD_TEST_MAX_MS,
+                              * or the boot state could not be read in that time */
+    FWUPD_EV_BOOT_READ,      /* the boot state, unread at fwupd_init(), was read now */
 };
 
 /* About once a second. healthy: the server session is ready and the radio
  * up. In TESTING with the running image as the candidate, healthy time adds
  * up (any unhealthy tick starts it again); at FWUPD_CONFIRM_MS the boot
- * state becomes CONFIRMED. */
+ * state becomes CONFIRMED. If fwupd_init() could not read the boot state
+ * (its operation failed or was not taken: src/handoff.h), it is read
+ * again every FWUPD_RETRY_MS; still unread at FWUPD_TEST_MAX_MS after the
+ * boot, FWUPD_EV_RESTART (the image may be a candidate under test). */
 enum fwupd_event fwupd_tick(uint32_t now_ms, bool healthy);
 
 /* For GET b/fw and the log (any task, through fwupd_port_lock()). */
 struct fwupd_info {
     uint8_t           run_id[FWIMG_ID_LEN];
     struct fwimg_boot boot;       /* as last read or written; state NONE if none */
+    bool              boot_read;  /* the boot state was read since the boot */
     bool              testing;    /* waiting to confirm the running image */
     bool              active;     /* a transfer runs */
     bool              done;       /* an update was written; restart pending */
@@ -179,8 +186,9 @@ struct fwupd_info {
 void fwupd_info(struct fwupd_info *out);
 
 /* The status as one line of text (GET b/fw): "run <id> boot <state> tries
- * <n> cand <id> prev <id> xfer <idle|n/N|done> healthy <s>". Returns its
- * length (at most cap - 1). */
+ * <n> cand <id> prev <id> xfer <idle|n/N|done> healthy <s>", state
+ * "unread" while the boot state has not been read. Returns its length (at
+ * most cap - 1). */
 size_t      fwupd_status_text(char *buf, size_t cap);
 const char *fwupd_state_name(uint8_t state);
 

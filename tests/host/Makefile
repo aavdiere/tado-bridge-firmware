@@ -20,7 +20,7 @@ AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o $(OUT)/sha256.o
 
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
          test_airtime test_cc110l test_cc110l_off test_store test_identity test_pair test_coap \
-         test_mx25r test_button test_pair_led test_boot test_fwupd
+         test_mx25r test_button test_pair_led test_boot test_fwupd test_handoff
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -52,6 +52,9 @@ test_boot_SRCS := store.c fwimg.c boot/bootctl.c
 # With tools/update/upload.py: test_upload_tool.sh feeds the tool's frames through
 # the session's parsers (coap.c) into fwupd.c.
 test_fwupd_SRCS := fwupd.c store.c fwimg.c boot/bootctl.c coap.c
+# The update task's hand-over of one operation to the radio task, with its
+# time limit (#24 review M1), against a scripted runner and clock.
+test_handoff_SRCS := handoff.c
 # Debounce and long press of the buttons (factory reset, pair).
 test_button_SRCS := button.c
 # Pairing LED phase (#19).

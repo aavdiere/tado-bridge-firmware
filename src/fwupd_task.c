@@ -11,6 +11,8 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include <libopencm3/cm3/scb.h>
+
 #include <string.h>
 
 /* Below the radio and net tasks, as housekeeping (src/app.c): SHA-256 over
@@ -165,10 +167,27 @@ static void block(void) {
     }
 }
 
+/* The restart: an update was written (PENDING), or the candidate under
+ * test, or an image whose boot state could not be read, was not confirmed
+ * within FWUPD_TEST_MAX_MS. Asked of the radio task first, which restarts
+ * at a quiet moment (no flash write or frame of ours cut). If it has not
+ * taken the request in 10 s, its loop does not run (the radio did not come
+ * up, #24 review M1), and this task restarts the MCU itself, by the same
+ * SYSRESETREQ. No flash write should be under way then: the radio task's
+ * flash writes run in that same loop, at the same quiet moment as the
+ * update's operations and just before them, each bounded at about 1 s
+ * (src/radio.c); and the records survive a cut write (src/store.h). The
+ * IWDG stays satisfied throughout: the radio task checks in during its
+ * bring-up retries, and nothing here blocks another task. */
+#define RESTART_LOG_MS 200u /* time for the debugger to read the last RTT lines */
+
 static void restart(void) {
     struct fwupd_op o = {.kind = FWUPD_OP_RESTART};
-    (void)radio_update_op(&o); /* the radio task restarts the MCU; does not come back */
-    fw_panic("update: restart did not happen", __FILE__, __LINE__);
+    (void)radio_update_op(&o); /* taken: the radio task restarts; does not come back */
+    LOG("update: the radio task did not take the restart in 10 s: restarting from the update "
+        "task");
+    vTaskDelay(pdMS_TO_TICKS(RESTART_LOG_MS));
+    scb_reset_system(); /* SYSRESETREQ, rm0383.txt:4551-4559; does not return */
 }
 
 static void task(void *arg) {
@@ -185,7 +204,7 @@ static void task(void *arg) {
     LOG("update: running %s (%lu B); boot state %s tries %u cand %s prev %s; %s",
         run,
         (unsigned long)image_size(),
-        fwupd_state_name(in.boot.state),
+        in.boot_read ? fwupd_state_name(in.boot.state) : "unread",
         (unsigned)in.boot.tries,
         cand,
         prev,

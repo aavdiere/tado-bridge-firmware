@@ -271,6 +271,7 @@ add_executable(${BINARY}
     ../src/fwimg.c
     ../src/fwupd.c
     ../src/fwupd_task.c
+    ../src/handoff.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c

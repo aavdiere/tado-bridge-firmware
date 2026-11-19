@@ -75,6 +75,7 @@
 #include "cc110l.h"
 #include "csl.h"
 #include "fwupd.h"
+#include "handoff.h"
 #include "identity.h"
 #include "link.h"
 #include "log.h"
@@ -393,28 +394,46 @@ void radio_request_factory_reset(void) {
 }
 
 /* The update's flash operations (#24, src/fwupd.h): one at a time, posted
- * by the update task, run by this task's loop as flash work (update_op_run()
- * below). upd_op is written by the update task while it is NULL and by
- * this task when the operation is done; op->done is the last write. */
-static struct fwupd_op *volatile upd_op;
+ * by the update task through src/handoff.c, run by this task's loop as
+ * flash work (update_op_run() below). The hand-over has a time limit
+ * (#24 review M1): an operation this task has not claimed after
+ * UPDATE_OP_WAIT_MS is withdrawn and never runs, so the update task never
+ * waits for ever on a loop that does not run (radio_configure() failing,
+ * below). The limit is well above the longest wait in normal operation:
+ * the transaction in flight (at most a 1 s wait for its sample, a 1 s
+ * train and the ACK window, docs/design.md "Flash work and the
+ * coordinator") plus one store write before the operation. */
+#define UPDATE_OP_WAIT_MS 10000u
+
 static TaskHandle_t volatile upd_task;
 
-bool radio_update_op(struct fwupd_op *op) {
-    while (self == NULL) {
-        vTaskDelay(pdMS_TO_TICKS(10)); /* the radio task has not started yet */
-    }
-    op->done = false;
-    upd_task = xTaskGetCurrentTaskHandle();
-    __asm__ volatile("dmb" ::: "memory");
-    upd_op = op;
+uint32_t handoff_port_ms(void) {
+    return (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+}
+
+void handoff_port_wake(void) {
     xTaskNotify(self, NOTE_UPDATE, eSetBits);
-    /* Any notification wakes the wait (a block handed over meanwhile, too):
-     * the loop looks at done. */
-    while (!op->done) {
-        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+}
+
+void handoff_port_sleep(uint32_t ms) {
+    /* Any notification wakes it (a block handed over meanwhile, too):
+     * handoff_run() looks at done and the clock. */
+    (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(ms));
+}
+
+bool radio_update_op(struct fwupd_op *op) {
+    TickType_t t0 = xTaskGetTickCount();
+    while (self == NULL) {
+        /* The radio task has not started yet: it sets self first thing. */
+        if (xTaskGetTickCount() - t0 >= pdMS_TO_TICKS(UPDATE_OP_WAIT_MS)) {
+            op->ok   = false;
+            op->done = false;
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
-    __asm__ volatile("dmb" ::: "memory");
-    return op->ok;
+    upd_task = xTaskGetCurrentTaskHandle();
+    return handoff_run(op, UPDATE_OP_WAIT_MS);
 }
 
 /* Microseconds since boot that do not wrap: TIM2's 32 bits extended. Radio
@@ -1831,8 +1850,10 @@ static void factory_reset(void) {
  * post the next one, so the coordinator gets a transaction in between
  * (tests/host/test_csl.c, test_update_windows_under_traffic()). */
 static void update_op_run(void) {
-    struct fwupd_op *op = upd_op;
-    __asm__ volatile("dmb" ::: "memory");
+    struct fwupd_op *op = handoff_claim();
+    if (op == NULL) {
+        return; /* withdrawn by the update task a moment ago (src/handoff.h) */
+    }
     op->network = network_active();
     if (op->kind == FWUPD_OP_RESTART) {
         /* The update task asked: an update was written (PENDING), or the
@@ -1847,9 +1868,7 @@ static void update_op_run(void) {
     } else {
         op->ok = false; /* the flash did not answer at boot: nothing is touched */
     }
-    upd_op = NULL;
-    __asm__ volatile("dmb" ::: "memory");
-    op->done = true;
+    handoff_finish(op); /* op->done last: the update task may return at once */
     xTaskNotifyGive(upd_task);
 }
 
@@ -2139,7 +2158,7 @@ void radio_task_run(void) {
         flash_due |= (bits & NOTE_FLASH) != 0;
         pair_due |= (bits & NOTE_PAIR) != 0;
         reset_due |= (bits & NOTE_RESET) != 0;
-        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now) || upd_op != NULL);
+        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now) || handoff_pending());
         if (flash_due && flash_quiet()) {
             flash_due = false;
             flash_check();
@@ -2156,10 +2175,10 @@ void radio_task_run(void) {
         if (flash_quiet()) {
             network_service((uint32_t)now); /* writes only if network_service_due() */
         }
-        if (upd_op != NULL && flash_quiet()) {
+        if (handoff_pending() && flash_quiet()) {
             update_op_run();
         }
-        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now) || upd_op != NULL);
+        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now) || handoff_pending());
         if (quiet()) {
             if ((int32_t)(now - next_health) >= 0) {
                 next_health = now + pdMS_TO_TICKS(HEALTH_PERIOD_MS);

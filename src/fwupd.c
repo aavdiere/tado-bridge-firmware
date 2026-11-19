@@ -117,8 +117,9 @@ static struct {
     uint32_t          img_size, img_fw;
     uint8_t           run_sha[FWIMG_SHA_LEN];
     struct fwimg_boot boot;
+    bool              boot_read; /* the boot state was read since the boot */
     bool              testing;
-    uint32_t          boot_ms, last_tick_ms, healthy_ms, confirm_at;
+    uint32_t          boot_ms, last_tick_ms, healthy_ms, confirm_at, boot_retry_at;
     bool              confirm_wait; /* a CONFIRMED write failed: wait until confirm_at */
     /* The transfer. */
     bool             active, done;
@@ -252,6 +253,28 @@ void fwupd_abort(void) {
     LOCKED(u.active = false);
 }
 
+/* The boot state as an operation just read it (o->ok): in TESTING with the
+ * running image as the candidate, the confirmation is due. Every read
+ * (at the boot, its retries, block 0, the reload after a PENDING write)
+ * goes through here, so what fwupd_info() shows is what the flash holds.
+ * A later read never resets the healthy time. */
+static void boot_learn(const struct fwupd_op *o) {
+    struct fwimg_boot b = o->found ? o->boot : (struct fwimg_boot){0};
+    bool testing = b.state == FWIMG_BOOT_TESTING && memcmp(b.cand_id, u.run_sha, FWIMG_ID_LEN) == 0;
+    LOCKED(u.boot = b; u.testing = testing; u.boot_read = true);
+}
+
+/* Read the boot state; false if the operation failed (flash not ready, or
+ * the radio task did not take it in time: src/handoff.h). */
+static bool boot_read(void) {
+    struct fwupd_op o = {.kind = FWUPD_OP_BOOT_LOAD};
+    if (!op(&o)) {
+        return false;
+    }
+    boot_learn(&o);
+    return true;
+}
+
 void fwupd_init(const uint8_t *image, uint32_t size, uint32_t fw_version, uint32_t now_ms) {
     memset(&u, 0, sizeof u);
     u.img          = image;
@@ -265,15 +288,15 @@ void fwupd_init(const uint8_t *image, uint32_t size, uint32_t fw_version, uint32
         memset(u.run_sha, 0, sizeof u.run_sha); /* not reached with mbedTLS's software SHA-256 */
     }
     mbedtls_sha256_free(&sha);
-    struct fwupd_op   o       = {.kind = FWUPD_OP_BOOT_LOAD};
-    struct fwimg_boot b       = {0};
-    bool              testing = false;
-    if (op(&o) && o.found) {
-        b       = o.boot;
-        testing = b.state == FWIMG_BOOT_TESTING && memcmp(b.cand_id, u.run_sha, FWIMG_ID_LEN) == 0;
+    if (!boot_read()) {
+        /* fwupd_tick() tries again every FWUPD_RETRY_MS, and restarts at
+         * FWUPD_TEST_MAX_MS if it never succeeds (#24 review M1). */
+        u.boot_retry_at = now_ms + FWUPD_RETRY_MS;
+        set_why("boot state not read (flash not ready or radio task not running): trying again "
+                "every 10 s");
+        return;
     }
-    LOCKED(u.boot = b; u.testing = testing);
-    set_why(testing ? "running the candidate under test: confirmation due" : "no update pending");
+    set_why(u.testing ? "running the candidate under test: confirmation due" : "no update pending");
 }
 
 /* --- Transfer --------------------------------------------------------------- */
@@ -312,13 +335,14 @@ start(const uint8_t *data, size_t len, bool more, bool session_ok, uint32_t now_
     }
     struct fwupd_op o = {.kind = FWUPD_OP_BOOT_LOAD};
     if (!op(&o)) {
-        return fail(FWUPD_FAILED, "boot state not read (flash not ready)");
+        return fail(FWUPD_FAILED,
+                    "boot state not read (flash not ready or radio task not running)");
     }
+    boot_learn(&o);
     if (!o.network) {
         return fail(FWUPD_REFUSED, "no network record in use");
     }
-    struct fwimg_boot b = o.found ? o.boot : (struct fwimg_boot){0};
-    LOCKED(u.boot = b);
+    struct fwimg_boot b = u.boot;
     if (b.state == FWIMG_BOOT_TESTING || b.state == FWIMG_BOOT_PENDING
         || b.state == FWIMG_BOOT_ROLLBACK) {
         return fail(FWUPD_REFUSED, "an update is still under way (boot state not settled)");
@@ -343,6 +367,18 @@ start(const uint8_t *data, size_t len, bool more, bool session_ok, uint32_t now_
     return FWUPD_CONTINUE;
 }
 
+/* After a failed PENDING write: load the boot state again; true if it is
+ * exactly want (PENDING, tries 0, these ids). Its own function, so its
+ * operation is not on the stack of finish()'s deepest path (the hash). */
+static __attribute__((noinline)) bool pending_landed(const struct fwimg_boot *want) {
+    struct fwupd_op o = {.kind = FWUPD_OP_BOOT_LOAD};
+    if (!op(&o)) {
+        return false;
+    }
+    boot_learn(&o);
+    return o.found && memcmp(&o.boot, want, sizeof *want) == 0;
+}
+
 /* The last block is in: check the whole candidate, write its header, check
  * the previous slot again, then PENDING. */
 static enum fwupd_rc finish(uint32_t now_ms) {
@@ -364,7 +400,17 @@ static enum fwupd_rc finish(uint32_t now_ms) {
     memcpy(b.cand_id, u.hdr.sha256, FWIMG_ID_LEN);
     memcpy(b.prev_id, u.run_sha, FWIMG_ID_LEN);
     if (!boot_write(&b)) {
-        return fail(FWUPD_FAILED, "boot state PENDING not written");
+        /* The write or only its read-back failed: what does the flash hold
+         * now? PENDING with these ids is the update written, and the next
+         * boot installs it, so it is done and the restart follows as
+         * usual (#24 review L1). Anything else: nothing is marked. */
+        if (!pending_landed(&b)) {
+            return fail(FWUPD_FAILED, "boot state PENDING not written");
+        }
+        LOCKED(u.active = false; u.done = true; u.done_ms = now_ms);
+        set_why("image verified, previous image saved, PENDING written (found on a reload after "
+                "its read-back failed): restarting");
+        return FWUPD_DONE;
     }
     LOCKED(u.active = false; u.done = true; u.done_ms = now_ms; u.boot = b);
     set_why("image verified, previous image saved, PENDING written: restarting");
@@ -440,6 +486,28 @@ enum fwupd_event fwupd_tick(uint32_t now_ms, bool healthy) {
         set_why("transfer dropped: no block for 120 s");
         return FWUPD_EV_DROPPED;
     }
+    if (!u.boot_read) {
+        /* Never read since the boot (#24 review M1): this may be a
+         * candidate under test, so the 10-minute rule holds as for one; a
+         * restart of an image that is not under test costs a boot, and the
+         * bootloader writes nothing for it (src/boot/bootctl.c, default). */
+        if (now_ms - u.boot_ms >= FWUPD_TEST_MAX_MS) {
+            set_why("boot state not read within 10 min: restarting (the bootloader counts a "
+                    "candidate under test)");
+            return FWUPD_EV_RESTART;
+        }
+        if ((int32_t)(now_ms - u.boot_retry_at) < 0) {
+            return FWUPD_EV_NONE;
+        }
+        u.boot_retry_at = now_ms + FWUPD_RETRY_MS;
+        if (!boot_read()) {
+            return FWUPD_EV_NONE;
+        }
+        set_why(u.testing ? "boot state read late: running the candidate under test, confirmation "
+                            "due"
+                          : "boot state read late: no update pending");
+        return FWUPD_EV_BOOT_READ;
+    }
     if (!u.testing) {
         return FWUPD_EV_NONE;
     }
@@ -473,6 +541,7 @@ void fwupd_info(struct fwupd_info *out) {
     fwupd_port_lock();
     memcpy(out->run_id, u.run_sha, FWIMG_ID_LEN);
     out->boot       = u.boot;
+    out->boot_read  = u.boot_read;
     out->testing    = u.testing;
     out->active     = u.active;
     out->done       = u.done;
@@ -525,7 +594,7 @@ size_t fwupd_status_text(char *buf, size_t cap) {
                      cap,
                      "run %s boot %s tries %u cand %s prev %s xfer %s healthy %lu",
                      run,
-                     fwupd_state_name(in.boot.state),
+                     in.boot_read ? fwupd_state_name(in.boot.state) : "unread",
                      (unsigned)in.boot.tries,
                      cand,
                      prev,
