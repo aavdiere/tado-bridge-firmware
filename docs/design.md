@@ -33,12 +33,12 @@ A backup exists, so stock contents need not be preserved.
 
 | Offset | Size | Use |
 | :--- | :--- | :--- |
-| `0x000000` | 512 KB | Update image: candidate (#20) |
-| `0x080000` | 512 KB | Update image: previous version (#20) |
+| `0x000000` | 512 KB | Update image: candidate (#24) |
+| `0x080000` | 512 KB | Update image: previous version (#24) |
 | `0x100000` | 4 KB × 2 | Identity, slots A and B |
 | `0x102000` | 4 KB × 2 | Network, slots A and B |
 | `0x104000` | 4 KB × 2 | Counter log, sectors A and B |
-| `0x106000` | 4 KB × 2 | Boot state, slots A and B (#20) |
+| `0x106000` | 4 KB × 2 | Boot state, slots A and B (#24) |
 | `0x108000` | Rest | Unassigned |
 
 ### Slotted records (identity, network)
@@ -115,7 +115,7 @@ Built 2026-11-17, host-tested, fw-reviewer "safe to flash" for 93f25d8..265cb70,
 
 ### Implementation: identity record (#21)
 
-Built 2026-11-18, host-tested, **not reviewed and not flashed**: the storage format change needs a `fw-reviewer` verdict first (`CLAUDE.md`). Code: `src/store.c` (`store_id_*`), `src/identity.c` (boot and hand-over), `src/radio.c` (`identity_boot()` before `link_start()`), `src/session.c`; the host tool `tools/identity/` (`identity.c`, `identity.tcl`, `provision.sh`); tests `tests/host/test_identity.c` and `tests/host/test_identity_tool.sh`. Serial and EUI-64 are no longer build values: `BRIDGE_SERIAL` and `BRIDGE_EUI64` in `config/local.cmake` are ignored with a CMake warning.
+Built 2026-11-18, host-tested, reviewed, provisioned and flashed on the bench 2026-11-18 (identity record seq 1, kept over a power cycle) **[V]**; #21 closed (`test-bench.md`). Code: `src/store.c` (`store_id_*`), `src/identity.c` (boot and hand-over), `src/radio.c` (`identity_boot()` before `link_start()`), `src/session.c`; the host tool `tools/identity/` (`identity.c`, `identity.tcl`, `provision.sh`); tests `tests/host/test_identity.c` and `tests/host/test_identity_tool.sh`. Serial and EUI-64 are no longer build values: `BRIDGE_SERIAL` and `BRIDGE_EUI64` in `config/local.cmake` are ignored with a CMake warning.
 
 **Identity record v1 [I]:** the slotted record format above, at `0x100000` (slot A) and `0x101000` (slot B). Magic `0x314E4449` ("IDN1"), version 1, payload 24 bytes: serial 16 bytes ASCII, zero padded, then the EUI-64, 8 bytes in stored order (`00 1b c5` first, as `BRIDGE_EUI64` was, `build.md` P4); 40 bytes in all. Accepted only if the serial is 3 to 16 characters, two capital letters then capital letters or digits (tanoclo's key, "IB" and 10 digits for a bridge, `build.md` P4), the padding after it is all zero, and the EUI-64 starts with tado's OUI `00 1b c5` (`store_id_valid()`). Boot takes the valid slot with the highest seq (`store_slot_load()`, as for the network); if that newest record is refused, the bridge has no identity: an older slot is not used in its place.
 
@@ -143,7 +143,7 @@ The application's side of the boot state: built 2026-11-19, flashed and run on t
 
 ### Implementation: flash work during radio traffic (#22)
 
-Built 2026-11-18, host-tested, **not reviewed and not flashed**: it changes radio timing, so it needs a `fw-reviewer` "safe to flash" verdict first (`CLAUDE.md`). Code: `src/mx25r.c` and `src/mx25r.h` (gate, waits, port), `src/radio.c` (`mx25r_port_radio_busy()`, `mx25r_port_radio_serve()`, `rx_service()`, `quiet()`); test `tests/host/test_mx25r.c`.
+Built 2026-11-18, host-tested, reviewed (`fw-reviewer` "safe to flash") and flashed on the bench 2026-11-18, measured on air the same day **[V]** (`test-bench.md`). Code: `src/mx25r.c` and `src/mx25r.h` (gate, waits, port), `src/radio.c` (`mx25r_port_radio_busy()`, `mx25r_port_radio_serve()`, `rx_service()`, `quiet()`); test `tests/host/test_mx25r.c`.
 
 **The problem [I].** Until #22 the store blocked the radio task for the length of a write ("Differs, SPI1 sharing" above): the program wait spun for up to 10 ms and the erase wait slept for up to 240 ms, and during both the RX FIFO was not read. The Enhanced ACK depends on that read: the task prepares the ACK once a Data frame's header is out of the FIFO, while the frame is still arriving (`radio-runtime.md`, "Enhanced ACK path"), and the GDO2 interrupt sends it only if it was prepared. So a Data frame that arrived during a write got no ACK, and one longer than about 62 bytes could overflow the FIFO. The ACK interrupt itself never waited for the flash: SPI1 transactions run in critical sections of at most about 91 us, and the interrupt finds the bus between two of them (`src/spi1.c`).
 
@@ -202,7 +202,7 @@ Built 2026-11-18, host-tested, flashed on the bench (main `774ec94`). The owner 
 ### Depends on
 
 - #26: how the network key is generated (see "Entropy").
-- #20: see "Self-update and first flash".
+- #24: see "Self-update and first flash".
 
 ## Entropy (#26)
 
@@ -463,7 +463,7 @@ About 200-250 KB of 512 KB: mbedTLS 100, lwIP 40, FreeRTOS 10, application 60-10
 
 A Nucleo-F411 with ENC28J60 and CC1101 modules could test all three without touching the IB01 **[I]**.
 
-## Self-update and first flash (#20)
+## Self-update and first flash (#24)
 
 ### Internal flash layout
 
