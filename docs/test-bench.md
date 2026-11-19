@@ -625,6 +625,12 @@ Steps 0-4 of the plan above, by Claude over SWD, RTT, the SDR and the local tano
 
 **Step 5 (rollback), in progress at the time of writing [V]:** upload C to B: block 0 `running image saved to the previous slot (9890 ms)`, last block `2.04 ... PENDING written (1358 ms)`, restart. C: `boot state testing tries 1` (server `wss://10.42.0.1:989`, `tls tcp (-14)` on every try), `candidate not confirmed within 10 min: restarting` exactly 600.0 s after its start line, then `tries 2`, the same, then `tries 3` (start at 07:20:20 UTC). The uploader's reconnect wait timed out after 180 s, as planned. Result of the third restart: see the amendment below.
 
+**Amendment, step 5 result [V].** C's third start also restarted itself after 600.0 s (07:30:20 UTC). The bootloader then put B back: restart line to B's first RTT line **10.4 s**, and B's boot log reads **`update: running 366d6adcc41f3ca3 (171268 B); boot state rolled_back tries 0 cand ea5791f9f1012e7f prev 366d6adcc41f3ca3; no update pending`**, session ready at attempt 1 eight seconds later, update task 261 words never used, heap minimum 8560 bytes. From the restart into C to B's line: **30.5 min** (three starts of 600 s each, plus three restarts, the install of C and the rollback install). **Pass.** `ROLLED_BACK` is not a test state, so B does not confirm again; it stays `ROLLED_BACK` and the bootloader just starts it (`design.md`, "Decisions per boot").
+
+**Not done:** the last part of step 5 (upload B, refused; upload A, installs and confirms). The owner left the bench at about 07:31 UTC and unplugged it.
+
+**State the bench was left in (2026-11-19, 07:31 UTC) [V]:** image B (`366d6adcc41f3ca3`, the reviewed source at `99b3f0f` with `FW_VERSION=2`) running from internal flash; boot state `ROLLED_BACK`, tries 0, cand C, prev B; previous slot holds B, candidate slot holds C. Bootloader `eb2f44fb…` unchanged. Overlay on zone 1: MANUAL 21 °C (read back). SDR capture finished; RTT logger and OpenOCD stopped after the last line (07:30:50 UTC). Then all cables unplugged by the owner.
+
 ## Bench network
 
 Tested 2026-11-11 without changing anything.
