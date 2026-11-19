@@ -694,7 +694,7 @@ Result: 752969325 checks, 0 failed.
 
 ### Recovery over SWD (#24)
 
-Designed before the bootloader code; nothing here has been tried on the bench yet. Why SWD stays available whatever the bootloader does **[D]/[I]:**
+Designed before the bootloader code. Step 1 was rehearsed on the bench on 2026-11-19 (application sector erased, LED code 5 read over SWD, both images written back and booted) **[V]** (`test-bench.md`, "Bootloader (#24): first flash and checks, result"); steps 2-4 have not been tried. Why SWD stays available whatever the bootloader does **[D]/[I]:**
 - The bootloader never touches the option bytes: no read protection or write protection change, so the flash stays readable and writable over SWD. It never touches PA13/PA14 and never enters a low-power mode.
 - OpenOCD resets the chip with SYSRESETREQ (no NRST on the test points; `target/stm32f4x.cfg:76,81`) and halts it at the reset vector, before the bootloader's first instruction. A system reset puts every register back to its reset value (`rm0383.txt:4545-4546`), and after `reset halt` the IWDG was found not yet running (`build.md`, "Checking the flash against an ELF", 2026-11-16 **[V]**).
 - `DBG_IWDG_STOP` survives system resets, since it is reset only by POR (`rm0383.txt:46200`), and OpenOCD sets it on attach. So a halted core is never reset by the IWDG.

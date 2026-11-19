@@ -420,7 +420,7 @@ Part 1 of the plan above. Analysis was offline afterwards.
 
 ## Bootloader (#24): first flash and checks, plan [I]
 
-Not run yet. Code and recovery: `design.md`, "Implementation: bootloader and boot state (#24)" and "Recovery over SWD (#24)".
+Run on 2026-11-19 by Claude over SWD, with no owner hand work, except step 3 (power cycle), which is deferred: see "Bootloader (#24): first flash and checks, result" below. Code and recovery: `design.md`, "Implementation: bootloader and boot state (#24)" and "Recovery over SWD (#24)".
 
 **Gates:**
 - A `fw-reviewer` "safe to flash" verdict on the bootloader commits (`c69ad4b..` HEAD of the #24 branch). Rule 4 applies twice over: the image is bootloader code, and the default build transmits.
@@ -454,6 +454,35 @@ This proves the recovery path in "Recovery over SWD (#24)", step 1, before any u
 - Step 4's halt test only regresses `DBG_IWDG_STOP` **[I]**; it does not exercise the bootloader's own watchdog handling.
 - `BSY_SPIN` of 50M iterations takes about 15-20 s **[I]**, close to the 22.3 s IWDG minimum (`bl_hw.c:363`).
 - With no boot state the bootloader trusts the descriptor and head checks without a SHA-256 **[D]**; `verify` after the SWD write catches torn writes.
+
+## Bootloader (#24): first flash and checks, result (2026-11-19) [V]
+
+Steps 1, 2, 4, 5 and 6 of the plan above, all by Claude over SWD and the SDR, with no owner hand work. Image: `51b7418` built in a clean worktree with the bench `config/local.cmake` and the committed airtime budget (the minute log shows `of 30000 ms`, so no bench edit of `src/airtime.h`). Bootloader binary 6124 bytes, SHA-256 `eb2f44fb…bb9fa5290`; application binary 162088 bytes, SHA-256 `125b07d2…70b510eb0`.
+
+| Step | Result |
+| :--- | :--- |
+| 1. First flash | `tools/flash.sh` with both ELFs in one OpenOCD run: **`Verified OK` twice**. Boot log: `image: 162088 bytes at 08010000, VTOR 08010000`, then the network record from flash (channel 16), session ready and the radio as before |
+| 2. No boot state | No boot-state write in the boot log, as designed; the boot-state sectors were not read (the plan drops that check) |
+| Warm resets | Two OpenOCD `reset run`: each boots cleanly through the bootloader, reset cause `SOFTWARE` (RCC_CSR), frame counter 8299, then 12395 |
+| 3. Power cycle (POR) | **Not done**: needs the owner to unplug USB; deferred |
+| 4. Debugger halt | Plain `halt` for 70 s, then `resume`: no IWDG reset and no new boot banner |
+| 5. Recovery rehearsal | `reset halt`, `flash info 0`: sector 4 = `0x08010000`, 64 KB. `flash erase_address 0x08010000 0x10000`, then `reset run`. `0x08010000` and `0x08010200` read `ffffffff`. PB1 sampled over SWD (ODR and IDR, as for code 3; `hardware.md`, "LED roles"): five flashes of about 150 ms high and 250 ms low, then about 750 ms pause, i.e. **LED code 5**; 1 of 400 samples had ODR and IDR differ (a sample taken across an edge **[I]**). The owner's eye check was replaced by this sampling. Restored with `tools/flash.sh` and both ELFs: `Verified OK` twice, boots again (frame counter 20587) |
+| 6. ACK timing | Below |
+
+**Step 6, ACK timing regression (2026-11-19, 02:17-02:29 CET).** Receive-only. `rtl_sdr -f 865924158 -s 2400000 -g 12.5` through `tools/sdr/timedcap.py`, 720 s with no samples lost (byte count matches the host span). The view covers channels 10-18 only; channel 26 (2.4 MHz above the centre) is outside it. RTT logged by `tools/sdr/rttlog.py` from the running OpenOCD's port 19021; no OpenOCD command was sent. Traffic: 24 overlay PUTs on zone 1 of the local bench server, 22-28 s apart (bench user, password-grant token, 21.5 and 21.0 °C alternating, the last 21.0), each giving a downlink and the spare device's reply about 0.28 s later; the device also sent 5 reports of its own, and the server answered some of them (30 downlinks in all). The overlay read back MANUAL 21.0 °C afterwards. Decoding: `demod.py --channels 16 --csv`, then `ackgap.py --list`. **Resolution:** Data end (last CRC bit) to ACK preamble start, both from `demod.py` sync fits at 600 kS/s (1.667 us per sample, least squares over every bit-boundary zero crossing), good to well under 1 us ("Demodulator", accuracy); envelope edges are half-amplitude crossings interpolated between 600 kS/s samples.
+
+| Item | Result |
+| :--- | :--- |
+| **Bridge ACK** | Data end to ACK preamble start **225.2-234.8 us, median 225.9 us, mean 226.8 us, std 2.6 us (n=29)**; 26 of 29 within 225.2-226.0 us, the others 233.9, 234.8 and 234.8 us. Envelope off to on 199.7-208.9 us, median 200.0 us |
+| Against earlier runs | Before #24 (application at `0x08000000`): 225.3-239.3 us, median 226.0 us, n=31 ("ACK timing (#18)"); 225.1-233.8 us, median 225.9 us, n=87 ("Flash work during traffic (#22) result"). **Unchanged.** Inside the expected 225-240 us; 0.77 ms of margin to the 1 ms target |
+| Uplinks | 29 CRC-OK uplinks from the spare device, **29 ACKed**, none unanswered. The RTT counts acks prepared 29, sent 29, too late 0, failed 0, refused for airtime 0 |
+| Downlinks | 30 Data frames from the bridge, all ACKed by the device after 355.2-393.1 us (median 385.3 us, n=30). RTT: 30 datagrams plus 1 Router Advertisement, all delivered at attempt 1; short trains of 21-22 wake-ups, 248 for the first one and the advertisement |
+| Radio and health | Overflow 0, stale 0, rearm 0, reinit 0, spi err 0; heap minimum 7960 bytes; stack words never used radio/net/hk 526/922/336; no reset during the run |
+| Airtime | 4957 ms in the last hour at the end, of 30000 ms; no refusal |
+| Clipping | 189038 clipped bytes in the file (0.0055 %), **all inside the spare device's frames** (its 29 uplinks and 30 ACKs, -0.4 dBFS), none in the bridge's (-7.9 dBFS). The device is louder than on 2026-11-18 (-8.8 dBFS at the same gain), so it has probably moved **[I]**. The uplink end times come from frequency zero crossings, which clipping of a constant-envelope signal barely moves, and the gaps match earlier unclipped runs **[I]**; use a gain below 12.5 dB next time |
+| Offset (#7) | Bridge +6947 Hz against the dongle (+8.0 ppm), spare device +12410 Hz: the bridge is 6.3 ppm below the device (7.7 ppm on 2026-11-18) |
+
+**What this means for #24 [V]/[I].** The first flash, the boot path without a boot state, warm resets, the debugger halt and recovery step 1 (LED code 5, then a restore over SWD) work on the bench. Running the application from `0x08010000` behind the bootloader leaves the Enhanced ACK timing unchanged (median 225.9 us, worst 234.8 us). Still open: the power cycle (POR, owner), and the update side (not built).
 
 ## Bench network
 
