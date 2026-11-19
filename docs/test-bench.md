@@ -525,10 +525,10 @@ Steps 1, 2, 4, 5 and 6 of the plan above, all by Claude over SWD and the SDR, wi
 
 ## Self-update (#24): first over-the-air update, plan [I]
 
-Not run yet. The application's update side: `design.md`, "Implementation: self-update, application side (#24)" and "Uploader and tanoclo (#24, #38)". Planned so that Claude can run it over SWD, RTT, the SDR and the local tanoclo with **no owner hand work**. The power cut during an install (the last step) is the owner's and optional.
+Run on 2026-11-19 (steps 0-5; step 6 skipped): "Self-update (#24): first over-the-air update, result" below. The application's update side: `design.md`, "Implementation: self-update, application side (#24)" and "Uploader and tanoclo (#24, #38)". Planned so that Claude can run it over SWD, RTT, the SDR and the local tanoclo with **no owner hand work**. The power cut during an install (the last step) is the owner's and optional.
 
 **Gates:**
-- A `fw-reviewer` "safe to flash" verdict on the #24 application-update commits (rule 4: bootloader-facing code, a new write path, flash work in the radio task, and the default build transmits). The review must look at the write guard's areas and at the update task's stack and RAM. Verdict A with findings was given on `0b62e27`/`07d747f`; the fixes for M1 and L1 (`design.md`, "Review fixes M1 and L1") need a delta review before anything is flashed.
+- A `fw-reviewer` "safe to flash" verdict on the #24 application-update commits (rule 4: bootloader-facing code, a new write path, flash work in the radio task, and the default build transmits). The review must look at the write guard's areas and at the update task's stack and RAM. Verdict A with findings was given on `0b62e27`/`07d747f`; the fixes for M1 and L1 (`design.md`, "Review fixes M1 and L1") got a delta review on 2026-11-19: verdict A for `99b3f0f`, for flashing image A and for running this plan unattended **[D]**.
 - Builds from the reviewed commit in a clean worktree with the bench `config/local.cmake`; never the main tree's `src/airtime.h` bench edit.
 - `../tanoclo` stays unchanged (`README.md`, "Project decisions"). So the uploader runs in **`--blind`** mode, and the bridge's RTT log is the feedback: `tools/rtt.sh`, `tools/sdr/rttlog.py`, the `update:` lines.
 - With the #38 change (`send-raw` with `waitAck`) the same steps run without `--blind` and see every answer. Putting that change into the bench container without changing the checkout (for example `docker cp` of a patched `lib/command-api.js`) needs the owner's OK first.
@@ -580,6 +580,50 @@ Not run yet. The application's update side: `design.md`, "Implementation: self-u
 6. **Optional, owner: a power cut during an install.** During step 4's install (power LED flickering), unplug USB, wait 5 s, plug it back in. The bootloader installs again (`PENDING`, tries counted) and B confirms. Host-tested at every step (`design.md`, power cuts); not needed for the rest.
 
 **Afterwards:** record the figures here and in `design.md` (tags **[V]**), and remove the scratch script. The bench ends on a confirmed image of the reviewed source.
+
+## Self-update (#24): first over-the-air update, result (2026-11-19) [V]
+
+Steps 0-4 of the plan above, by Claude over SWD, RTT, the SDR and the local tanoclo, with no owner hand work; step 5 below as an amendment; step 6 (owner) skipped. Captures and logs: `~/ib01-captures/upd24/` (outside git).
+
+**Images and build check [V].** Built from a clean `git archive 99b3f0f` export with the bench `config/local.cmake` (the main tree's `src/airtime.h` bench edit not included; the minute log shows `of 30000 ms`). All three: application `LOAD` at `0x08010000` (`arm-none-eabi-readelf -l`), bootloader at `0x08000000`, bootloader `.bin` 6124 bytes, SHA-256 `eb2f44fb…bb9fa5290` (the bench's). `tools/update/upload.py info`: 171268 bytes, 168 image blocks plus the header block each.
+
+| Image | Build | Id (first 8 bytes) |
+| :--- | :--- | :--- |
+| A | `FW_VERSION=1` | `7a3ce39741d809f6` |
+| B | `FW_VERSION=2` | `366d6adcc41f3ca3` |
+| C | `FW_VERSION=3`, `NET_SERVER_PORT=989` (`build-c/CMakeCache.txt`) | `ea5791f9f1012e7f` |
+
+| Step | Result |
+| :--- | :--- |
+| 0. Flash A | `tools/flash.sh` with A's two ELFs: **`Verified OK` twice**. The first boot's `update:` line was lost in the RTT buffer (below); after one warm reset through the running OpenOCD: `update: running 7a3ce39741d809f6 (171268 B); boot state none tries 0 ...; no update pending`, session ready at attempt 1. `alive:` update task **261 words never used** (rule: at least about 170), heap minimum **8560 bytes** (7960 before: +600, as expected) |
+| 1. Running image refused | Upload A: `block 0 of 0 ...: 4.03, this image is the one running (0 ms)`; blocks 1-4 `4.08, no transfer: start with block 0`; the uploader was then stopped. No `saved` line |
+| Stock backup check | `unmodded_spi.bin` 2097152 bytes, `sha256sum -c`: `a/unmodded_spi.bin: OK` |
+| 2. Session cut | Upload B. Block 0: `2.31, transfer started; running image saved to the previous slot (9217 ms)`. At `block 64 ... block stored (32 ms)`, `docker restart tanoclo-ws`: 0.7 s later `tls closed by server`, **`update: transfer dropped at block 65: the server session ended`**; session ready again 3.4 s after the restart began (attempt 1). The uploader stopped (relay pipe broken). No `PENDING`, no restart. **Pass** |
+| 3. Corrupted transfer | Scratch script (removed afterwards), B with one byte of body block 100 flipped, all 169 blocks blind. Block 0: `previous slot already holds the running image (720 ms)`; last block: **`5.00, candidate read back does not match its SHA-256 (634 ms)`**. No `PENDING`, no restart. A warm reset afterwards: `boot state none tries 0`, so steps 1-3 marked nothing. **Pass** |
+| 4. Update A → B | Below. **Pass** |
+
+**Step 4 [V].** Upload B blind, with 28 overlay PUTs on zone 1 (22-28 s apart, ending on MANUAL 21.0 °C) and the SDR running.
+- **Transfer:** block 0 `2.31, transfer started; previous slot already holds the running image (725 ms)`; each later block **32 ms** in the RTT figure (blocks 64 and 128; the pace of 1.5 s per block is the blind uploader's); last block **`2.04, image verified, previous image saved, PENDING written: restarting (1356 ms)`**. Block 0's answer to the last answer: 371.5 s, set by the blind pace (120 s + 167 × 1.5 s).
+- **Restart and install:** `update: restarting into the bootloader` 2.0 s after the 2.04 line (`FWUPD_RESTART_MS` 3 s counts from the last block's start, `src/fwupd.c:415`, on the 1 s tick **[I]**). Restart line to B's first RTT line: **12.4 s** (bootloader install plus the application's 2 s start delay); to session ready 20.6 s.
+- **B:** `update: running 366d6adcc41f3ca3 (171268 B); boot state testing tries 1 cand 366d6adcc41f3ca3 prev 7a3ce39741d809f6`, then **`... confirmed (boot state CONFIRMED) after 60 s with the server session ready and the radio up`**, 59.4 s after session ready. A warm reset later: `boot state confirmed tries 0`.
+- The uploader saw the reconnect (`bridge reconnected`).
+
+**Step 4 on air and in the RTT [V].** `rtl_sdr -f 865924158 -s 2400000 -g 8.7` through `tools/sdr/timedcap.py`, 780.1 s, no samples lost (3744464896 bytes against the host span), **no clipped bytes** at 8.7 dB. The view covers channels 10-18; channel 26 is outside it. Decoding: `demod.py --channels 16 --csv`, then `ackgap.py --list`. **Resolution:** Data end (last CRC bit) to ACK preamble start, both from `demod.py` sync fits at 600 kS/s (1.667 us per sample, least squares over every bit-boundary zero crossing), good to well under 1 us; envelope edges are half-amplitude crossings between 600 kS/s samples.
+
+| Item | Result |
+| :--- | :--- |
+| **Bridge ACK, during the transfer** (block 0 sent to the last answer) | **225.9-227.7 us, median 226.0 us (n=17)** |
+| Bridge ACK, whole capture | 225.3-228.7 us, median 226.0 us, mean 226.2 us, std 0.8 us (n=30); envelope off to on 199.7-203.4 us, median 200.0 us. 30 CRC-OK uplinks, **30 ACKed**, none unanswered. Inside 225-240 us; unchanged against "Bootloader (#24) ... result" (median 225.9 us) |
+| Downlinks | 30 unicast Data frames, all ACKed by the device after 352.8-395.4 us (median 385.3 us); 2 broadcasts. RTT: 32 `tx:` lines, **all attempt 1, delivered**: 29 short trains (21 wake-ups: 15, 22: 14), 3 full trains (248: B's first downlink, 2 Router Advertisements). `no ack` 0. During the install the bridge was off the air (no frame of ours from the restart to B's session) |
+| Link and radio, RTT | acks prepared 32, sent 32, **too late 0**; **overflow 0**, stale 0, reinit 0, spi err 0; flash work **gave up 0**, 1 hold of 4944 us; longest flash cycle 87632 us; ACKs during update operations 0 (`radio served ... acks 0`). 3 CRC failures at -97 to -99 dBm (weak, not ours **[I]**) |
+| Stack and heap | Radio 514 words never used at the lowest (526 on 2026-11-19 before), net 844, housekeeping 326, **update 261** throughout (stop rule 100); heap minimum **8560 bytes** |
+| Airtime | 3732 ms in the last hour before the restart, of 30000 ms; no refusal (the count is in RAM and restarts at boot) |
+| Other channels in view | `demod.py --channels 10-15,17,18`: no CRC-OK frame except 10 beacon requests on channel 11 from two other devices (offsets +7.5 and +12.0 kHz, -32 and -19 dBFS; the bridge sends no beacon requests). The same two also sent 5 beacon requests each on channel 16, which the bridge did not answer. **Nothing of ours off channel 16** |
+| Offset (#7) | Bridge +4603 Hz against the dongle at 866.3242 MHz (median of 1364 wake-ups), spare device +11598 Hz: the bridge is 8.1 ppm below the device (6.3-7.7 ppm in earlier runs) |
+
+**RTT host note [V].** The 1 KB RTT buffer overflows at boot when OpenOCD finds the control block late (after `tools/flash.sh` the new `tools/rtt.sh` needed about 3 s): the first boot after the flash lost the lines from the radio bring-up to the `update:` line. With `rtt polling_interval 10` (default 100 ms) set over OpenOCD's telnet and the reader attached before a reset, every later boot log came through whole. A reset leaves NUL bytes from stale RAM in one log line (use `grep -a`).
+
+**Step 5 (rollback), in progress at the time of writing [V]:** upload C to B: block 0 `running image saved to the previous slot (9890 ms)`, last block `2.04 ... PENDING written (1358 ms)`, restart. C: `boot state testing tries 1` (server `wss://10.42.0.1:989`, `tls tcp (-14)` on every try), `candidate not confirmed within 10 min: restarting` exactly 600.0 s after its start line, then `tries 2`, the same, then `tries 3` (start at 07:20:20 UTC). The uploader's reconnect wait timed out after 180 s, as planned. Result of the third restart: see the amendment below.
 
 ## Bench network
 
