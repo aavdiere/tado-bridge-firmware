@@ -1,9 +1,11 @@
 /* Tasks (#8, #9, #10, #12, #13). Priorities follow docs/design.md "Tasks": radio
- * high, net medium, housekeeping low. */
+ * high, net medium, housekeeping low; the update task (#24, src/fwupd_task.c)
+ * low as well. */
 #include "app.h"
 
 #include "board.h"
 #include "button.h"
+#include "fwupd_task.h"
 #include "log.h"
 #include "net.h"
 #include "radio.h"
@@ -118,12 +120,14 @@ static void housekeeping_task(void *arg) {
             /* #10: flash JEDEC ID on the shared SPI1 bus while the radio
              * receives. The radio task owns the bus and runs it. */
             radio_request_flash_check();
-            LOG("alive: heap free %u min %u, stack words never used radio/net/hk %u/%u/%u",
+            LOG("alive: heap free %u min %u, stack words never used radio/net/hk/update "
+                "%u/%u/%u/%u",
                 (unsigned)xPortGetFreeHeapSize(),
                 (unsigned)xPortGetMinimumEverFreeHeapSize(),
                 (unsigned)uxTaskGetStackHighWaterMark(h_radio),
                 (unsigned)uxTaskGetStackHighWaterMark(h_net),
-                (unsigned)uxTaskGetStackHighWaterMark(h_hk));
+                (unsigned)uxTaskGetStackHighWaterMark(h_hk),
+                fwupd_task_stack_free());
         }
     }
 }
@@ -133,4 +137,5 @@ void app_create_tasks(void) {
     ok &= xTaskCreate(net_task, "net", NET_STACK_WORDS, NULL, PRIO_NET, &h_net);
     ok &= xTaskCreate(housekeeping_task, "housekeep", STACK_WORDS, NULL, PRIO_HOUSEKEEPING, &h_hk);
     configASSERT(ok == pdPASS);
+    fwupd_task_create(); /* static stack: the heap margin stays as measured */
 }

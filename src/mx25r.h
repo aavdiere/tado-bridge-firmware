@@ -6,10 +6,11 @@
 #include <stdint.h>
 
 /* Macronix MX25R1635F on SPI1, CS# PB9 (#10, #37). Reads anywhere; erases
- * and programs only inside [FLASH_WRITE_BEGIN, FLASH_WRITE_END) of
- * src/flash_layout.h (the network and counter-log sectors) and panics on
- * any other address. No status/configuration register write, no block or
- * chip erase, no security register write exist here.
+ * and programs only inside the writable area selected with mx25r_area()
+ * (src/flash_layout.h: the records by default, else the boot state or the
+ * update slots, #24) and panics on any other address. No status/
+ * configuration register write, no block or chip erase, no security
+ * register write exist here.
  *
  * Radio task only (it owns SPI1, docs/design.md "Sharing SPI1 with the
  * radio"). Every function below is a series of short bus transactions; the
@@ -58,6 +59,21 @@ struct mx25r_stats {
 };
 const struct mx25r_stats *mx25r_stats(void);
 
+/* Writable areas (#24). One is selected at a time; the default, and the
+ * only one the store (src/store.c) ever runs in, is the records area. The
+ * update's flash work (src/fwupd.h, run by the radio task) selects the
+ * slots or the boot state for one operation and then the records again.
+ * The identity sectors and everything above the boot state are in no
+ * area. */
+enum mx25r_area {
+    MX25R_AREA_RECORDS, /* FLASH_RECORDS_BEGIN..END: network record, counter log */
+    MX25R_AREA_BOOT,    /* FLASH_BOOT_BEGIN..END: the boot state record */
+    MX25R_AREA_SLOTS,   /* FLASH_SLOTS_BEGIN..END: candidate and previous image */
+};
+/* Select the area later erases and programs must lie in; returns the one
+ * selected before. Radio task only. */
+enum mx25r_area mx25r_area(enum mx25r_area a);
+
 /* Largest program or read per bus transaction. SPI1 transactions run in a
  * critical section (src/spi1.c), so they are kept short: 4 + 64 bytes at
  * 6 MHz is about 90 us on the wire. */
@@ -85,12 +101,12 @@ bool mx25r_read(uint32_t addr, uint8_t *dst, size_t n);
 
 /* Page Program 02h of 1..MX25R_XFER_MAX bytes that do not cross a 256-byte
  * page, then waits for the end and checks WEL cleared and P_FAIL clear.
- * Panics outside the writable range. The caller reads back to verify. */
+ * Panics outside the selected area. The caller reads back to verify. */
 bool mx25r_program(uint32_t addr, const uint8_t *src, size_t n);
 
 /* Sector Erase 20h of the 4 KB sector starting at addr (aligned), then
  * waits (up to 2 x tSE max) and checks WEL cleared and E_FAIL clear.
- * Panics outside the writable range. The caller reads back to verify. */
+ * Panics outside the selected area. The caller reads back to verify. */
 bool mx25r_erase_sector(uint32_t addr);
 
 #endif

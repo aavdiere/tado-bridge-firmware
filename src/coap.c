@@ -194,6 +194,41 @@ size_t coap_reply(const struct coap_msg *req, uint8_t code, uint8_t *buf, size_t
     return w.overflow ? 0u : w.len;
 }
 
+bool coap_block1(const struct coap_msg *m, uint32_t *num, bool *more, unsigned *szx) {
+    size_t         pos = 0, vlen;
+    unsigned       n   = 0;
+    const uint8_t *val;
+    while (coap_next_option(m, &pos, &n, &val, &vlen)) {
+        if (n != COAP_OPT_BLOCK1) {
+            continue;
+        }
+        if (vlen > 3u) {
+            return false;
+        }
+        uint32_t v = 0;
+        for (size_t i = 0; i < vlen; i++) {
+            v = v << 8 | val[i];
+        }
+        if ((v & 7u) == 7u) {
+            return false; /* SZX 7 is reserved (RFC 7959 2.2) */
+        }
+        *num  = v >> 4;
+        *more = (v & 8u) != 0;
+        *szx  = v & 7u;
+        return true;
+    }
+    return false;
+}
+
+size_t coap_block1_put(uint32_t num, bool more, unsigned szx, uint8_t out[3]) {
+    uint32_t v = num << 4 | (more ? 8u : 0u) | (szx & 7u);
+    size_t   n = v == 0u ? 0u : v < 0x100u ? 1u : v < 0x10000u ? 2u : 3u;
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (uint8_t)(v >> (8u * (n - 1u - i)));
+    }
+    return n;
+}
+
 bool tlv_put(uint8_t *buf, size_t cap, size_t *len, uint16_t fid, const void *val, size_t vlen) {
     if (vlen > 255u || *len + 3u + vlen > cap) {
         return false;

@@ -21,6 +21,14 @@ set(MBEDTLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/mbedtls")
 set(NET_SERVER_HOST "10.42.0.1" CACHE STRING "tanoclo server host name or IPv4 address")
 # tanoclo's TLS WebSocket port (tanoclo/ws-server/lib/config.js:47)
 set(NET_SERVER_PORT 988 CACHE STRING "tanoclo WebSocket TLS port")
+# The image descriptor's fw_version (src/image_desc.c, #24): informational,
+# carried into the update slot header and shown by tools/update/upload.py;
+# two builds that differ only in it are two images with two ids. From the
+# top-level Makefile: `make FW_VERSION=n`.
+set(FW_VERSION 0 CACHE STRING "Firmware version in the image descriptor (u32)")
+if(NOT FW_VERSION MATCHES "^[0-9]+$" OR FW_VERSION GREATER 4294967295)
+    message(FATAL_ERROR "FW_VERSION must be a number 0..4294967295, not '${FW_VERSION}'")
+endif()
 
 ################################################################################
 # Radio transmitter (owner decision 2026-11-17, docs/README.md "Project
@@ -260,6 +268,9 @@ add_executable(${BINARY}
     ../src/link.c
     ../src/pair.c
     ../src/image_desc.c
+    ../src/fwimg.c
+    ../src/fwupd.c
+    ../src/fwupd_task.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c
@@ -285,6 +296,7 @@ target_compile_definitions(${BINARY} PRIVATE
     NET_SERVER_HOST="${NET_SERVER_HOST}"
     NET_SERVER_PORT=${NET_SERVER_PORT}
     RADIO_TX_ALLOWED=${RADIO_TX_ALLOWED_DEF}
+    FW_VERSION=${FW_VERSION}u
     MBEDTLS_CONFIG_FILE="tado_mbedtls_config.h"
 )
 

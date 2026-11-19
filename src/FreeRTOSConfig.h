@@ -39,7 +39,11 @@ void            fw_panic(const char *what, const char *file, int line);
  * #17 (RAM budget); TLS alone is estimated at 30 KB peak, so expect to revisit
  * it in P4. Nothing may use newlib malloc (see src/syscalls.c). */
 #define configSUPPORT_DYNAMIC_ALLOCATION 1
-#define configSUPPORT_STATIC_ALLOCATION  0
+/* Static allocation for the update task (#24, src/fwupd_task.c), so its
+ * stack does not come out of the heap. The idle task's stack and TCB are
+ * then static too (vApplicationGetIdleTaskMemory() in src/hooks.c), which
+ * moves about 0.6 KB from the heap to .bss. */
+#define configSUPPORT_STATIC_ALLOCATION  1
 #define configTOTAL_HEAP_SIZE            ((size_t)(32 * 1024))
 #define configAPPLICATION_ALLOCATED_HEAP 0
 #define configUSE_NEWLIB_REENTRANT 0 /* log.c serialises printf with a mutex; no errno per task */

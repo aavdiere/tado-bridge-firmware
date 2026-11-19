@@ -20,9 +20,18 @@
 #define COAP_PUT         COAP_CODE(0, 3)
 #define COAP_CHANGED     COAP_CODE(2, 4)
 #define COAP_CONTENT     COAP_CODE(2, 5)
+#define COAP_CONTINUE    COAP_CODE(2, 31) /* RFC 7959 2.9.1 */
+#define COAP_BAD_REQUEST COAP_CODE(4, 0)
 #define COAP_UNAUTH      COAP_CODE(4, 1)
+#define COAP_FORBIDDEN   COAP_CODE(4, 3)
+#define COAP_NOT_FOUND   COAP_CODE(4, 4)
+#define COAP_INCOMPLETE  COAP_CODE(4, 8)  /* RFC 7959 2.9.2 */
+#define COAP_TOO_LARGE   COAP_CODE(4, 13) /* RFC 7959 2.9.3 */
+#define COAP_INTERNAL    COAP_CODE(5, 0)
+#define COAP_UNAVAILABLE COAP_CODE(5, 3)
 
 #define COAP_OPT_URI_PATH 11u
+#define COAP_OPT_BLOCK1   27u /* RFC 7959 2.1 */
 /* tanoclo's OPT_VENDOR_2048: the session token from auth/token
  * (tanoclo/ws-server/lib/coap.js:52, docs/server-api.md "Frame"). */
 #define COAP_OPT_SESSION 2048u
@@ -74,6 +83,15 @@ bool coap_path_is(const struct coap_msg *m, const char *uri);
  * with the request's Message ID and token, the given code, no options and
  * no payload. Returns its length, or 0 if it does not fit in cap. */
 size_t coap_reply(const struct coap_msg *req, uint8_t code, uint8_t *buf, size_t cap);
+
+/* Block1 option (RFC 7959 2.2): NUM (up to 20 bits), M, SZX (block size
+ * 2^(SZX + 4)); a uint of 0-3 bytes. coap_block1() reads the first Block1
+ * option: false if there is none, it is longer than 3 bytes, or SZX is the
+ * reserved 7. coap_block1_put() encodes it in as few bytes as possible
+ * (0 for NUM 0, M 0, SZX 0) and returns the length; num must be below
+ * 2^20. */
+bool   coap_block1(const struct coap_msg *m, uint32_t *num, bool *more, unsigned *szx);
+size_t coap_block1_put(uint32_t num, bool more, unsigned szx, uint8_t out[3]);
 
 /* tado TLV: FID u16 big-endian, length u8, value (tanoclo/docs/coap_tlv.md:183-197). */
 bool tlv_put(uint8_t *buf, size_t cap, size_t *len, uint16_t fid, const void *val, size_t vlen);

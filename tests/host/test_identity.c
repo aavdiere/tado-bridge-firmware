@@ -3,8 +3,8 @@
  * newest record that is refused, and a power cut at every step of a write
  * (as the provisioning tool, tools/identity/, performs it). The flash model
  * lets programs and erases reach the identity sectors only, the tool's
- * rule; the firmware's own driver refuses them altogether (src/mx25r.c,
- * FLASH_WRITE_BEGIN in src/flash_layout.h). Checked after every cut: the
+ * rule; the firmware's own driver refuses them altogether (src/mx25r.c:
+ * they lie in none of the writable areas of src/flash_layout.h). Checked after every cut: the
  * identity is the old one or the new one, never another; nothing outside
  * the identity sectors changes; no byte is programmed twice without an
  * erase. */
@@ -16,8 +16,9 @@
 
 #include <stdint.h>
 
-_Static_assert(FLASH_ID_B + FLASH_SECTOR <= FLASH_WRITE_BEGIN,
-               "the firmware's write range excludes the identity sectors");
+_Static_assert(FLASH_SLOTS_END <= FLASH_ID_A && FLASH_ID_B + FLASH_SECTOR <= FLASH_RECORDS_BEGIN
+                   && FLASH_RECORDS_END <= FLASH_BOOT_BEGIN,
+               "the firmware's writable areas exclude the identity sectors");
 
 #define ID_BEGIN FLASH_ID_A
 #define ID_END   (FLASH_ID_B + FLASH_SECTOR)

@@ -858,6 +858,7 @@ struct loop_sim {
     bool (*due)(void);  /* flash work wanted */
     void (*done)(void); /* after one piece of work */
     void (*refill)(void);
+    void (*after_step)(void); /* right after csl_step(): a lower-priority task gets the CPU */
     bool     use_hold, frame_on_idle;
     uint32_t work_us;
     uint64_t first_work_us; /* when the first piece started (0: never) */
@@ -876,6 +877,9 @@ static void run_loop(struct loop_sim *s, uint64_t until_us) {
         }
         csl_hold(s->use_hold && s->due());
         uint32_t wait = csl_step();
+        if (s->after_step) {
+            s->after_step();
+        }
         s->at_limit += csl_counter() >= csl_counter_limit();
         bool idle  = csl_idle();
         bool frame = s->frame_on_idle && idle && !was_idle;
@@ -1124,6 +1128,78 @@ static void test_counter_reservation_under_traffic(void) {
     }
 }
 
+/* The update's flash windows (#24, src/fwupd.h): the update task posts its
+ * next operation as soon as the last one is done, but it runs at a lower
+ * priority than the radio task, so the post lands after the radio task's
+ * next csl_step() (in its xTaskNotifyWait()). Every operation is taken as
+ * the longest, a sector erase with its blank check (250 ms); two devices
+ * with a queue that never empties, and a frame arriving on the first pass
+ * after every transaction. The coordinator gets one transaction between
+ * two operations: every downlink is delivered at its first attempt with a
+ * whole train, and the update still moves on. Without the hold, operations
+ * would wait for gaps in a queue that never empties. */
+static bool upd_posted;
+static bool upd_due(void) {
+    return upd_posted;
+}
+static void upd_done(void) {
+    upd_posted = false;
+}
+static void upd_repost(void) {
+    upd_posted = true;
+}
+
+static void test_update_windows_under_traffic(void) {
+    struct device a, b;
+    for (int hold = 1; hold >= 0; hold--) {
+        reset();
+        traffic_dev[0]    = add_device(&a, 0xA0, 100000, 0);
+        traffic_dev[1]    = add_device(&b, 0xB0, 600000, 0);
+        traffic_n         = 0;
+        upd_posted        = true;
+        struct loop_sim s = {.gate          = csl_idle,
+                             .due           = upd_due,
+                             .done          = upd_done,
+                             .refill        = traffic_refill,
+                             .after_step    = upd_repost,
+                             .use_hold      = hold != 0,
+                             .frame_on_idle = true,
+                             .work_us       = 250000u};
+        unsigned first = n_sent;
+        run_loop(&s, now_us + 60000000);
+        if (hold) {
+            unsigned short_trains = 0, wakes = 0;
+            for (unsigned i = first; i < n_sent; i++) {
+                enum mac_class c = mac_classify(sent[i].frame, sent[i].len);
+                if (c == MAC_WAKEUP) {
+                    wakes++;
+                } else if (c == MAC_DATA || c == MAC_DATA_PENDING) {
+                    short_trains += wakes >= 19 && wakes <= 23;
+                    wakes = 0;
+                }
+            }
+            printf("test_csl: update windows under traffic: %u operations of 250 ms, %u downlinks "
+                   "delivered, %u with a short train of 19-23 wake-up frames\n",
+                   s.works,
+                   n_reports,
+                   short_trains);
+            CHECK(s.works >= 50);
+            CHECK(n_reports >= 50);
+            for (unsigned i = 0; i < n_reports; i++) {
+                CHECK_EQ(reports[i].outcome, CSL_DELIVERED);
+                CHECK_EQ(reports[i].attempt, 1);
+            }
+            CHECK(short_trains + 2u >= n_reports); /* the bootstrap trains are long */
+            CHECK_EQ(s.at_limit, 0);
+        } else {
+            /* The gate alone: an operation starts only in the gaps the
+             * queue leaves, and with a frame on the first idle pass there
+             * are none. */
+            CHECK(s.works < 5);
+        }
+    }
+}
+
 int main(void) {
     ccm_set_key(&key, v_key.p);
     test_bootstrap_then_anchored();
@@ -1145,5 +1221,6 @@ int main(void) {
     test_flash_waits_for_idle();
     test_hold();
     test_counter_reservation_under_traffic();
+    test_update_windows_under_traffic();
     return TEST_REPORT("test_csl");
 }

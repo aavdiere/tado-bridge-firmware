@@ -20,7 +20,7 @@ AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o $(OUT)/sha256.o
 
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
          test_airtime test_cc110l test_cc110l_off test_store test_identity test_pair test_coap \
-         test_mx25r test_button test_pair_led test_boot
+         test_mx25r test_button test_pair_led test_boot test_fwupd
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -40,11 +40,18 @@ test_identity_SRCS := store.c
 # Flash work while frames arrive (#22): the flash driver (included by the
 # test program) and the store above it, against a simulated flash on SPI1
 # and a simulated receiver with random traffic.
-test_mx25r_SRCS := store.c store_port.c
+# Also the update's flash operations (#24, src/fwupd.c fwupd_op_run()) on the
+# real driver under traffic, and the driver's writable areas.
+test_mx25r_SRCS := store.c store_port.c fwupd.c fwimg.c
 test_mx25r_DEPS := $(SRC)/mx25r.c
 # Bootloader decisions and the image and boot-state formats (#24), against
 # models of the external and internal flash with power cuts.
 test_boot_SRCS := store.c fwimg.c boot/bootctl.c
+# The application's side of an update (#24): receive, save, PENDING, confirm,
+# with the real formats and bootloader decisions on the same flash models.
+# With tools/update/upload.py: test_upload_tool.sh feeds the tool's frames through
+# the session's parsers (coap.c) into fwupd.c.
+test_fwupd_SRCS := fwupd.c store.c fwimg.c boot/bootctl.c coap.c
 # Debounce and long press of the buttons (factory reset, pair).
 test_button_SRCS := button.c
 # Pairing LED phase (#19).
@@ -74,6 +81,7 @@ IDENTITY_TOOL := $(ROOT)/build/host-tools/identity
 run: $(addprefix $(OUT)/,$(TESTS)) identity-tool
 	@fail=0; for t in $(addprefix $(OUT)/,$(TESTS)); do $$t || fail=1; done; \
 	./test_identity_tool.sh $(IDENTITY_TOOL) $(OUT)/identity-tool || fail=1; \
+	./test_upload_tool.sh $(OUT)/test_fwupd $(OUT)/upload-tool || fail=1; \
 	if [ $$fail = 0 ]; then echo "host tests: all passed"; else echo "host tests: FAILED"; exit 1; fi
 
 .PHONY: identity-tool

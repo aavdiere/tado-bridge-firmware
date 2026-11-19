@@ -7,12 +7,16 @@
 
 extern const uint8_t _image_start[], _image_end[]; /* cmake/sections.ld */
 
+#ifndef FW_VERSION
+#error "FW_VERSION not defined (cmake/CMakeLists.txt)"
+#endif
+
 __attribute__((used, section(".image_desc"))) const struct fwimg_desc image_desc = {
     .magic      = FWIMG_DESC_MAGIC,
     .version    = FWIMG_DESC_VERSION,
     .len        = FWIMG_DESC_LEN,
     .image_end  = (uint32_t)_image_end,
-    .fw_version = 0,
+    .fw_version = FW_VERSION, /* informational: the build option */
 };
 
 uint32_t image_size(void) {

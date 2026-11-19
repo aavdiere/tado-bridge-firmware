@@ -2,10 +2,13 @@
 #define FLASH_LAYOUT_H
 
 /* External flash (MX25R1635F, 2 MB) layout, docs/design.md "Layout
- * (external flash)". Only the network and counter-log sectors are ever
- * erased or programmed by this firmware (#37): src/mx25r.c panics on any
- * erase or program outside [FLASH_WRITE_BEGIN, FLASH_WRITE_END). The
- * identity sectors are read only (#21).
+ * (external flash)". The application erases and programs three areas, one
+ * at a time (#24): the records (network record and counter log, #37), the
+ * boot state, and the update slots. src/mx25r.c panics on any erase or
+ * program outside the area its caller selected (mx25r_area()); the store
+ * runs in the records area, the update in the slots or the boot state, so
+ * neither can reach the other's sectors. The identity sectors and
+ * 0x108000-0x1FFFFF lie in no area and are never written (#21).
  *
  * Erase unit 4 KB sector, program unit 256-byte page (mx25r1635f.txt:219,
  * 2136-2139, 2308-2316). */
@@ -27,8 +30,9 @@
 
 /* Identity record, slots A and B (#21, docs/design.md "Slotted records").
  * Written only by the host provisioning tool over SWD (tools/identity/),
- * never by this firmware: both sectors lie below FLASH_WRITE_BEGIN, so
- * src/mx25r.c panics on any erase or program there. The bench unit's
+ * never by this firmware: both sectors lie between the slots and the
+ * records, in no writable area, so src/mx25r.c panics on any erase or
+ * program there. The bench unit's
  * stock image has data in 0x100000-0x100FFF and nothing in 0x101000-
  * 0x101FFF (docs/design.md, #37 notes); the first identity write goes to
  * slot A and replaces that stock sector, which the layout accepts because
@@ -55,8 +59,13 @@
 #define FLASH_BOOT_A 0x106000u
 #define FLASH_BOOT_B 0x107000u
 
-#define FLASH_WRITE_BEGIN FLASH_NET_A
-#define FLASH_WRITE_END   (FLASH_CTR_B + FLASH_SECTOR) /* 0x106000, exclusive */
+/* The writable areas (exclusive ends), src/mx25r.h mx25r_area(). */
+#define FLASH_SLOTS_BEGIN   FLASH_SLOT_CAND                     /* 0x000000 */
+#define FLASH_SLOTS_END     (FLASH_SLOT_PREV + FLASH_SLOT_SIZE) /* 0x100000 */
+#define FLASH_RECORDS_BEGIN FLASH_NET_A                         /* 0x102000 */
+#define FLASH_RECORDS_END   (FLASH_CTR_B + FLASH_SECTOR)        /* 0x106000 */
+#define FLASH_BOOT_BEGIN    FLASH_BOOT_A                        /* 0x106000 */
+#define FLASH_BOOT_END      (FLASH_BOOT_B + FLASH_SECTOR)       /* 0x108000 */
 
 _Static_assert(FLASH_SLOT_PREV == FLASH_SLOT_CAND + FLASH_SLOT_SIZE, "slots adjacent");
 _Static_assert(FLASH_SLOT_PREV + FLASH_SLOT_SIZE == FLASH_ID_A, "identity after the slots");
@@ -67,12 +76,19 @@ _Static_assert(FLASH_BOOT_B == FLASH_BOOT_A + FLASH_SECTOR, "boot state slots ad
 
 _Static_assert(FLASH_ID_B == FLASH_ID_A + FLASH_SECTOR, "identity slots adjacent");
 _Static_assert(FLASH_NET_A == FLASH_ID_B + FLASH_SECTOR, "network after identity");
-_Static_assert(FLASH_ID_B + FLASH_SECTOR <= FLASH_WRITE_BEGIN,
+_Static_assert(FLASH_SLOTS_END <= FLASH_ID_A && FLASH_ID_B + FLASH_SECTOR <= FLASH_RECORDS_BEGIN,
                "the firmware cannot erase or program the identity sectors");
 _Static_assert(FLASH_NET_B == FLASH_NET_A + FLASH_SECTOR, "network slots adjacent");
 _Static_assert(FLASH_CTR_A == FLASH_NET_B + FLASH_SECTOR, "counter log after network");
-_Static_assert(FLASH_WRITE_END == 0x106000u, "boot state (#20) starts at 0x106000");
-_Static_assert(FLASH_WRITE_BEGIN % FLASH_SECTOR == 0 && FLASH_WRITE_END % FLASH_SECTOR == 0,
+_Static_assert(FLASH_SLOTS_BEGIN == 0x000000u && FLASH_SLOTS_END == 0x100000u, "slots: 1 MB");
+_Static_assert(FLASH_RECORDS_BEGIN == 0x102000u && FLASH_RECORDS_END == 0x106000u,
+               "records: network and counter log");
+_Static_assert(FLASH_BOOT_BEGIN == 0x106000u && FLASH_BOOT_END == 0x108000u,
+               "boot state (#20) at 0x106000-0x107FFF");
+_Static_assert(FLASH_RECORDS_END <= FLASH_BOOT_BEGIN, "records and boot state apart");
+_Static_assert(FLASH_BOOT_END <= FLASH_SIZE, "writable areas inside the chip");
+_Static_assert(FLASH_SLOTS_END % FLASH_SECTOR == 0 && FLASH_RECORDS_BEGIN % FLASH_SECTOR == 0
+                   && FLASH_RECORDS_END % FLASH_SECTOR == 0 && FLASH_BOOT_END % FLASH_SECTOR == 0,
                "sector aligned");
 
 #endif

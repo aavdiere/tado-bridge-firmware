@@ -74,6 +74,7 @@
 #include "airtime.h"
 #include "cc110l.h"
 #include "csl.h"
+#include "fwupd.h"
 #include "identity.h"
 #include "link.h"
 #include "log.h"
@@ -229,8 +230,9 @@ _Static_assert(FXOSC_HZ * 8u * 16u / (1u << 17) == 25390u, "deviation 25.39 kHz"
  * REARM, it could not, abort and re-arm now. */
 #define NOTE_ACK_CHECK (1u << 6)
 #define NOTE_ACK_REARM (1u << 7)
-#define NOTE_PAIR      (1u << 8) /* the pair button: open or close a window (#19) */
-#define NOTE_RESET     (1u << 9) /* the factory reset button (P6) */
+#define NOTE_PAIR      (1u << 8)  /* the pair button: open or close a window (#19) */
+#define NOTE_RESET     (1u << 9)  /* the factory reset button (P6) */
+#define NOTE_UPDATE    (1u << 10) /* the update task posted a flash operation (#24) */
 
 /* FreeRTOS FromISR calls need a numeric priority >= 5 (FreeRTOSConfig.h,
  * configMAX_SYSCALL_INTERRUPT_PRIORITY = 0x50). */
@@ -388,6 +390,31 @@ void radio_request_factory_reset(void) {
     if (self) {
         xTaskNotify(self, NOTE_RESET, eSetBits);
     }
+}
+
+/* The update's flash operations (#24, src/fwupd.h): one at a time, posted
+ * by the update task, run by this task's loop as flash work (update_op_run()
+ * below). upd_op is written by the update task while it is NULL and by
+ * this task when the operation is done; op->done is the last write. */
+static struct fwupd_op *volatile upd_op;
+static TaskHandle_t volatile upd_task;
+
+bool radio_update_op(struct fwupd_op *op) {
+    while (self == NULL) {
+        vTaskDelay(pdMS_TO_TICKS(10)); /* the radio task has not started yet */
+    }
+    op->done = false;
+    upd_task = xTaskGetCurrentTaskHandle();
+    __asm__ volatile("dmb" ::: "memory");
+    upd_op = op;
+    xTaskNotify(self, NOTE_UPDATE, eSetBits);
+    /* Any notification wakes the wait (a block handed over meanwhile, too):
+     * the loop looks at done. */
+    while (!op->done) {
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+    }
+    __asm__ volatile("dmb" ::: "memory");
+    return op->ok;
 }
 
 /* Microseconds since boot that do not wrap: TIM2's 32 bits extended. Radio
@@ -1795,6 +1822,37 @@ static void factory_reset(void) {
     scb_reset_system(); /* SYSRESETREQ, rm0383.txt:4551-4559 */
 }
 
+/* One update operation (#24), at flash_quiet() with the coordinator held,
+ * like the store's writes (#22): the driver serves the receiver throughout,
+ * so Enhanced ACKs and beacon answers go on; the coordinator starts nothing
+ * until the operation is over (at most one sector erase with its blank
+ * check, about 250 ms, or one boot-state write). Between two operations
+ * the loop runs csl_step() before the update task (lower priority) can
+ * post the next one, so the coordinator gets a transaction in between
+ * (tests/host/test_csl.c, test_update_windows_under_traffic()). */
+static void update_op_run(void) {
+    struct fwupd_op *op = upd_op;
+    __asm__ volatile("dmb" ::: "memory");
+    op->network = network_active();
+    if (op->kind == FWUPD_OP_RESTART) {
+        /* The update task asked: an update was written (PENDING), or the
+         * candidate under test was not confirmed in time. At a quiet
+         * moment, so no flash write is cut; the bootloader takes over. */
+        LOG("update: restarting into the bootloader");
+        vTaskDelay(pdMS_TO_TICKS(FACTORY_LOG_MS));
+        scb_reset_system(); /* SYSRESETREQ, rm0383.txt:4551-4559 */
+    }
+    if (flash_ready) {
+        (void)fwupd_op_run(op); /* selects its writable area and the default again */
+    } else {
+        op->ok = false; /* the flash did not answer at boot: nothing is touched */
+    }
+    upd_op = NULL;
+    __asm__ volatile("dmb" ::: "memory");
+    op->done = true;
+    xTaskNotifyGive(upd_task);
+}
+
 static const char *const outcome_name[] = {
     [CSL_DELIVERED] = "delivered",
     [CSL_NO_ACK]    = "no ack",
@@ -1880,6 +1938,10 @@ static bool serving;
 
 bool mx25r_port_radio_busy(void) {
     return radio_running && (packet_arriving() || cc110l_tx_expected());
+}
+
+bool radio_up(void) {
+    return radio_running && gdo_irq_on && cc110l_cal_ok();
 }
 
 void mx25r_port_radio_serve(void) {
@@ -2069,15 +2131,15 @@ void radio_task_run(void) {
          * each step that may write or read the flash. Flash work waits for
          * flash_quiet(): no transaction set up at all. While work that may
          * program or erase is due (factory reset, pairing trigger, which
-         * may create a network, counter reservation), the coordinator is
-         * held: it starts nothing new, so it is idle by the end of the
-         * transaction in flight, however full its queue. The hold is
-         * dropped on the same pass as the work, before the next
-         * csl_step(). */
+         * may create a network, counter reservation, an update operation),
+         * the coordinator is held: it starts nothing new, so it is idle by
+         * the end of the transaction in flight, however full its queue.
+         * The hold is dropped on the same pass as the work, before the
+         * next csl_step(). */
         flash_due |= (bits & NOTE_FLASH) != 0;
         pair_due |= (bits & NOTE_PAIR) != 0;
         reset_due |= (bits & NOTE_RESET) != 0;
-        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now));
+        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now) || upd_op != NULL);
         if (flash_due && flash_quiet()) {
             flash_due = false;
             flash_check();
@@ -2094,7 +2156,10 @@ void radio_task_run(void) {
         if (flash_quiet()) {
             network_service((uint32_t)now); /* writes only if network_service_due() */
         }
-        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now));
+        if (upd_op != NULL && flash_quiet()) {
+            update_op_run();
+        }
+        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now) || upd_op != NULL);
         if (quiet()) {
             if ((int32_t)(now - next_health) >= 0) {
                 next_health = now + pdMS_TO_TICKS(HEALTH_PERIOD_MS);

@@ -21,6 +21,10 @@ void session_poll(bool net_up, const ip_addr_t *server, bool *busy);
 /* One log line with the relay counters of the last minute (#17). */
 void session_log_minute(void);
 
+/* The session is ready: authenticated, time set (for the update's
+ * confirmation, #24). Any task; a snapshot. */
+bool session_ready(void);
+
 /* Unix time from the server, if it has sent one since boot. */
 bool session_unix_time(uint32_t *now);
 

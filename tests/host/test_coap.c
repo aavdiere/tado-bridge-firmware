@@ -110,8 +110,80 @@ static void test_paths(void) {
     CHECK_MEM(out, want0, sizeof want0);
 }
 
+/* Block1 (#24, b/fw): values from tanoclo's codec, encodeBlock2() in
+ * ws-server/lib/coap.js:448-451 (the same uint layout as Block1), and a
+ * POST b/fw from its buildRequest() with that option. */
+static void test_block1(void) {
+    static const struct {
+        uint32_t num;
+        bool     more;
+        unsigned szx;
+        uint8_t  len, v[3];
+    } vec[] = {
+        {0, true, 6, 1, {0x0E}},
+        {5, true, 6, 1, {0x5E}},
+        {448, false, 6, 2, {0x1C, 0x06}},
+        {0, false, 0, 0, {0}},
+        {15, true, 2, 1, {0xFA}},
+        {4095, false, 6, 2, {0xFF, 0xF6}},
+        {4096, true, 6, 3, {0x01, 0x00, 0x0E}},
+    };
+    for (unsigned i = 0; i < sizeof vec / sizeof vec[0]; i++) {
+        uint8_t out[3] = {0};
+        CHECK_EQ(coap_block1_put(vec[i].num, vec[i].more, vec[i].szx, out), vec[i].len);
+        CHECK_MEM(out, vec[i].v, vec[i].len);
+        /* Round trip through a message. */
+        uint8_t            b[32];
+        struct coap_writer w;
+        struct coap_msg    m;
+        coap_begin(&w, b, sizeof b, COAP_CON, COAP_POST, 1, (const uint8_t *)"", 0);
+        coap_option(&w, COAP_OPT_URI_PATH, "b", 1);
+        coap_option(&w, COAP_OPT_BLOCK1, out, vec[i].len);
+        CHECK(!w.overflow && coap_parse(b, w.len, &m));
+        uint32_t num  = 99;
+        bool     more = !vec[i].more;
+        unsigned szx  = 9;
+        CHECK(coap_block1(&m, &num, &more, &szx));
+        CHECK_EQ(num, vec[i].num);
+        CHECK_EQ(more, vec[i].more);
+        CHECK_EQ(szx, vec[i].szx);
+    }
+
+    /* coap.buildRequest({code: POST, path: 'b/fw', token: a1b2c3d4, mid:
+     * 0x1234, type: CON, payload: 010203, extraOptions: [{27,
+     * encodeBlock2(5, 1, 6)}]}) */
+    static const uint8_t post[] = {0x44, 0x02, 0x12, 0x34, 0xA1, 0xB2, 0xC3, 0xD4, 0xB1, 0x62,
+                                   0x02, 0x66, 0x77, 0xD1, 0x03, 0x5E, 0xFF, 0x01, 0x02, 0x03};
+    struct coap_msg      m;
+    uint32_t             num  = 0;
+    bool                 more = false;
+    unsigned             szx  = 0;
+    CHECK(coap_parse(post, sizeof post, &m));
+    CHECK(coap_path_is(&m, "b/fw"));
+    CHECK(coap_block1(&m, &num, &more, &szx));
+    CHECK_EQ(num, 5);
+    CHECK(more);
+    CHECK_EQ(szx, 6);
+    CHECK_EQ(m.payload_len, 3);
+
+    /* No Block1, a 4-byte one, SZX 7: refused. */
+    CHECK(coap_parse(push, sizeof push, &m));
+    CHECK(!coap_block1(&m, &num, &more, &szx));
+    uint8_t            b[32];
+    struct coap_writer w;
+    coap_begin(&w, b, sizeof b, COAP_CON, COAP_POST, 1, (const uint8_t *)"", 0);
+    coap_option(&w, COAP_OPT_BLOCK1, "\x01\x02\x03\x0E", 4);
+    CHECK(coap_parse(b, w.len, &m));
+    CHECK(!coap_block1(&m, &num, &more, &szx));
+    coap_begin(&w, b, sizeof b, COAP_CON, COAP_POST, 1, (const uint8_t *)"", 0);
+    coap_option(&w, COAP_OPT_BLOCK1, "\x5F", 1);
+    CHECK(coap_parse(b, w.len, &m));
+    CHECK(!coap_block1(&m, &num, &more, &szx));
+}
+
 int main(void) {
     test_push();
     test_paths();
+    test_block1();
     return TEST_REPORT("test_coap");
 }

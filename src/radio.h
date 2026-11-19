@@ -3,6 +3,10 @@
 
 #include "txgate.h"
 
+#include <stdbool.h>
+
+struct fwupd_op;
+
 /* Channel plan: f = 863.125 MHz + n x 199.951 kHz, n = 0..49 (docs/radio.md
  * "PHY"). */
 
@@ -44,5 +48,17 @@ void radio_request_pairing(void);
  * (network_factory_reset()), keeps the identity record, and restarts the
  * MCU, which then boots without a network. Any task. */
 void radio_request_factory_reset(void);
+
+/* The update task (#24, src/fwupd_task.c): run one flash operation of the
+ * update (src/fwupd.h) in the radio task, which owns SPI1, at its next
+ * moment for flash work (no frame arriving, the coordinator idle, and held
+ * while the operation waits), and wait for it. Returns op->ok; op->network
+ * tells whether a network is active. FWUPD_OP_RESTART restarts the MCU and
+ * does not return. One caller at a time. */
+bool radio_update_op(struct fwupd_op *op);
+
+/* The radio is up: configured, its interrupts on, the PLL calibrated (for
+ * the update's confirmation, #24). Any task; a snapshot. */
+bool radio_up(void);
 
 #endif

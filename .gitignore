@@ -48,6 +48,8 @@ ib01_*
 build/
 build-debug/
 build-release/
+# Any other BUILD_DIR (make BUILD_DIR=build-b ..., the update tests of #24)
+build-*/
 *.map
 
 # Editor and OS files

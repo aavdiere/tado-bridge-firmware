@@ -6,8 +6,8 @@
  * address MSB first, then data, :1656-1685). Writes: WREN 0x06 (:877-897),
  * WRDI 0x04 (:910-947), PP 0x02 (:2306-2343) and SE 0x20 (:2134-2171), and
  * nothing else: no WRSR, no block or chip erase, no WRSCUR. Every PP and SE
- * goes through guard(), which panics outside FLASH_WRITE_BEGIN..END
- * (src/flash_layout.h), the network and counter-log sectors.
+ * goes through guard(), which panics outside the area selected with
+ * mx25r_area() (src/flash_layout.h: records, boot state or slots, #24).
  *
  * Program and erase follow the datasheet's flow with the fail flags
  * (mx25r1635f.txt:1281-1330, Figure 13): WREN, RDSR until WEL = 1, the
@@ -64,16 +64,37 @@ _Static_assert((4u + MX25R_XFER_MAX) * 8u * 1000u / 6000u < 1280u,
                "a flash transaction ends before a frame begun under it is seen");
 
 _Static_assert(MX25R_XFER_MAX <= FLASH_PAGE, "a program stays within one page");
-_Static_assert(FLASH_WRITE_END <= FLASH_SIZE, "writable range inside the chip");
+_Static_assert(FLASH_BOOT_END <= FLASH_SIZE && FLASH_RECORDS_END <= FLASH_SIZE,
+               "writable areas inside the chip");
 
-/* The hard address-range guard (#37). Everything else in this file is
- * checked again by the datasheet flow; this is not: a write outside the
- * network and counter-log sectors would destroy data this firmware does
- * not own (the update slots, the boot state, the unassigned rest). */
+/* The hard address-range guard (#37, #24). Everything else in this file is
+ * checked again by the datasheet flow; this is not. One area at a time: a
+ * write by the store outside the records would destroy an image or the
+ * boot state, and a write by the update outside the slots or the boot
+ * state could erase the counter log, after which a reboot would reuse
+ * frame counters under the network key. The identity sectors lie in no
+ * area. */
+static enum mx25r_area area = MX25R_AREA_RECORDS;
+
+enum mx25r_area mx25r_area(enum mx25r_area a) {
+    enum mx25r_area was = area;
+    area                = a;
+    return was;
+}
+
 static void guard(uint32_t addr, size_t n) {
-    if (n == 0 || addr < FLASH_WRITE_BEGIN || addr >= FLASH_WRITE_END
-        || n > FLASH_WRITE_END - addr) {
-        fw_panic("flash: erase/program outside the record sectors", __FILE__, __LINE__);
+    uint32_t lo = FLASH_RECORDS_BEGIN, hi = FLASH_RECORDS_END;
+    if (area == MX25R_AREA_BOOT) {
+        lo = FLASH_BOOT_BEGIN;
+        hi = FLASH_BOOT_END;
+    } else if (area == MX25R_AREA_SLOTS) {
+        lo = FLASH_SLOTS_BEGIN;
+        hi = FLASH_SLOTS_END;
+    } else if (area != MX25R_AREA_RECORDS) {
+        lo = hi = 0; /* no such area: nothing is writable */
+    }
+    if (n == 0 || addr < lo || addr >= hi || n > hi - addr) {
+        fw_panic("flash: erase/program outside the selected area", __FILE__, __LINE__);
     }
 }
 

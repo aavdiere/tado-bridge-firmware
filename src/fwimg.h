@@ -46,7 +46,7 @@ struct fwimg_desc {
     uint16_t version;    /* FWIMG_DESC_VERSION */
     uint16_t len;        /* FWIMG_DESC_LEN */
     uint32_t image_end;  /* first address after the image (linker: _image_end) */
-    uint32_t fw_version; /* informational; 0 for now */
+    uint32_t fw_version; /* informational: the FW_VERSION build option (cmake/CMakeLists.txt) */
     uint32_t reserved[4];
 };
 

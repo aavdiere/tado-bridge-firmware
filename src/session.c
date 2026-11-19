@@ -14,6 +14,7 @@
 
 #include "board.h"
 #include "coap.h"
+#include "fwupd_task.h"
 #include "identity.h"
 #include "link.h"
 #include "log.h"
@@ -87,6 +88,17 @@ static bool       time_valid;
 static uint32_t   time_unix;
 static TickType_t time_tick;
 
+/* The POST b/fw request whose block the update task has (#24): it is
+ * answered once the block is in flash. Net task only. */
+static struct {
+    bool     pending;
+    uint16_t mid;
+    uint8_t  token[8], tkl;
+    uint32_t num;
+    bool     more;
+    unsigned szx;
+} fw;
+
 /* The serial from the identity record (#21, src/identity.h). Only called
  * once identity_init() has found one. */
 static const char *serial(void) {
@@ -100,8 +112,19 @@ static bool elapsed(TickType_t since, uint32_t ms) {
 }
 
 static void set_phase(enum phase p) {
+    if (phase == P_READY && p != P_READY) {
+        /* The session ends: an update transfer ends with it (nothing is
+         * marked; the uploader starts again at block 0), and a block in
+         * work gets no answer. */
+        fwupd_task_abort();
+        fw.pending = false;
+    }
     phase   = p;
     t_phase = xTaskGetTickCount();
+}
+
+bool session_ready(void) {
+    return phase == P_READY;
 }
 
 /* Link-local address from the EUI-64, universal/local bit inverted (RFC
@@ -385,6 +408,103 @@ static void on_config(const struct coap_msg *m) {
         sent ? "sent" : "not sent (send queue full; the server resends)");
 }
 
+/* --- Firmware update, b/fw (#24, docs/design.md "Delivery") ------------------ */
+/* A piggybacked answer (RFC 7252 5.2.1) to a b/fw request: code, the
+ * request's Block1 echoed on 2.31 and 2.04 (RFC 7959 2.3), and text as a
+ * diagnostic payload except on 2.31, which carries none (RFC 7959 2.9.1). */
+static bool fw_answer(
+    uint16_t mid, const uint8_t *token, size_t tkl, uint8_t code, bool block1, const char *text) {
+    uint8_t            buf[COAP_MAX];
+    struct coap_writer w;
+    coap_begin(&w, buf, sizeof buf, COAP_ACK, code, mid, token, tkl);
+    if (block1) {
+        uint8_t b[3];
+        size_t  n = coap_block1_put(fw.num, fw.more, fw.szx, b);
+        coap_option(&w, COAP_OPT_BLOCK1, b, n);
+    }
+    if (code != COAP_CONTINUE && text && *text) {
+        size_t n = strlen(text);
+        coap_payload(&w, text, n < sizeof buf - w.len - 1u ? n : sizeof buf - w.len - 1u);
+    }
+    return !w.overflow && send_coap(buf, w.len);
+}
+
+static const uint8_t fw_code[] = {
+    [FWUPD_CONTINUE]   = COAP_CONTINUE,
+    [FWUPD_DONE]       = COAP_CHANGED,
+    [FWUPD_BAD]        = COAP_BAD_REQUEST,
+    [FWUPD_REFUSED]    = COAP_FORBIDDEN,
+    [FWUPD_INCOMPLETE] = COAP_INCOMPLETE,
+    [FWUPD_TOO_LARGE]  = COAP_TOO_LARGE,
+    [FWUPD_FAILED]     = COAP_INTERNAL,
+};
+
+/* The update task's result for the block it has: answer the request. */
+static void fw_poll(void) {
+    enum fwupd_rc rc;
+    char          why[96];
+    if (!fwupd_task_result(&rc, why, sizeof why)) {
+        return;
+    }
+    if (fw.pending && phase == P_READY) {
+        bool ok = fw_answer(
+            fw.mid, fw.token, fw.tkl, fw_code[rc], rc == FWUPD_CONTINUE || rc == FWUPD_DONE, why);
+        if (!ok) {
+            LOG("update: answer to block %lu not sent (send queue full); the uploader resends",
+                (unsigned long)fw.num);
+        }
+    }
+    fw.pending = false;
+}
+
+/* CON POST b/fw: one Block1 block of an image, handed to the update task
+ * (src/fwupd_task.h); answered when it is in flash (the flow control the
+ * uploader waits for). CON GET b/fw: the update status as text. */
+static void on_fw(const struct coap_msg *m) {
+    if (m->code == COAP_GET) {
+        char text[200];
+        (void)fwupd_status_text(text, sizeof text);
+        if (!fw_answer(m->mid, m->token, m->tkl, COAP_CONTENT, false, text)) {
+            LOG("update: status not sent (send queue full)");
+        }
+        return;
+    }
+    if (m->code != COAP_POST) {
+        (void)fw_answer(m->mid, m->token, m->tkl, COAP_CODE(4, 5), false, "POST or GET");
+        return;
+    }
+    if (fw.pending && m->mid == fw.mid) {
+        return; /* resent while its block is written: answered when done */
+    }
+    uint32_t num;
+    bool     more;
+    unsigned szx;
+    if (!coap_block1(m, &num, &more, &szx) || szx != FWUPD_SZX) {
+        (void)fw_answer(
+            m->mid, m->token, m->tkl, COAP_BAD_REQUEST, false, "Block1 with SZX 6 (1024) needed");
+        return;
+    }
+    if (m->payload_len > FWUPD_BLOCK) {
+        (void)fw_answer(m->mid, m->token, m->tkl, COAP_TOO_LARGE, false, "block over 1024 bytes");
+        return;
+    }
+    if (fwupd_task_busy()) {
+        (void)fw_answer(
+            m->mid, m->token, m->tkl, COAP_UNAVAILABLE, false, "busy with the block before");
+        return;
+    }
+    fw.mid  = m->mid;
+    fw.tkl  = m->tkl;
+    fw.num  = num;
+    fw.more = more;
+    fw.szx  = szx;
+    memcpy(fw.token, m->token, m->tkl);
+    fw.pending = fwupd_task_submit(num, more, m->payload, m->payload_len, phase == P_READY);
+    if (!fw.pending) {
+        (void)fw_answer(m->mid, m->token, m->tkl, COAP_UNAVAILABLE, false, "update task busy");
+    }
+}
+
 /* Every binary message from the server (ws.c handler). */
 static void on_message(const uint8_t *d, size_t n) {
     if (n < FRAME_HDR || d[2] != 16u) {
@@ -429,6 +549,10 @@ static void on_message(const uint8_t *d, size_t n) {
     }
     if (to_us && m.type == COAP_CON && m.code == COAP_PUT && coap_path_is(&m, "d/config")) {
         on_config(&m);
+        return;
+    }
+    if (to_us && m.type == COAP_CON && coap_path_is(&m, "b/fw")) {
+        on_fw(&m);
         return;
     }
     char path[40];
@@ -510,6 +634,7 @@ void session_poll(bool net_up, const ip_addr_t *server, bool *busy) {
     static bool started;
     *busy = false;
     relay_uplinks();
+    fw_poll();
     if (!started) {
         /* The radio task reads the identity record at boot (it owns SPI1):
          * wait for its verdict, then decide once. */

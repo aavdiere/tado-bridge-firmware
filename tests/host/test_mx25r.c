@@ -25,6 +25,7 @@
  * mx25r1635f.txt:556-557, 968-969), WEL needed for program and erase. */
 #include "../../src/mx25r.c"
 
+#include "fwupd.h"
 #include "mac.h"
 #include "store.h"
 #include "txgate.h"
@@ -482,7 +483,7 @@ static void test_traffic(void) {
         if (mx25r_port_radio_busy()) {
             continue;
         }
-        uint32_t sector = FLASH_WRITE_BEGIN + (uint32_t)(rnd() % 4u) * FLASH_SECTOR;
+        uint32_t sector = FLASH_RECORDS_BEGIN + (uint32_t)(rnd() % 4u) * FLASH_SECTOR;
         if (rnd() % 8u == 0) {
             CHECK(mx25r_erase_sector(sector));
             op_done();
@@ -493,7 +494,7 @@ static void test_traffic(void) {
             }
         } else {
             /* A fresh 64-byte chunk somewhere in the writable range. */
-            uint32_t addr = FLASH_WRITE_BEGIN + (next_page++ % 256u) * 64u;
+            uint32_t addr = FLASH_RECORDS_BEGIN + (next_page++ % 256u) * 64u;
             if (!mx25r_erase_sector(addr & ~(FLASH_SECTOR - 1u))) {
                 CHECK(false);
             }
@@ -638,27 +639,215 @@ static void test_fail_flags(void) {
     check_clean();
 }
 
-/* The address guard is unchanged: nothing below the network sectors (the
- * identity) or above the counter log. */
+/* The address guard (#37, #24): one area at a time. In the records area
+ * (the default, the store's) nothing below the network sectors (the
+ * identity, the slots) or from the boot state on; in the boot-state area
+ * only its two sectors; in the slots area only the slots. The identity and
+ * everything from 0x108000 up in no area. */
 static void test_guard(void) {
     flash_reset_model();
     radio_reset(true);
     no_traffic();
+    memset(mem, 0xFF, sizeof mem);
     uint8_t data[4] = {0};
     bool    p       = false;
-    PANICS((void)mx25r_erase_sector(FLASH_ID_A), p);
-    CHECK(p);
-    PANICS((void)mx25r_erase_sector(FLASH_ID_B), p);
-    CHECK(p);
-    PANICS((void)mx25r_program(FLASH_ID_B + FLASH_SECTOR - 4u, data, sizeof data), p);
-    CHECK(p);
-    PANICS((void)mx25r_erase_sector(FLASH_WRITE_END), p);
-    CHECK(p);
-    PANICS((void)mx25r_program(FLASH_CTR_A + 254u, data, sizeof data), p); /* crosses a page */
-    CHECK(p);
-    CHECK_EQ(fl.transactions, 0); /* refused before the bus */
+    CHECK_EQ(mx25r_area(MX25R_AREA_RECORDS), MX25R_AREA_RECORDS); /* the default */
+    static const enum mx25r_area areas[] = {
+        MX25R_AREA_RECORDS, MX25R_AREA_BOOT, MX25R_AREA_SLOTS, (enum mx25r_area)7};
+    for (unsigned i = 0; i < sizeof areas / sizeof areas[0]; i++) {
+        (void)mx25r_area(areas[i]);
+        PANICS((void)mx25r_erase_sector(FLASH_ID_A), p);
+        CHECK(p);
+        PANICS((void)mx25r_erase_sector(FLASH_ID_B), p);
+        CHECK(p);
+        PANICS((void)mx25r_program(FLASH_ID_B + FLASH_SECTOR - 4u, data, sizeof data), p);
+        CHECK(p);
+        PANICS((void)mx25r_program(FLASH_ID_A, data, sizeof data), p);
+        CHECK(p);
+        PANICS((void)mx25r_erase_sector(FLASH_BOOT_END), p);
+        CHECK(p);
+        PANICS((void)mx25r_erase_sector(FLASH_SIZE - FLASH_SECTOR), p);
+        CHECK(p);
+        PANICS((void)mx25r_program(FLASH_CTR_A + 254u, data, sizeof data), p); /* crosses a page */
+        CHECK(p);
+    }
+    /* Each area's own sectors only. */
+    static const struct {
+        enum mx25r_area a;
+        uint32_t        ok[3], bad[4];
+    } t[] = {
+        {MX25R_AREA_RECORDS,
+         {FLASH_NET_A, FLASH_NET_B, FLASH_CTR_B},
+         {FLASH_BOOT_A,
+          FLASH_SLOT_CAND,
+          FLASH_SLOT_PREV + FLASH_SLOT_SIZE - FLASH_SECTOR,
+          FLASH_BOOT_B}},
+        {MX25R_AREA_BOOT,
+         {FLASH_BOOT_A, FLASH_BOOT_B, FLASH_BOOT_A},
+         {FLASH_CTR_B, FLASH_NET_A, FLASH_SLOT_CAND, FLASH_SLOT_PREV}},
+        {MX25R_AREA_SLOTS,
+         {FLASH_SLOT_CAND, FLASH_SLOT_PREV, FLASH_SLOT_PREV + FLASH_SLOT_SIZE - FLASH_SECTOR},
+         {FLASH_NET_A, FLASH_CTR_B, FLASH_BOOT_A, FLASH_BOOT_B}},
+    };
+    /* volatile: kept across the longjmp of PANICS() */
+    volatile unsigned transactions = fl.transactions;
+    CHECK_EQ(transactions, 0); /* everything above refused before the bus */
+    for (volatile unsigned i = 0; i < sizeof t / sizeof t[0]; i++) {
+        (void)mx25r_area(t[i].a);
+        for (volatile unsigned k = 0; k < 4; k++) {
+            PANICS((void)mx25r_erase_sector(t[i].bad[k]), p);
+            CHECK(p);
+            PANICS((void)mx25r_program(t[i].bad[k] + 16u, data, sizeof data), p);
+            CHECK(p);
+        }
+        CHECK_EQ(fl.transactions, transactions);
+        for (unsigned k = 0; k < 3; k++) {
+            CHECK(mx25r_erase_sector(t[i].ok[k]));
+            CHECK(mx25r_program(t[i].ok[k] + 16u, data, sizeof data));
+        }
+        transactions = fl.transactions;
+    }
+    /* The update's operations select their area and leave the default. */
+    (void)mx25r_area(MX25R_AREA_RECORDS);
+    struct fwupd_op o = {.kind = FWUPD_OP_ERASE, .addr = FLASH_SLOT_PREV + 0x10000u};
+    CHECK(fwupd_op_run(&o));
+    CHECK_EQ(mx25r_area(MX25R_AREA_RECORDS), MX25R_AREA_RECORDS);
+    o = (struct fwupd_op){
+        .kind = FWUPD_OP_PROGRAM, .addr = FLASH_SLOT_CAND + 0x2000u, .len = 4, .src = data};
+    CHECK(fwupd_op_run(&o));
+    CHECK_EQ(mx25r_area(MX25R_AREA_RECORDS), MX25R_AREA_RECORDS);
+    o = (struct fwupd_op){.kind = FWUPD_OP_BOOT_WRITE, .boot = {.state = FWIMG_BOOT_PENDING}};
+    CHECK(fwupd_op_run(&o));
+    CHECK_EQ(mx25r_area(MX25R_AREA_RECORDS), MX25R_AREA_RECORDS);
+    struct fwimg_boot b;
+    CHECK(fwimg_boot_load(&b) && b.state == FWIMG_BOOT_PENDING);
+    /* ... and refuse the records, before the bus. */
+    transactions = fl.transactions;
+    o            = (struct fwupd_op){.kind = FWUPD_OP_ERASE, .addr = FLASH_CTR_A};
+    CHECK(!fwupd_op_run(&o));
+    o = (struct fwupd_op){.kind = FWUPD_OP_PROGRAM, .addr = FLASH_NET_A, .len = 4, .src = data};
+    CHECK(!fwupd_op_run(&o));
+    CHECK_EQ(fl.transactions, transactions);
     fl.locks = 0;
 }
+
+/* --- The update's flash work under traffic (#24) ----------------------------------
+ * An update as src/fwupd.c performs it, one operation at a time through
+ * fwupd_op_run() (the radio task's part, src/radio.c), with the task loop
+ * serving the receiver between operations and an operation starting only
+ * on a quiet radio, as flash work does (#22): save a 152 KB image into the
+ * previous slot (erase the header sector, then per sector one erase and 16
+ * page programs, each read back), hash it back in 1 KB reads, write its
+ * header, write the boot state. Checked as above (no ACK late, no
+ * transaction on a busy radio, no CRC-OK edge inside one, the datasheet's
+ * rules) and the longest operation of each kind, which is how long the
+ * coordinator is held at most for one operation. */
+static uint8_t img[152u * 1024u];
+
+static uint64_t op_ns_max[FWUPD_OP_BOOT_WRITE + 1];
+
+static bool timed_op(struct fwupd_op *o) {
+    /* The loop between operations: the receiver is served, and the next
+     * operation starts at a quiet moment only (flash_quiet()). */
+    for (uint64_t until = now_ns + rnd_range(0, 2000000u); now_ns < until;) {
+        mx25r_port_radio_serve();
+    }
+    while (mx25r_port_radio_busy()) {
+        mx25r_port_radio_serve();
+    }
+    uint64_t t0 = now_ns;
+    bool     ok = fwupd_op_run(o);
+    op_done();
+    if (now_ns - t0 > op_ns_max[o->kind]) {
+        op_ns_max[o->kind] = now_ns - t0;
+    }
+    CHECK_EQ(mx25r_area(MX25R_AREA_RECORDS), MX25R_AREA_RECORDS);
+    return ok;
+}
+
+static void test_update_ops_traffic(void) {
+    flash_reset_model();
+    for (uint32_t a = 0; a < FLASH_SIZE; a++) {
+        mem[a] = (uint8_t)(a * 7u + 3u); /* stock data in the slots */
+    }
+    memset(mem + FLASH_BOOT_BEGIN, 0xFF, FLASH_BOOT_END - FLASH_BOOT_BEGIN);
+    static uint8_t keep[FLASH_BOOT_BEGIN - FLASH_SLOTS_END];
+    memcpy(keep, mem + FLASH_SLOTS_END, sizeof keep); /* identity, network, counter log */
+    for (unsigned i = 0; i < sizeof img; i++) {
+        img[i] = (uint8_t)rnd();
+    }
+    radio_reset(true);
+    traffic(now_ns, 200ull * 1000000000u);
+    memset(op_ns_max, 0, sizeof op_ns_max);
+    unsigned        ops  = 0;
+    uint32_t        base = FLASH_SLOT_PREV + FLASH_SLOT_IMAGE;
+    struct fwupd_op o    = {.kind = FWUPD_OP_ERASE, .addr = FLASH_SLOT_PREV};
+    CHECK(timed_op(&o));
+    for (uint32_t off = 0; off < sizeof img; off += FLASH_SECTOR) {
+        o = (struct fwupd_op){.kind = FWUPD_OP_ERASE, .addr = base + off};
+        CHECK(timed_op(&o));
+        ops++;
+        for (uint32_t p = 0; p < FLASH_SECTOR && off + p < sizeof img; p += FLASH_PAGE) {
+            o = (struct fwupd_op){.kind = FWUPD_OP_PROGRAM,
+                                  .addr = base + off + p,
+                                  .len  = FLASH_PAGE,
+                                  .src  = img + off + p};
+            CHECK(timed_op(&o));
+            ops++;
+        }
+    }
+    static uint8_t rb[FWUPD_READ_MAX];
+    for (uint32_t off = 0; off < sizeof img; off += FWUPD_READ_MAX) {
+        o = (struct fwupd_op){
+            .kind = FWUPD_OP_READ, .addr = base + off, .len = FWUPD_READ_MAX, .dst = rb};
+        CHECK(timed_op(&o));
+        CHECK_MEM(rb, img + off, FWUPD_READ_MAX);
+        ops++;
+    }
+    uint8_t hdr[FWIMG_HDR_LEN];
+    memset(hdr, 0x5A, sizeof hdr);
+    o = (struct fwupd_op){
+        .kind = FWUPD_OP_PROGRAM, .addr = FLASH_SLOT_PREV, .len = sizeof hdr, .src = hdr};
+    CHECK(timed_op(&o));
+    o = (struct fwupd_op){.kind = FWUPD_OP_BOOT_WRITE, .boot = {.state = FWIMG_BOOT_PENDING}};
+    CHECK(timed_op(&o));
+    o = (struct fwupd_op){.kind = FWUPD_OP_BOOT_LOAD};
+    CHECK(timed_op(&o) && o.found && o.boot.state == FWIMG_BOOT_PENDING);
+    ops += 4;
+    check_clean();
+    CHECK_MEM(mem + base, img, sizeof img);
+    CHECK_MEM(mem + FLASH_SLOTS_END, keep, sizeof keep); /* nothing outside the slots and boot */
+    CHECK(radio.acks_ok > 500u);
+    CHECK_EQ(stats.gave_up, 0);
+    CHECK(radio.worst_prep <= TICK_NS + 30000u);
+    /* Bounds of one operation [I]: an erase with its blank check within
+     * tSE max (240 ms) plus the reads and waits for the radio; a page within
+     * 4 x tPP max (40 ms) plus its read-back; a 1 KB read well under 50 ms
+     * even with frames to serve; a boot-state write is one erase plus a few
+     * programs. */
+    CHECK(op_ns_max[FWUPD_OP_ERASE] < 320000000u);
+    CHECK(op_ns_max[FWUPD_OP_PROGRAM] < 120000000u);
+    CHECK(op_ns_max[FWUPD_OP_READ] < 50000000u);
+    CHECK(op_ns_max[FWUPD_OP_BOOT_WRITE] < 450000000u);
+    printf("test_mx25r: update under traffic: %u operations, %u frames acked during flash work, "
+           "longest erase %llu ms, page %llu ms, 1 KB read %llu ms, boot-state write %llu ms; "
+           "header to ACK prepared at most %llu us\n",
+           ops,
+           radio.acks_ok,
+           (unsigned long long)(op_ns_max[FWUPD_OP_ERASE] / 1000000u),
+           (unsigned long long)(op_ns_max[FWUPD_OP_PROGRAM] / 1000000u),
+           (unsigned long long)(op_ns_max[FWUPD_OP_READ] / 1000000u),
+           (unsigned long long)(op_ns_max[FWUPD_OP_BOOT_WRITE] / 1000000u),
+           (unsigned long long)(radio.worst_prep / 1000u));
+}
+
+/* fwupd.c's update logic is linked but not run here (tests/host/test_fwupd.c). */
+bool fwupd_port_op(struct fwupd_op *op) {
+    return fwupd_op_run(op);
+}
+void fwupd_port_lock(void) {}
+void fwupd_port_unlock(void) {}
+void fwimg_port_progress(void) {}
 
 int main(void) {
     test_no_radio();
@@ -668,5 +857,6 @@ int main(void) {
     test_timeouts();
     test_fail_flags();
     test_guard();
+    test_update_ops_traffic();
     return TEST_REPORT("test_mx25r");
 }

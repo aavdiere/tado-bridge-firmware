@@ -91,7 +91,7 @@ bool store_port_read(uint32_t addr, uint8_t *dst, size_t n) {
 
 bool store_port_program(uint32_t addr, const uint8_t *src, size_t n) {
     /* The driver's guard and page rule, as hard checks. */
-    CHECK(addr >= FLASH_WRITE_BEGIN && addr + n <= FLASH_WRITE_END);
+    CHECK(addr >= FLASH_RECORDS_BEGIN && addr + n <= FLASH_RECORDS_END);
     CHECK(n >= 1 && n <= STORE_XFER_MAX && addr % FLASH_PAGE + n <= FLASH_PAGE);
     if (fm.dead) {
         return false;
@@ -150,7 +150,7 @@ bool store_port_program(uint32_t addr, const uint8_t *src, size_t n) {
 }
 
 bool store_port_erase(uint32_t addr) {
-    CHECK(addr >= FLASH_WRITE_BEGIN && addr + FLASH_SECTOR <= FLASH_WRITE_END);
+    CHECK(addr >= FLASH_RECORDS_BEGIN && addr + FLASH_SECTOR <= FLASH_RECORDS_END);
     CHECK_EQ(addr % FLASH_SECTOR, 0);
     if (fm.dead) {
         return false;
@@ -225,7 +225,7 @@ static void flash_stock(void) {
 static uint32_t outside_sum(void) {
     uint32_t h = 2166136261u;
     for (uint32_t a = 0; a < FLASH_SIZE; a++) {
-        if (a < FLASH_WRITE_BEGIN || a >= FLASH_WRITE_END) {
+        if (a < FLASH_RECORDS_BEGIN || a >= FLASH_RECORDS_END) {
             h = (h ^ mem[a]) * 16777619u;
         }
     }
