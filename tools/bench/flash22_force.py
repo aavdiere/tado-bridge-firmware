@@ -36,6 +36,18 @@ scheduled, before its train). Polls every --poll s;
 the "done" time is the first poll that sees `limit` move (after the erase,
 the program and their read-back), so it is good to one poll plus one `mdw`.
 
+--put-log FILE (the worst case after the 37b81c8 fix): aim from the overlay PUT
+driver's `RESP <n> <host time> <status>` lines, one mode per PUT from
+--put-modes in turn: `sched` forces at the first poll that sees the frame
+counter move after the response (start() takes the counter as it sets the
+downlink job up, so its short train is then waiting in ST_WAIT); `resp`
+forces at the response itself when a counter is free for it (else it falls
+back to `sched`); `rest` forces nothing. No timer forces in this mode.
+--csl-state ADDR (csl.c `g.state`, `g.hold` the next byte; from a debug
+compile of csl.c, `ptype/o g`) logs the coordinator state and hold at each
+`limit` write and while it waits, and reports a hold seen on for more than
+--hold-stuck s.
+
 Usage (symbols from `arm-none-eabi-nm -S` on the flashed ELF):
   python3 -I tools/bench/flash22_force.py --ctr 0x20006940 --limit 0x20007918 \
       --failing 0x20007920 --counter 0x20006984 --seconds 1800 \
@@ -101,6 +113,14 @@ def main():
                          "--aim-lo..--aim-hi after the line")
     ap.add_argument("--still", type=float, default=1.0,
                     help="with --rtt-log, the timer waits until the counter is still this long")
+    ap.add_argument("--put-log", help="PUT driver log with `RESP n time status` lines")
+    ap.add_argument("--put-modes", default="sched,rest,resp",
+                    help="with --put-log: comma list of sched|resp|rest, one per PUT in turn")
+    ap.add_argument("--sched-window", type=float, default=3.0,
+                    help="with --put-log: s after the response to wait for the counter to move")
+    ap.add_argument("--csl-state", type=lambda x: int(x, 0),
+                    help="address of csl.c g.state (g.hold is the next byte)")
+    ap.add_argument("--hold-stuck", type=float, default=5.0)
     ap.add_argument("--done-timeout", type=float, default=120.0)
     ap.add_argument("--dry-run", action="store_true", help="read and log only, never write")
     ap.add_argument("--port", type=int, default=4444)
@@ -133,10 +153,21 @@ def main():
         say("ABORT: unexpected state, nothing written")
         return 2
 
+    STATES = ("IDLE", "WAIT", "LISTEN", "WAKE", "ACK")
+
+    def csl():
+        if a.csl_state is None:
+            return None, None
+        w = ocd.mdw(a.csl_state)[0]
+        s = w & 0xFF
+        return (STATES[s] if s < len(STATES) else str(s)), (w >> 8) & 0xFF
+
     t_end = time.time() + a.seconds
     last_force = 0.0
     next_due = time.time() + random.uniform(a.min_gap, a.max_gap)
     aim_at = None
+    aim_why = None
+    sched = None  # (counter base, give-up time, why) while waiting for the counter to move
     last_counter = st["counter"]
     n_force = n_done = 0
     rtt = None
@@ -145,11 +176,30 @@ def main():
         rtt = open(os.path.expanduser(a.rtt_log), errors="replace")
         rtt.seek(0, 2)
     rtt_buf = ""
+    put = None
+    modes = [m.strip() for m in a.put_modes.split(",")]
+    if a.put_log:
+        put = open(os.path.expanduser(a.put_log), errors="replace")
+        put.seek(0, 2)
+    put_buf = ""
+    req_counter = {}
+    hold_on = None  # host time the hold was first seen on, while it stays on
+    hold_reported = False
     counter_moved = time.time()
     while time.time() < t_end and not os.path.exists(stop_file):
         now = time.time()
         counter = ocd.mdw(a.counter)[0]
         limit = ocd.mdw(a.limit)[0]
+        cst, hold = csl()
+        if hold:
+            if hold_on is None:
+                hold_on = now
+            elif now - hold_on > a.hold_stuck and not hold_reported:
+                say("HOLD STUCK: on for %.1f s (state %s, limit %d, counter %d)"
+                    % (now - hold_on, cst, limit, counter))
+                hold_reported = True
+        else:
+            hold_on, hold_reported = None, False
         if rtt is not None:
             rtt_buf += rtt.read()
             while "\n" in rtt_buf:
@@ -163,25 +213,61 @@ def main():
                         aim_at = int(lt) + random.uniform(*a.aim_phase)
                     else:
                         aim_at = lt + random.uniform(a.aim_lo, a.aim_hi)
+                    aim_why = "aimed"
                 elif "to server" in text:
                     hold_until = max(hold_until, lt + a.hold)
+        if put is not None:
+            put_buf += put.read()
+            while "\n" in put_buf:
+                line, put_buf = put_buf.split("\n", 1)
+                m = re.match(r"REQ (\d+) ([0-9.]+)", line)
+                if m:
+                    req_counter[int(m.group(1))] = counter
+                    continue
+                m = re.match(r"RESP (\d+) ([0-9.]+) (-?\d+)", line)
+                if not m:
+                    continue
+                k = int(m.group(1))
+                mode = modes[(k - 1) % len(modes)]
+                base = req_counter.pop(k, counter)
+                eligible_now = (counter > limit - CTR_AHEAD and limit - counter >= CTR_LOW + 64
+                                and limit == ocd.mdw(a.ctr + 4)[0])
+                say("put %d resp %.3f (%s) mode %s: counter %d (at request %d), state %s hold %s"
+                    % (k, float(m.group(2)), m.group(3), mode, counter, base, cst, hold))
+                if mode == "resp" and eligible_now and now - last_force >= a.min_gap:
+                    aim_at, aim_why = now, "resp%d" % k
+                elif mode in ("resp", "sched"):
+                    why = ("sched%d" if mode == "sched" else "resp%d->sched") % k
+                    sched = (base, now + a.sched_window, why)
         if counter != last_counter:
             counter_moved = now
-            if counter > last_counter and aim_at is None and rtt is None:
+            if counter > last_counter and aim_at is None and rtt is None and put is None:
                 aim_at = now + random.uniform(a.aim_lo, a.aim_hi)
+                aim_why = "aimed"
             last_counter = counter
+        if sched is not None and aim_at is None:
+            if counter > sched[0]:
+                aim_at, aim_why = now, sched[2]
+                sched = None
+            elif now > sched[1]:
+                say("%s: counter did not move within %.1f s of the response, no force"
+                    % (sched[2], a.sched_window))
+                sched = None
         base = limit - CTR_AHEAD
         eligible = counter > base and limit - counter >= CTR_LOW + 64
         due = (aim_at is not None and now >= aim_at) or (
-            now >= next_due and now >= hold_until and aim_at is None
+            put is None and now >= next_due and now >= hold_until and aim_at is None
             and (rtt is None or now - counter_moved >= a.still))
         if not (eligible and due and now - last_force >= a.min_gap):
             if aim_at is not None and now >= aim_at and (not eligible or now - aim_at > 1.0):
+                if put is not None:
+                    say("%s: not forced (eligible %s, %.1f s since the last force)"
+                        % (aim_why, eligible, now - last_force))
                 aim_at = None
             time.sleep(a.poll)
             continue
 
-        why = "aimed" if aim_at is not None and now >= aim_at else "timer"
+        why = aim_why if aim_at is not None and now >= aim_at else "timer"
         aim_at = None
         st = state()
         if st["failing"]:
@@ -203,32 +289,49 @@ def main():
             say("STOP: ctr.next read back wrong")
             break
         new_lim = st["limit"] - CTR_LOW
+        cst0, hold0 = csl()
         t_fire = time.time()
         ocd.mww(a.limit, new_lim)
         n_force += 1
         last_force = t_fire
         say("force %d %s: cur %d next %d->512, limit %d->%d, counter %d (used since reservation %d)"
+            " csl %s hold %s"
             % (n_force, why, st["cur"], st["next"], st["limit"], new_lim, st["counter"],
-               st["counter"] - (st["limit"] - CTR_AHEAD)))
+               st["counter"] - (st["limit"] - CTR_AHEAD), cst0, hold0))
         # Wait for the firmware to move `limit` (append done).
         ok = False
+        seen = []
+        hold_first = None
         while time.time() - t_fire < a.done_timeout:
             lim2 = ocd.mdw(a.limit)[0]
             if lim2 != new_lim:
                 t_done = time.time()
                 s2 = state()
+                cst2, hold2 = csl()
                 good = (s2["limit"] == lim2 and s2["max"] == lim2 and s2["cur"] == st["cur"] ^ 1
                         and s2["next"] == 1 and s2["max_sec"] == s2["cur"] and s2["failing"] == 0
                         and lim2 > st["limit"])
                 n_done += 1
-                say("done %d after %.1f ms: limit %d, cur %d next %d max %d max_sec %d counter %d %s"
+                say("done %d after %.1f ms: limit %d, cur %d next %d max %d max_sec %d counter %d %s;"
+                    " csl seen %s, hold first seen %s, after: csl %s hold %s"
                     % (n_done, (t_done - t_fire) * 1e3, lim2, s2["cur"], s2["next"], s2["max"],
-                       s2["max_sec"], s2["counter"], "ok" if good else "UNEXPECTED"))
+                       s2["max_sec"], s2["counter"], "ok" if good else "UNEXPECTED",
+                       "/".join(seen) or "-",
+                       "-" if hold_first is None else "%.0f ms" % ((hold_first - t_fire) * 1e3),
+                       cst2, hold2))
                 if not good:
                     say("STOP: unexpected state after an append")
                     return 3
+                if t_done - t_fire > 2.5:
+                    say("SLOW: limit took %.2f s to move" % (t_done - t_fire))
                 ok = True
                 break
+            if a.csl_state is not None:
+                c, h = csl()
+                if not seen or seen[-1] != c:
+                    seen.append(c)
+                if h and hold_first is None:
+                    hold_first = time.time()
             time.sleep(a.poll)
         if not ok:
             st = state()
