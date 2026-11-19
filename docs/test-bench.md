@@ -75,6 +75,8 @@ The backup shows the bench IB01 is configured for **channel 26**, the same chann
 - `tools/sdr/flash22place.py`: places each uplink and the bridge's ACK inside or outside the forced flash windows of `flash22_force.py`'s log, from a `demod.py --csv` file and `timedcap.py`'s host times.
 - `tools/sdr/flash22down.py`: checks each bridge downlink against the forces of `flash22_force.py`'s log: on air (wake-up frames in its train, the device's ACK) and in the RTT (`tx:` attempt, result, wake-up frames; `no ack` lines), per force and in total. No address is printed.
 
+- `tools/update/upload.py`: the bridge's firmware update over the server session (#24): `info`, `upload`, `status` through tanoclo's `POST /api/send-raw`, `--docker tanoclo-ws` for the API's localhost rule, `--blind` while tanoclo cannot return the bridge's answers (#38). Sends to the bridge only through tanoclo, never on air. `design.md`, "Uploader and tanoclo (#24, #38)".
+
 ## RTL-SDR uses
 
 | Use | How | Settles |
@@ -485,7 +487,7 @@ This proves the recovery path in "Recovery over SWD (#24)", step 1, before any u
 
 **6. ACK timing regression.** One `ackgap.py` run on channel 16 as in "ACK timing (#18)" (SDR, spare device sending). The ACK code is unchanged but sits at new addresses; the gap should stay at 225-240 us. PB8 is not needed: the SDR measures on the air.
 
-**Later, with the application's update side (not built):** an update installs (`TESTING`, then `CONFIRMED`); a candidate that never confirms is rolled back after 3 starts; the owner cuts USB power during an install (the power LED flickers while it runs) and the board recovers on the next power-up.
+**Later, with the application's update side (built 2026-11-19, not flashed):** "Self-update (#24): first over-the-air update, plan" below.
 
 **Non-blocking notes from verdict A (2026-11-18) [D]/[I]:**
 - Step 4's halt test only regresses `DBG_IWDG_STOP` **[I]**; it does not exercise the bootloader's own watchdog handling.
@@ -520,6 +522,46 @@ Steps 1, 2, 4, 5 and 6 of the plan above, all by Claude over SWD and the SDR, wi
 | Offset (#7) | Bridge +6947 Hz against the dongle (+8.0 ppm), spare device +12410 Hz: the bridge is 6.3 ppm below the device (7.7 ppm on 2026-11-18) |
 
 **What this means for #24 [V]/[I].** The first flash, the boot path without a boot state, warm resets, the debugger halt and recovery step 1 (LED code 5, then a restore over SWD) work on the bench. Running the application from `0x08010000` behind the bootloader leaves the Enhanced ACK timing unchanged (median 225.9 us, worst 234.8 us). Still open: the power cycle (POR, owner), and the update side (not built).
+
+## Self-update (#24): first over-the-air update, plan [I]
+
+Not run yet. The application's update side: `design.md`, "Implementation: self-update, application side (#24)" and "Uploader and tanoclo (#24, #38)". Planned so that Claude can run it over SWD, RTT, the SDR and the local tanoclo with **no owner hand work**. The power cut during an install (the last step) is the owner's and optional.
+
+**Gates:**
+- A `fw-reviewer` "safe to flash" verdict on the #24 application-update commits (rule 4: bootloader-facing code, a new write path, flash work in the radio task, and the default build transmits). The review must look at the write guard's areas and at the update task's stack and RAM.
+- Builds from the reviewed commit in a clean worktree with the bench `config/local.cmake`; never the main tree's `src/airtime.h` bench edit.
+- `../tanoclo` stays unchanged (`README.md`, "Project decisions"). So the uploader runs in **`--blind`** mode, and the bridge's RTT log is the feedback: `tools/rtt.sh`, `tools/sdr/rttlog.py`, the `update:` lines.
+- With the #38 change (`send-raw` with `waitAck`) the same steps run without `--blind` and see every answer. Putting that change into the bench container without changing the checkout (for example `docker cp` of a patched `lib/command-api.js`) needs the owner's OK first.
+- No option bytes; every SWD write verified, as always.
+
+**Images:**
+- **A** = `make FW_VERSION=1`, the reviewed source.
+- **B** = `make BUILD_DIR=build-b FW_VERSION=2`: the same source, another id.
+- **C**, a candidate that cannot confirm: `make BUILD_DIR=build-c FW_VERSION=3`, then `cmake -Bbuild-c -DNET_SERVER_PORT=989 cmake/ && make -C build-c`. A whole, valid image that never reaches the server, so it is never healthy. No test code: two build options.
+- Check each with `tools/update/upload.py info`. The ids must differ.
+
+**Uploader command** (bench host, tanoclo in the container `tanoclo-ws`): `tools/update/upload.py --docker tanoclo-ws upload <image.bin> --bridge <bench serial> --blind`. In blind mode it waits 120 s after block 0 and 1.5 s per block after that, then for the bridge to reconnect.
+
+**Steps:**
+0. **Flash A** with `tools/flash.sh` (bootloader and application, `Verified OK` twice). The boot log shows `update: running <A> (<n> B); boot state none tries 0 ...` (ids as 16 hex digits) and then session ready.
+1. **The running image is refused.** Upload A. RTT: `update: block 0 of 0 ...: 4.03, this image is the one running`, then a 4.08 per later block. Nothing is written: no `saved` line, and the boot state is still none at the next boot.
+2. **Interrupted update (Ethernet cut).** Upload B. Once RTT shows `block 64`, take the link down from the laptop side: `nmcli device disconnect enp196s0f0`, 30 s, then `nmcli device connect enp196s0f0`. The connection runs in NetworkManager's shared mode ("Bench network"); whether `nmcli` needs no root here is untested **[I]**. If it does, use `docker restart tanoclo-ws`, which also ends the session ("TLS and WebSocket"). Expected:
+   - `update: transfer dropped at block N: the server session ended`, and the uploader stops (send-raw: not connected);
+   - the session ready again after the link returns;
+   - no restart and no install: boot state still none at the next boot.
+3. **Corrupted transfer.** A throwaway script in the scratchpad (not committed) imports `tools/update/upload.py`, flips one byte in block 100 of B's body and sends all blocks blind. Expected RTT at the last block: `5.00, candidate read back does not match its SHA-256`. No `PENDING`, no restart. A then still runs, and the candidate slot has no valid header.
+4. **Real update A → B,** with the SDR on channel 16 (`rf-bench`: `ackgap.py` as in "ACK timing (#18)") and traffic from the spare device (overlay PUTs every 25 s, as in "Bootloader (#24): first flash and checks, result", step 6). Upload B. Expected:
+   - `block 0 ...: 2.31, transfer started; running image saved to the previous slot (<ms>)`; with the earlier steps' saves it may say "already holds";
+   - a line every 64 blocks; then `2.04, image verified, previous image saved, PENDING written: restarting`, then `update: restarting into the bootloader`;
+   - the power LED flickering while the bootloader installs;
+   - B's boot log: `update: running <B> ...; boot state testing tries 1`; about 60 s after session ready, `update: running image <B>... confirmed`;
+   - a later boot shows `boot state confirmed`.
+
+   **Measure:** block 0's time (the save) and the time per block from the RTT `(<n> ms)` figures; the whole transfer; the install time (restart to B's first RTT line). During the transfer: the ACK gap (expected 225-240 us as before, too late 0, overflow 0), every downlink delivered at attempt 1 with a short train, the airtime line, and the `alive:` line (radio and update stack words never used, heap minimum, which should be about 0.6 KB above the 7960 bytes of 2026-11-19). The SDR also confirms nothing on any channel but 16 in its view.
+5. **Rollback.** Upload C to B. C installs and starts (`tries 1`), never gets a session, and restarts after 10 min (`candidate not confirmed within 10 min`). After the 3rd start the bootloader puts B back, about 32 min in all. B's boot log: `boot state rolled_back`. The uploader's reconnect wait (180 s) will time out at the start of this step, as expected; watch the RTT and `GET /api/clients` instead. Then upload B: refused (it runs). Upload A, and it installs and confirms, as step 4; that is the end state, or flash the reviewed image over SWD.
+6. **Optional, owner: a power cut during an install.** During step 4's install (power LED flickering), unplug USB, wait 5 s, plug it back in. The bootloader installs again (`PENDING`, tries counted) and B confirms. Host-tested at every step (`design.md`, power cuts); not needed for the rest.
+
+**Afterwards:** record the figures here and in `design.md` (tags **[V]**), and remove the scratch script. The bench ends on a confirmed image of the reviewed source.
 
 ## Bench network
 
