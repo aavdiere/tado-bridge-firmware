@@ -10,17 +10,17 @@ OUT     := $(ROOT)/build/host-tests
 
 CFLAGS := -std=c11 -O1 -g -Wall -Wextra -Werror -Wundef -Wshadow -Wconversion \
           -Wno-sign-conversion -fsanitize=address,undefined -fno-sanitize-recover=all \
-          -I$(SRC) -I. -I$(MBEDTLS)/include \
+          -I$(SRC) -I$(SRC)/boot -I. -I$(MBEDTLS)/include \
           -DMBEDTLS_CONFIG_FILE='"mbedtls_host_config.h"'
 # mbedTLS is third-party code: built without our warning set.
 MBEDTLS_CFLAGS := -std=c11 -O1 -g -fsanitize=address,undefined -I. -I$(MBEDTLS)/include \
           -DMBEDTLS_CONFIG_FILE='"mbedtls_host_config.h"'
 
-AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o
+AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o $(OUT)/sha256.o
 
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
          test_airtime test_cc110l test_cc110l_off test_store test_identity test_pair test_coap \
-         test_mx25r test_button test_pair_led
+         test_mx25r test_button test_pair_led test_boot
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -42,6 +42,9 @@ test_identity_SRCS := store.c
 # and a simulated receiver with random traffic.
 test_mx25r_SRCS := store.c store_port.c
 test_mx25r_DEPS := $(SRC)/mx25r.c
+# Bootloader decisions and the image and boot-state formats (#24), against
+# models of the external and internal flash with power cuts.
+test_boot_SRCS := store.c fwimg.c boot/bootctl.c
 # Debounce and long press of the buttons (factory reset, pair).
 test_button_SRCS := button.c
 # Pairing LED phase (#19).
@@ -84,8 +87,10 @@ $(OUT)/aes.o: $(MBEDTLS)/library/aes.c mbedtls_host_config.h | $(OUT)
 	$(CC) $(MBEDTLS_CFLAGS) -c $< -o $@
 $(OUT)/platform_util.o: $(MBEDTLS)/library/platform_util.c mbedtls_host_config.h | $(OUT)
 	$(CC) $(MBEDTLS_CFLAGS) -c $< -o $@
+$(OUT)/sha256.o: $(MBEDTLS)/library/sha256.c mbedtls_host_config.h | $(OUT)
+	$(CC) $(MBEDTLS_CFLAGS) -c $< -o $@
 
 .SECONDEXPANSION:
-$(OUT)/test_%: test_%.c test.h vectors_freedo.h Makefile $$(addprefix $(SRC)/,$$(test_$$*_SRCS)) $$(test_$$*_DEPS) $(wildcard $(SRC)/*.h) $(AES_OBJS) | $(OUT)
+$(OUT)/test_%: test_%.c test.h vectors_freedo.h Makefile $$(addprefix $(SRC)/,$$(test_$$*_SRCS)) $$(test_$$*_DEPS) $(wildcard $(SRC)/*.h $(SRC)/boot/*.h) $(AES_OBJS) | $(OUT)
 	$(CC) $(CFLAGS) -DRADIO_TX_ALLOWED=$(if $(test_$*_TX),$(test_$*_TX),1) \
 	    $< $(addprefix $(SRC)/,$(test_$*_SRCS)) $(AES_OBJS) -o $@

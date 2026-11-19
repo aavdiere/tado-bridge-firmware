@@ -133,7 +133,7 @@ Built 2026-11-18, host-tested, **not reviewed and not flashed**: the storage for
 
 **Host tests (`make test`) [I]:** validation and payload layout; loading from a stock image reads only slot A's magic; slot order A, B, A; one flipped bit at every bit of the newest record (the older one wins) and at every byte of a single record (no identity); a newest record with a good CRC but a refused EUI-64 gives no identity, while one of another version or length is not ours and the older one is used; a power cut at every step of a write from no, one and two records, 8 random tears each (72 cases), with nothing outside the identity sectors changed and no byte programmed twice. `test_identity_tool.sh` runs the tool on made-up values: extraction from a fake backup, slot A first on a stock image, the record loads back, "nothing to write" when it is there, `--replace` needed for another identity, malformed inputs and disagreeing markers refused. Mutations of the padding check, the OUI check and the serial's first two characters were each caught.
 
-**Not built yet:** boot state (#20). (Factory reset: built 2026-11-18, "Implementation: factory reset (P6)" below.) The Ethernet MAC is still the placeholder of #12 (`src/net.c`): the identity record v1 does not hold one. Owner decision 2026-11-18: it must come from the original bridge, see "Ethernet MAC from the original bridge (#39)" below.
+**Not built yet:** the application's side of the boot state (#24; the format and the bootloader are built, "Implementation: bootloader and boot state (#24)"). (Factory reset: built 2026-11-18, "Implementation: factory reset (P6)" below.) The Ethernet MAC is still the placeholder of #12 (`src/net.c`): the identity record v1 does not hold one. Owner decision 2026-11-18: it must come from the original bridge, see "Ethernet MAC from the original bridge (#39)" below.
 
 **Ethernet MAC from the original bridge (#39, planned, last functional step) [I]:** owner decision 2026-11-18. Two ways to get it: (a) the owner gives it by hand; (b) it is copied from the stock firmware during the P0 backup. **Known:** the identity tool reads the serial and EUI-64 from the internal-flash backup (`tanoclo/patch_ib_firmware/extract_rf_key.js:51-71`); that script reads no Ethernet MAC. **Unknown:** where the stock firmware keeps its MAC (internal or external flash, or derived from another value); no file in `docs/`, `tanoclo/patch_ib_firmware/` or the teardown wiki names a location (searched 2026-11-18). Finding it is the first task of #39 (read-only, from the existing backup; the MAC and keys are never printed or committed). The identity record gets a version 2 with a 6-byte MAC field; a v1 record stays valid and keeps the placeholder MAC. The format change needs a `fw-reviewer` verdict first.
 
@@ -566,3 +566,142 @@ All over SWD, powered from the ST-Link only (`hardware.md`). Do not change the o
 5. **Read back and compare.** Disconnect the programmer, then power normally.
 
 **Restore:** `read_patch_flash.sh --revert` flashes `original/unmodded.bin` and `original/unmodded_spi.bin` (`tanoclo/patch_ib_firmware/README.md:259,272`), so the dumps must be placed there. Not yet tried.
+
+### Implementation: bootloader and boot state (#24)
+
+Built 2026-11-18, host-tested, reviewed (`fw-reviewer` verdict A, 2026-11-18), **not flashed**: bootloader code, a new storage record and a new application layout need a `fw-reviewer` "safe to flash" verdict first (`CLAUDE.md`; `test-bench.md`, rule 4). Code: `src/fwimg.[ch]` (formats, shared by both images), `src/boot/bootctl.[ch]` (the decisions, hardware independent), `src/boot/bl_hw.[ch]` and `src/boot/main.c` (bootloader hardware), `src/image_desc.[ch]` (the application's descriptor), `cmake/sections.ld`, `cmake/boot.ld`, `cmake/stm32f411ce.ld`; test `tests/host/test_boot.c`. **Not built yet:** the application's side of an update (receive into the candidate slot, save itself into the previous slot, write `PENDING`, confirm), the wider write guard of `src/flash_layout.h`, and the uploader. Until they exist nothing writes a boot state, so the bootloader only ever starts the application ("No boot state" below).
+
+**Application image [I].** Linked at `0x08010000`, 448 KB (`cmake/stm32f411ce.ld`). The vector table comes first (428 bytes: 16 + 91 entries, `vendor/libopencm3/include/libopencm3/stm32/f4/nvic.h:108`). At offset `0x200` follows the descriptor, `struct fwimg_desc` (32 bytes): magic `BTD1`, version 1, length, `image_end` (the linker's `_image_end`, the end of `.data`'s initial values), `fw_version` (0 for now) and reserved words. So the application knows its own length (`image_size()`), which it needs to save itself into the previous slot. `image_end` equals the `.bin` size: 152176 bytes, checked on this build **[V]**. The build fails if the vector table reaches `0x200`, the image outgrows its region, or its size is not a multiple of 4 (`cmake/sections.ld`). `cmake/sections.ld` is our own replacement for libopencm3's `cortex-m-generic.ld`, with the same symbols for libopencm3's `reset_handler`. `main()` sets `SCB_VTOR` first thing, and the bootloader also sets it before the jump.
+
+**Valid application** (`fwimg_app_check()`): the descriptor's magic, version and length are right; `image_end` lies inside the region past the descriptor; the initial stack pointer is word aligned, inside RAM or at its top; the reset vector is Thumb and points inside the image, after the descriptor.
+
+**Commit mark [I]:** the descriptor's magic word. Every install programs it last, after everything else is written and checked. The F411 allows a still-erased word to be programmed later without an erase (`datasheets/rm0383.txt:2346-2347`). So an install cut short never passes `fwimg_app_check()`, whatever the boot state says.
+
+**Slot header [I].** The header sits in the slot's first 4 KB sector (`0x000000`, `0x080000`); the image starts at slot + `0x1000`. Layout: magic `TFW1`, version 1, length 64, image size, `fw_version`, load address `0x08010000`, SHA-256 of the image, 8 reserved zero bytes, CRC-32 over bytes 0-59. **Differs** from "Image format" above: it adds length, load address and a CRC, and gets its own sector, so that an uploader can write the image first and the header last. A slot is valid (`fwimg_slot_verify()`) if:
+- the header parses;
+- the image's first 544 bytes pass `fwimg_app_check()` with the header's size;
+- the SHA-256, read back over the whole image, matches the header.
+
+The stock data in both slots of the bench unit ("Stock contents of the external flash") never counts as valid (test). An image's **id** is the first 16 bytes of its SHA-256.
+
+**Boot state record [I].** A slotted record (format in "Slotted records") at `0x106000`/`0x107000`, magic `BOT1`, version 1. Its 36-byte payload is `state u8 | tries u8 | 0 u16 | cand_id[16] | prev_id[16]`. Unknown states count as none.
+
+| State | Meaning | Written by |
+| :--- | :--- | :--- |
+| none | no record | |
+| `CONFIRMED` | the candidate runs and was confirmed | application |
+| `PENDING` | install `cand_id`; `prev_id` is saved; `tries` = installs begun | application (sets `tries` 0); bootloader counts |
+| `TESTING` | `cand_id` is installed, not yet confirmed; `tries` = starts | bootloader |
+| `ROLLBACK` | put `prev_id` back; `tries` = installs begun | bootloader |
+| `ROLLED_BACK` | the previous image is back after the candidate failed | bootloader |
+| `REJECTED` | a slot was not whole or not the image named at install time: nothing was done | bootloader |
+| `NO_ROLLBACK` | rollback given up: the previous slot is not valid, or its install was begun 3 times | bootloader |
+| `EXTERNAL` | under test, but internal flash holds another image (written over SWD): no rollback | bootloader |
+
+**Decisions per boot** (`bootctl_run()`, `src/boot/bootctl.c:189`) **[I]:**
+
+| State read | Bootloader |
+| :--- | :--- |
+| none, `CONFIRMED`, `ROLLED_BACK`, `REJECTED`, `NO_ROLLBACK`, `EXTERNAL` | `start()`: jump if internal flash holds a valid application. If it holds none, install one from a slot, each slot tried once: first the image the state names (the candidate for `CONFIRMED`; the previous image for the others), then the previous slot, then the candidate slot. If nothing can be installed, halt with LED code 5 |
+| `PENDING` | Both slots must be whole and hold `cand_id` and `prev_id`, else `REJECTED`. If `tries` is 3 or more: `ROLLBACK` (the update is given up). Otherwise write `tries + 1`, install the candidate, then write `TESTING` with `tries` 0 |
+| `TESTING` | If internal flash holds no valid application: `ROLLBACK`. If it holds an image other than `cand_id`: `EXTERNAL`. If `tries` is 3 or more: `ROLLBACK`. Otherwise write `tries + 1` and jump: the start is counted before it happens |
+| `ROLLBACK` | If the previous slot is not whole or not `prev_id`, or `tries` is 3 or more: `NO_ROLLBACK`. Otherwise write `tries + 1`, install the previous image, then write `ROLLED_BACK` |
+
+After each state write the loop reads the state again, for at most 16 rounds; the tries bound it to about 8. **If a state write fails, the bootloader stops managing updates for that boot:** it calls `start()` instead of looping. In `TESTING` it still jumps, since the candidate is whole. **Differs** from "Update flow" above:
+- the bootloader also checks the previous slot before installing;
+- installs are counted;
+- a failed test or a given-up rollback ends in `ROLLED_BACK` or `NO_ROLLBACK`;
+- `start()` adds a rescue: a valid slot is installed when internal flash holds nothing;
+- only the sectors the image covers are erased, not always all of 4-7.
+
+**No boot state (the bench today, and after the first P7 flash) [I]:** the bootloader reads the record (none), checks the application in internal flash and jumps. Nothing is written, in either flash. The stock slots are never valid, so a board without a valid application halts with code 5 instead of installing anything.
+
+**Install** (`install()`, `src/boot/bootctl.c:81`) **[I]:**
+1. Erase the sectors the image covers, sector 4 first, so the old commit mark goes first. With PSIZE x32 a 64 KB sector erases in at most 1.1 s and a 128 KB sector in at most 2 s (`datasheets/stm32f411ce.txt:5320-5330`); x32 is allowed at 2.7-3.6 V (`rm0383.txt:2280-2291`), and the board runs at 3.28 V (`test-bench.md`) **[V]**.
+2. Copy the image in 256-byte chunks, leaving out the magic word. Each chunk is read back and compared.
+3. Compute the SHA-256 of internal flash, counting the magic as it will be, and compare it with the header. This catches a bad read of the slot between its check and the copy, which the chunk compare cannot see.
+4. Program the magic.
+5. Check the result with `fwimg_app_check()`.
+
+The IWDG is reloaded before every sector erase and every 4 KB. During an erase or program the CPU stalls on its own fetches from flash (`rm0383.txt:2243-2246`), so the gap between reloads is one sector erase, at most 2 s. On the host model a 161 KB update took 12.8 s and a 448 KB image 29 s, both counted at datasheet maxima; the longest IWDG gap was 2.0 s **[I]**.
+
+**Power cuts, failure point by failure point [I]** (each is covered by the host test's cut at every step unless noted):
+1. **While the bootloader writes a boot state** (any of the writes above): the slotted record keeps the older generation. The magic is programmed last and the CRC covers the record (`src/store.c`), so the next boot repeats the step from the older state. A cut while `TESTING` `tries + 1` is written happens before the jump, so no start goes uncounted.
+2. **During an internal sector erase:** sector 4 goes first, so the commit mark is gone or the sector is noise. Internal flash then holds no valid application. The state is still `PENDING` or `ROLLBACK`, so the next boot installs again (counted).
+3. **During the copy or the SHA-256 check:** the commit mark is still erased, so the next boot installs again.
+4. **While the magic is programmed:** the word either is not the magic (no valid application) or reads as the magic but is not fully programmed (`rm0383.txt:2240-2242`: flash contents are not guaranteed after a reset during an operation). In both cases the state is still `PENDING` or `ROLLBACK`, so the next boot erases and installs again. A weak magic would matter only at a boot that cannot read the boot state. Not modelled in the test.
+5. **After the magic, before `TESTING` is written:** still `PENDING`, so the same image is installed once more.
+6. **After `TESTING` is written, during the candidate's start or run:** the start was counted; after 3 starts without `CONFIRMED`, the previous image is put back.
+7. **During a rollback:** as points 2-5, with `ROLLBACK`.
+8. **During a rescue install (no update state):** internal flash holds no valid application, so the next boot rescues again. Rescues are not counted, because each try needs a boot.
+9. **Cut and then the external flash unreadable, or the state unwritable:** `start()` sees no commit mark and installs from a slot, or halts. It never starts a torn image (tested: one such boot after every cut).
+10. **IWDG or MCU reset during an external program or erase:** the chip finishes its cycle by itself. `bl_flash_init()` waits up to 480 ms for WIP before reading (as `mx25r_wait_idle()` does).
+
+**Limits [I]:**
+- Three installs of the candidate cut short give the update up: `ROLLBACK`, which puts the previous image back.
+- Three rollbacks cut short give `NO_ROLLBACK`. If internal flash is then torn, `start()` installs the previous image first, not the candidate that failed its test (random test: 1 of 100 updates ended this way).
+- A candidate that cannot confirm because the server is unreachable is rolled back only if it restarts 3 times; a candidate that keeps running is never rolled back.
+- If the external flash cannot be written, a `TESTING` boot is not counted: a bad candidate on a failing chip can loop without being rolled back.
+
+**Watchdog [D]/[I].** The bootloader starts the IWDG at /256 with reload 4095, which gives 22.3 s at the LSI's fastest 47 kHz and 61.7 s at its slowest 17 kHz (`stm32f411ce.txt:5028`; `rm0383.txt:23214-23226`, 32.8 s at 32 kHz). That is longer than any bootloader step and than the application's start before its own `watchdog_start()` (2 s delay, then set-up). The bootloader also sets `DBG_IWDG_STOP`, as OpenOCD itself does on attach (`/usr/share/openocd/scripts/target/stm32f4x.cfg:89-91`). **Changes in the application:** the IWDG now already runs when `main()` starts. A panic before `watchdog_start()` therefore resets the board after 22-62 s; before P7 it could not reset (`hardware.md`, "LED roles"). `watchdog_start()` then sets its own /64 and 1500 as before.
+
+**Hard limits of the bootloader** (`src/boot/bl_hw.c`) **[I]:**
+- Internal flash: erase only sectors 4-7 (`bl_port_int_erase()`, `:387`); program only inside `0x08010000-0x0807FFFF` (`:403`).
+- External flash: Page Program and Sector Erase only inside `0x106000-0x107FFF` (`ext_guard()`, `:286`); no other write command exists in the bootloader.
+- Pins: only PA4-PA7, PB1 and PB9 are touched (static asserts against PA13/PA14 and PB6/PB7).
+- No interrupts, no low-power modes.
+- A guard violation halts with LED code 6 and writes nothing.
+
+The disassembly of the bootloader references FLASH_KEYR, FLASH_SR and FLASH_CR only (offsets `0xC04`, `0xC0C`, `0xC10` from `0x40023000`), never FLASH_OPTKEYR (`0xC08`) or FLASH_OPTCR (`0xC14`) **[V]** (`arm-none-eabi-objdump -d`, this build).
+
+**Power LED in the bootloader:** off while it decides; it flickers on every IWDG reload while it hashes or installs; code 5 (`BL_LED_NO_APP`) means no application and nothing to install; code 6 (`BL_LED_GUARD`) means a refused write (a bug). Both codes repeat every 2.5 s and kick the IWDG, so the board stays in the bootloader until a power cycle or SWD (`hardware.md`, "LED roles").
+
+**Sizes [V]** (`make size`, Release, without `config/local.cmake`; build of `c946452`):
+
+| Build | Bootloader | Application |
+| :--- | ---: | ---: |
+| Release, transmitter on | 6124 B (text 6120 + data 4), 9.3 % of 64 KB | 152176 B, 33.2 % of 448 KB |
+| Release, `RADIO_TX_ALLOWED=0` | 6112 B | 148068 B |
+| Debug (`-Og -g`) | 7448 B | 186724 B |
+
+The bootloader fits the 6-8 KB estimate ("Size check (#23)"). The application grows by 216 bytes against `9c36419` (151960 B): the 84-byte gap after the vector table, the descriptor, VTOR and one log line.
+
+**Host tests (`tests/host/test_boot.c`, `make test`) [I].** The real `bootctl.c`, `fwimg.c` and `store.c` run against two flash models:
+- the external flash: NOR, a program only clears bits;
+- the F411's internal flash: sectors 0-7, x32 word programming.
+
+Both cut the power at any program or erase step: a torn word or prefix, or a sector partly erased. Both can also fail with the power on (fail flag with nothing done, partly done, or a silent miss). A clock charges every operation at its datasheet maximum, which gives the IWDG gap.
+
+Checked on every start: internal flash holds a whole known image, byte for byte; it passes `fwimg_app_check()`; an unconfirmed candidate starts at most 3 times. Checked on every write: the bootloader writes only the boot-state sectors of the external flash and only sectors 4-7 of the internal flash, and never programs a byte twice without an erase.
+
+Cases:
+- the formats (every bit flip of a header refused);
+- a plain boot with no state and the stock slots: no write;
+- rescue from the previous slot; external flash dead;
+- an update confirmed; an update rolled back after 3 starts;
+- 5 kinds of rejected slots; no rollback possible; an image written over SWD under test;
+- internal program and erase failing (bounded, then halt or the old image); the boot state unwritable;
+- a bad read during the copy (18 of 18 caught by the SHA-256 before the commit);
+- the largest image (448 KB);
+- a power cut at 6320 steps of an update and of a rollback: every external program and erase, every internal erase, the first and last word of every chunk, the commit word, and every 97th step. Each cut has 4 tears; after a cut, one boot with the external flash unreadable and one with the state unwritable. Results: 2944 cases ended on the new image (good candidate), 3376 on the old one (bad candidate);
+- 100 random updates with random cuts and random good or bad candidates: 28 rolled back, 1 given up after cut installs, 1600 boots, 40 cut.
+
+Result: 752969325 checks, 0 failed.
+
+**Mutations,** each caught: erasing sector 7 first instead of 4; programming the magic with the rest; not counting `TESTING` starts; not checking a slot's id; no `EXTERNAL` check; no SHA-256 of internal flash before the commit; not checking that the previous slot holds `prev_id`.
+
+**To check on the bench:** `fw-reviewer` verdict A (2026-11-18) is recorded: the plan is accepted with changes (`test-bench.md`, "Bootloader (#24): first flash and checks, plan", which lists them and the non-blocking notes).
+
+### Recovery over SWD (#24)
+
+Designed before the bootloader code. Step 1 was rehearsed on the bench on 2026-11-19 (application sector erased, LED code 5 read over SWD, both images written back and booted) **[V]** (`test-bench.md`, "Bootloader (#24): first flash and checks, result"); steps 2-4 have not been tried. Why SWD stays available whatever the bootloader does **[D]/[I]:**
+- The bootloader never touches the option bytes: no read protection or write protection change, so the flash stays readable and writable over SWD. It never touches PA13/PA14 and never enters a low-power mode.
+- OpenOCD resets the chip with SYSRESETREQ (no NRST on the test points; `target/stm32f4x.cfg:76,81`) and halts it at the reset vector, before the bootloader's first instruction. A system reset puts every register back to its reset value (`rm0383.txt:4545-4546`), and after `reset halt` the IWDG was found not yet running (`build.md`, "Checking the flash against an ELF", 2026-11-16 **[V]**).
+- `DBG_IWDG_STOP` survives system resets, since it is reset only by POR (`rm0383.txt:46200`), and OpenOCD sets it on attach. So a halted core is never reset by the IWDG.
+- The bootloader's own sectors 0-3 are never erased by the bootloader. Only SWD writes them.
+
+**Procedure (power over USB, ST-Link with GND, SWDIO, SWCLK only, `test-bench.md`):**
+1. **Bootloader halts (code 5 or 6), boot-loops, or the application does not start:** `tools/flash.sh`, which writes the bootloader and the application (`program` resets and halts first, writes, verifies), then resets. `tools/flash.sh build/tado-bridge.elf` writes only the application.
+2. **The update state itself is the problem** (for example a bad image keeps being installed): erase the two boot-state sectors through the identity tool's SPI stub path (`tools/identity/identity.tcl`, which today refuses any address but the identity slots; a variant for `0x106000`/`0x107000` would be needed), or flash an application that ignores the state. The bootloader with no state just starts what is in internal flash. Not built: only needed if the update path misbehaves.
+3. **Back to stock:** `read_patch_flash.sh --revert` with the P0 backups (`tanoclo/patch_ib_firmware/README.md:259,272`), as in "First flash" above. This restores sectors 0-7 and the external flash, boot-state sectors included.
+4. **Last resort, if the core cannot be halted at all** (not expected: nothing in the bootloader can stop SWD): the owner pulls BOOT0 high (`hardware.md`: it has a pull-down), so the chip starts from system memory with SWD free, then step 1 (`prototype-plan.md`, "Safety rules").
