@@ -1,4 +1,4 @@
-/* Bridge identity (#21). See identity.h. */
+/* Bridge identity (#21, #39). See identity.h. */
 #include "identity.h"
 
 #include "log.h"
@@ -11,15 +11,20 @@ static struct store_id id;
 static enum identity_state state = IDENTITY_PENDING;
 
 void identity_boot(bool flash_ok) {
-    enum identity_state s   = IDENTITY_NONE;
-    uint32_t            seq = 0;
+    enum identity_state s       = IDENTITY_NONE;
+    uint32_t            seq     = 0;
+    uint16_t            version = 0;
     if (!flash_ok) {
         LOG("identity: flash not usable: no identity: no radio link, no server session");
-    } else if (store_id_load(&id, &seq)) {
+    } else if (store_id_load(&id, &seq, &version)) {
         s = IDENTITY_OK;
-        /* The serial, as the session logs it; the EUI-64 is not logged (no
-         * device address in the log, as in src/radio.c). */
-        LOG("identity: record seq %lu: serial %s, EUI-64 set", (unsigned long)seq, id.serial);
+        /* The serial, as the session logs it; the EUI-64 and the MAC are not
+         * logged (no device address in the log, as in src/radio.c). */
+        LOG("identity: record seq %lu, version %u: serial %s, EUI-64 set, %s",
+            (unsigned long)seq,
+            (unsigned)version,
+            id.serial,
+            id.has_mac ? "Ethernet MAC set" : "no Ethernet MAC (placeholder MAC, src/net.c)");
     } else {
         memset(&id, 0, sizeof id);
         LOG("identity: no valid identity record at 0x100000/0x101000 (provision it with "

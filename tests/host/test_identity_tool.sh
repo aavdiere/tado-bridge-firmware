@@ -27,9 +27,9 @@ printf '\xd2\x02\x96\x49' | dd of="$T/backup.img" bs=1 seek=$((0x400e)) conv=not
 printf '\x00\x1b\xc5\x07\x00\x00\x00\x2a' | dd of="$T/backup.img" bs=1 seek=$((0x4032)) conv=notrunc status=none
 
 out="$("$TOOL" from-backup "$T/backup.img")"
-expect '[[ $out == "backup: serial IB.. (12 characters), EUI-64 ..:..:..:..:..:..:..:2a" ]]'
+expect '[[ $out == "backup: serial IB.. (12 characters), EUI-64 ..:..:..:..:..:..:..:2a, no MAC" ]]'
 out="$("$TOOL" --show from-backup "$T/backup.img")"
-expect '[[ $out == "backup: serial IB1234567890, EUI-64 00 1b c5 07 00 00 00 2a" ]]'
+expect '[[ $out == "backup: serial IB1234567890, EUI-64 00 1b c5 07 00 00 00 2a, no MAC" ]]'
 # Default output of every command carries no full serial or EUI-64.
 out="$("$TOOL" from-backup "$T/backup.img" 2>&1)"
 expect '[[ $out != *1234567890* && $out != *"00 1b c5"* ]]'
@@ -74,6 +74,52 @@ expect '! "$TOOL" from-backup "$T/nomark.img" >/dev/null 2>&1'
 cp "$T/backup.img" "$T/two.img"
 printf '\x42\x49\x00\x00\x54\x46\xff\xff\x01' | dd of="$T/two.img" bs=1 seek=$((0x8006)) conv=notrunc status=none
 expect '! "$TOOL" from-backup "$T/two.img" >/dev/null 2>&1'
+
+# Version 2 with the Ethernet MAC (#39). Made-up, locally administered MACs
+# (not a real bridge's), from a file as the owner keeps it.
+printf '06:00:5e:39:00:2a\n' >"$T/mac.txt"
+printf '06:00:5e:39:00:2b\n' >"$T/mac2.txt"
+# The bench unit's state: v1 seq 1 in slot A, slot B blank.
+expect '"$TOOL" check --backup "$T/backup.img" "$T/new.img" "$T/b.img" >/dev/null'
+# Adding the MAC to the same serial and EUI-64 needs no --replace; it goes
+# to slot B with seq 2, and slot A keeps the v1 record for a firmware from
+# before #39.
+out="$("$TOOL" make --backup "$T/backup.img" --mac-file "$T/mac.txt" "$T/new.img" "$T/b.img" "$T/v2b.img")"
+expect '[[ $out == *"adding the MAC"* && $out == *"sector 0x101000"* && $out == *"record seq 2, version 2"* ]]'
+expect '[[ $out == *"before #39 finds the version 1 record seq 1"* ]]'
+expect '[[ $out == *"MAC set"* ]]'
+# The MAC is not in the default output, only with --show.
+expect '[[ $out != *"5e:39"* && $out != *"5e 39"* && $out != *"5e39"* ]]'
+out="$("$TOOL" --show check --backup "$T/backup.img" --mac-file "$T/mac.txt" "$T/new.img" "$T/v2b.img")"
+expect '[[ $out == *"MAC 06:00:5e:39:00:2a"* && $out == *"identity record OK"* && $out == *"version 2"* ]]'
+# The record loads with this MAC only: not without one, not with another.
+expect '! "$TOOL" check --backup "$T/backup.img" "$T/new.img" "$T/v2b.img" >/dev/null 2>&1'
+expect '! "$TOOL" check --backup "$T/backup.img" --mac-file "$T/mac2.txt" "$T/new.img" "$T/v2b.img" >/dev/null 2>&1'
+expect '"$TOOL" check --serial IB1234567890 --eui64 001bc5070000002a --mac 06-00-5e-39-00-2a "$T/new.img" "$T/v2b.img" >/dev/null'
+# The v2 record is the newest: written slot B holds it after the v1 record,
+# the rest of the sector after the 46-byte record is blank.
+expect '[[ $(tail -c +47 "$T/v2b.img" | LC_ALL=C tr -d "\377" | wc -c) == 0 ]]'
+# Already there: nothing to write.
+out="$("$TOOL" make --backup "$T/backup.img" --mac-file "$T/mac.txt" "$T/new.img" "$T/v2b.img" "$T/again.img")"
+expect '[[ $out == *"sector none"* && ! -e "$T/again.img" ]]'
+# Another MAC, or none, is a replacement.
+expect '! "$TOOL" make --backup "$T/backup.img" --mac-file "$T/mac2.txt" "$T/new.img" "$T/v2b.img" "$T/v2a.img" >/dev/null 2>&1'
+expect '! "$TOOL" make --backup "$T/backup.img" "$T/new.img" "$T/v2b.img" "$T/v2a.img" >/dev/null 2>&1'
+expect '[[ ! -e "$T/v2a.img" ]]'
+out="$("$TOOL" make --replace --backup "$T/backup.img" --mac-file "$T/mac2.txt" "$T/new.img" "$T/v2b.img" "$T/v2a.img")"
+expect '[[ $out == *"sector 0x100000"* && $out == *"record seq 3, version 2"* && $out == *"no version 1 record left"* ]]'
+expect '"$TOOL" check --backup "$T/backup.img" --mac-file "$T/mac2.txt" "$T/v2a.img" "$T/v2b.img" >/dev/null'
+# Refused MACs: group address, all zero, too short, two lines, not hex.
+for bad in '07:00:5e:39:00:2a' '00:00:00:00:00:00' 'ff:ff:ff:ff:ff:ff' '06:00:5e:39:00' $'06:00:5e:39:00:2a\n06:00:5e:39:00:2b' '06:00:5e:39:00:zz'; do
+    printf '%s\n' "$bad" >"$T/badmac.txt"
+    expect '! "$TOOL" make --backup "$T/backup.img" --mac-file "$T/badmac.txt" "$T/a.img" "$T/b.img" "$T/y.img" >/dev/null 2>&1'
+done
+expect '! "$TOOL" make --backup "$T/backup.img" --mac-file "$T/none.txt" "$T/a.img" "$T/b.img" "$T/y.img" >/dev/null 2>&1'
+expect '[[ ! -e "$T/y.img" ]]'
+# A refused MAC file's contents are not echoed.
+printf '07:00:5e:39:00:2a\n' >"$T/badmac.txt"
+out="$("$TOOL" make --backup "$T/backup.img" --mac-file "$T/badmac.txt" "$T/a.img" "$T/b.img" "$T/y.img" 2>&1 || true)"
+expect '[[ $out != *"5e:39"* ]]'
 
 rm -rf "$T"
 echo "test_identity_tool: $checks checks, $fails failed"

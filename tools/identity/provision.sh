@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # Write the bridge's identity record (#21) over SWD: serial and EUI-64 from
-# the P0 backup of the internal flash into the identity sectors of the
-# external flash, by the firmware's own record rules (src/store.c).
+# the P0 backup of the internal flash, and the original bridge's Ethernet
+# MAC (#39) from a file, into the identity sectors of the external flash,
+# by the firmware's own record rules (src/store.c).
 #
-#   tools/identity/provision.sh <workdir> --backup <internal.bin>
-#   tools/identity/provision.sh <workdir> --serial IB0123456789 --eui64 "00 1b c5 .."
+#   tools/identity/provision.sh <workdir> --backup <internal.bin> [--mac-file <file>]
+#   tools/identity/provision.sh <workdir> --serial IB0123456789 --eui64 "00 1b c5 .." [--mac-file <file>]
 #   --replace right after <workdir>: replace a different valid identity
-#   (refused without it; the identity is meant never to change)
+#   (refused without it; the identity is meant never to change). Adding a
+#   MAC to a version 1 record of the same serial and EUI-64 needs no
+#   --replace; changing or removing one does.
+#   --mac-file: one line, the MAC as 6 bytes in hex (the owner's file
+#   ~/ib01-backups/original-bridge-mac.txt, outside git); with it the record
+#   is version 2, without it version 1 (placeholder MAC in the firmware).
+#   --mac <hex> works too, but puts the MAC in the shell history.
 #
 # <workdir> must lie outside any git repository (for example
 # ~/ib01-backups/identity-YYYY-MM-DD): it receives the sectors read from the
@@ -32,7 +39,7 @@ OCD=(openocd -f interface/stlink.cfg -f target/stm32f4x.cfg)
 
 die() { echo "provision: $*" >&2; exit 1; }
 
-[[ $# -ge 3 ]] || die "usage: $0 <workdir> [--replace] (--backup <internal.bin> | --serial S --eui64 HEX)"
+[[ $# -ge 3 ]] || die "usage: $0 <workdir> [--replace] (--backup <internal.bin> | --serial S --eui64 HEX) [--mac-file FILE]"
 WORK="$1"
 shift
 REPLACE=()
@@ -71,8 +78,9 @@ ocd -c "set ID_MODE read; set ID_DIR {$WORK/before}"
 
 OUT="$WORK/sector.bin"
 rm -f "$OUT"
-# The tool's messages (masked identity) go to the log; the terminal gets the
-# sector line and the masked new-record line only.
+# The tool's messages (masked identity; the MAC only as "set") go to the
+# log; the terminal gets the sector line, the masked new-record line, its
+# seq and version, and the tool's notes only.
 LOG="$WORK/make.log"
 "$TOOL" make "${REPLACE[@]}" "${ID[@]}" "$WORK/before/slot_a.bin" "$WORK/before/slot_b.bin" "$OUT" >"$LOG" || { cat "$LOG" >&2; die "identity tool refused (see above)"; }
 MSG="$(cat "$LOG")"
@@ -86,6 +94,9 @@ fi
 [[ $ADDR == 0x100000 ]] && echo "provision: note: slot A (0x100000) holds the stock data in a stock image; it is replaced (the backup keeps it)"
 
 echo "provision: $(grep '^new record:' "$LOG")"
+# Version 1 to 2 (#39), and what a firmware from before #39 still finds
+# (for example the previous image after a rollback, #24).
+grep '^adding the MAC\|^record seq\|^note:' "$LOG" | sed 's/^/provision: /' || true
 read -r -p "provision: write this identity to sector $ADDR now? [y/N] " yes
 [[ $yes == y || $yes == Y ]] || die "not written"
 

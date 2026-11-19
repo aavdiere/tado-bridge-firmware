@@ -1,7 +1,7 @@
 #ifndef STORE_H
 #define STORE_H
 
-/* Identity record (#21), network record and counter log in external flash
+/* Identity record (#21, #39), network record and counter log in external flash
  * (#37), docs/design.md "Slotted records" and "Counter log". Hardware
  * independent: the flash is reached through the three store_port_*
  * functions below (src/store_port.c on the bridge, flash models with power
@@ -67,37 +67,58 @@ bool store_slot_write(uint32_t       slot_a,
 
 uint32_t store_crc32(const uint8_t *p, size_t n);
 
-/* --- Identity record (#21) ------------------------------------------------- */
-/* The bridge's serial and EUI-64, at FLASH_ID_A / FLASH_ID_B. Written once
- * at provisioning by the host tool (tools/identity/), which links this file
- * and calls store_id_write() against an image of the two sectors; the
- * firmware only loads it (its flash driver refuses writes there). */
+/* --- Identity record (#21, #39) -------------------------------------------- */
+/* The bridge's serial, EUI-64 and (version 2) Ethernet MAC, at FLASH_ID_A /
+ * FLASH_ID_B. Written once at provisioning by the host tool
+ * (tools/identity/), which links this file and calls store_id_write()
+ * against an image of the two sectors; the firmware only loads it (its
+ * flash driver refuses writes there).
+ *
+ * Two versions under one magic, one slot rule: a slot holds a version 1 or
+ * a version 2 record, the newest slot of either version is the identity,
+ * and a write goes to the slot that is not the newest of either version
+ * (with the next seq above both). A firmware from before #39 knows version
+ * 1 only: for it a version 2 record does not exist, and it uses a version 1
+ * record in the other slot if there is one. */
 #define STORE_ID_MAGIC      0x314E4449u /* "IDN1" */
-#define STORE_ID_VERSION    1u
+#define STORE_ID_V1         1u          /* serial, EUI-64 */
+#define STORE_ID_V2         2u          /* serial, EUI-64, Ethernet MAC (#39) */
 #define STORE_ID_SERIAL_MAX 16u
-#define STORE_ID_LEN        24u /* serial[16] ASCII, zero padded | EUI-64[8] */
+#define STORE_ID_LEN_V1     24u /* serial[16] ASCII, zero padded | EUI-64[8] */
+#define STORE_ID_LEN_V2     30u /* the version 1 payload | MAC[6] */
+#define STORE_ID_LEN_MAX    STORE_ID_LEN_V2
 
 struct store_id {
     char    serial[STORE_ID_SERIAL_MAX + 1u]; /* NUL terminated */
     uint8_t eui64[8];                         /* stored order, 00 1b c5 first (docs/build.md P4) */
+    bool    has_mac;                          /* version 2: mac is the bridge's Ethernet MAC */
+    uint8_t mac[6];                           /* transmission order; zero without has_mac */
 };
 
 /* Is this an identity the bridge may use? Serial: 3 to 16 characters, two
  * capital letters then capital letters or digits, as tanoclo keys its
  * `devices` table ("IB" and 10 digits for a bridge), NUL after it. EUI-64:
  * tado's OUI 00 1b c5 first (the wire suffix the radio checks,
- * src/mac.c mac_eui_suffix). */
+ * src/mac.c mac_eui_suffix). MAC, if has_mac: unicast (bit 0 of the first
+ * octet clear) and not all zero; without has_mac it must be all zero. */
 bool store_id_valid(const struct store_id *id);
-/* Payload layout: false (and p zeroed) if !store_id_valid(id). */
-bool store_id_pack(const struct store_id *id, uint8_t p[STORE_ID_LEN]);
-/* False (and *out zeroed) if the payload does not make a valid identity:
- * padding not zero, serial or EUI-64 refused by store_id_valid(). */
-bool store_id_unpack(const uint8_t p[STORE_ID_LEN], struct store_id *out);
+/* Payload layout: version 2 if id->has_mac, else version 1. False (and p,
+ * *version, *len zeroed) if !store_id_valid(id). */
+bool store_id_pack(const struct store_id *id,
+                   uint8_t                p[STORE_ID_LEN_MAX],
+                   uint16_t              *version,
+                   uint16_t              *len);
+/* p holds STORE_ID_LEN_V1 or STORE_ID_LEN_V2 bytes as the version says.
+ * False (and *out zeroed) if the payload does not make a valid identity:
+ * unknown version, padding not zero, serial, EUI-64 or MAC refused by
+ * store_id_valid(). */
+bool store_id_unpack(uint16_t version, const uint8_t *p, struct store_id *out);
 
-/* The newest valid identity record (highest seq), if store_id_unpack()
- * accepts it. An older slot is not used in its place: a newest record
- * that is refused leaves the bridge without identity. */
-bool store_id_load(struct store_id *out, uint32_t *seq);
+/* The newest valid identity record of either version (highest seq; slot A
+ * on equal seq), if store_id_unpack() accepts it. An older slot is not used
+ * in its place: a newest record that is refused leaves the bridge without
+ * identity. *version (if not NULL): the record's version. */
+bool store_id_load(struct store_id *out, uint32_t *seq, uint16_t *version);
 /* Host provisioning tool only: on the bridge, src/mx25r.c panics on a
  * write to the identity sectors. Refuses an invalid identity. */
 bool store_id_write(const struct store_id *id, uint32_t *seq);
