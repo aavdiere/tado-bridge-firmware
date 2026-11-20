@@ -59,11 +59,12 @@ test_handoff_SRCS := handoff.c
 test_button_SRCS := button.c
 # Pairing LED phase (#19).
 test_pair_led_SRCS := pair_led.c
+# The rolling one-hour airtime budget (src/airtime.h).
+test_airtime_SRCS := airtime.c
 # The radio driver's transmit functions against a simulated chip
 # (cc110l_model.h). Both programs include src/cc110l.c themselves:
 # test_cc110l as the default firmware builds it, transmitter on;
 # test_cc110l_off as a receive-only build (RADIO_TX_ALLOWED=0) does.
-test_airtime_SRCS := airtime.c
 test_cc110l_SRCS := txgate.c mac.c ccm.c airtime.c
 test_cc110l_DEPS := $(SRC)/cc110l.c cc110l_model.h
 test_cc110l_off_SRCS := txgate.c mac.c ccm.c airtime.c
