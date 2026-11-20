@@ -5,8 +5,8 @@
  * (#13). Only what differs from lwip/opt.h, or what is set on purpose.
  *
  * Threading: NO_SYS. The net task is the only lwIP context: it reads frames
- * from the ENC28J60, calls netif->input, runs sys_check_timeouts() and, from
- * P4, TLS and the WebSocket client (docs/design.md "Tasks": one medium-priority
+ * from the ENC28J60, calls netif->input, runs sys_check_timeouts(), TLS and
+ * the WebSocket client (docs/design.md "Tasks": one medium-priority
  * net task for ENC28J60, lwIP, TLS, WebSocket). Nothing calls lwIP from an
  * interrupt or another task, so no lwIP locking is needed. */
 
@@ -35,7 +35,7 @@ uint32_t rng_u32(void);
 #define LWIP_ICMP                1
 #define LWIP_RAW                 0
 #define LWIP_UDP                 1
-#define LWIP_TCP                 1 /* P4: TLS to tanoclo on port 988 */
+#define LWIP_TCP                 1 /* TLS to tanoclo on port 988 */
 #define LWIP_DHCP                1
 #define LWIP_DHCP_DOES_ACD_CHECK 1 /* probe the offered address before using it (RFC 5227) */
 #define LWIP_DNS                 1
@@ -68,7 +68,8 @@ uint32_t rng_u32(void);
 #define MEMP_NUM_ARP_QUEUE      4
 #define ARP_TABLE_SIZE          4
 
-/* TCP: provisional, to be sized with TLS in P4 (#17). */
+/* TCP. Kept as set before TLS, checked on the bench (#17; docs/design.md
+ * "RAM measured"): at most 3 of 8 segments in use, no allocation errors. */
 #define TCP_MSS          1460
 #define TCP_WND          (2 * TCP_MSS)
 #define TCP_SND_BUF      (2 * TCP_MSS)

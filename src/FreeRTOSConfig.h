@@ -35,9 +35,10 @@ void            fw_panic(const char *what, const char *file, int line);
 #define configUSE_TIMERS               0
 #define configUSE_CO_ROUTINES          0
 
-/* Memory: heap_4 over a fixed array in .bss. PROVISIONAL: 32 KB is a guess for
- * #17 (RAM budget); TLS alone is estimated at 30 KB peak, so expect to revisit
- * it in P4. Nothing may use newlib malloc (see src/syscalls.c). */
+/* Memory: heap_4 over a fixed array in .bss. 32 KB, checked on the bench
+ * (#16, #17; docs/design.md "RAM measured"): the TLS handshake is the peak,
+ * and about 8.5 KB stay free at the lowest point (docs/test-bench.md, the
+ * #24 runs). Nothing may use newlib malloc (see src/syscalls.c). */
 #define configSUPPORT_DYNAMIC_ALLOCATION 1
 /* Static allocation for the update task (#24, src/fwupd_task.c), so its
  * stack does not come out of the heap. The idle task's stack and TCB are
@@ -52,7 +53,8 @@ void            fw_panic(const char *what, const char *file, int line);
 #define configENABLE_MPU 0
 
 /* Cortex-M4 on STM32F4: 4 priority bits. Interrupts that call FromISR APIs
- * (GDO0/GDO2 in P2) must use a numeric priority >= 5 (0x50 and less urgent).
+ * (the radio's GDO0 and GDO2 in src/radio.c, the ENC28J60's INT in
+ * src/enc28j60.c) must use a numeric priority >= 5 (0x50 and less urgent).
  * The kernel (PendSV, SysTick) runs at the lowest priority. */
 #define configPRIO_BITS                              4
 #define configLIBRARY_LOWEST_INTERRUPT_PRIORITY      15

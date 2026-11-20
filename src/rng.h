@@ -7,16 +7,19 @@
 
 /* Random numbers (#14): mbedTLS CTR_DRBG (AES-256, NIST SP 800-90A) seeded
  * from the PA3 entropy source (src/entropy.h), docs/design.md "Entropy".
- * Used for lwIP's LWIP_RAND, and by P4 for TLS (mbedtls_ssl_conf_rng with
- * rng_random) and WebSocket masks.
+ * Used for lwIP's LWIP_RAND, TLS (mbedtls_ssl_conf_rng with rng_random,
+ * src/tls.c), the WebSocket masks and key (src/ws.c), CoAP tokens and the
+ * reconnect back-off (src/session.c), and the network key and pairing random
+ * (src/network.c, src/radio.c).
  *
  * Any task, after the scheduler has started: one mutex serialises the DRBG
  * (#17). rng_init() and every call that can reseed belong to the net task,
  * which owns the ADC of the entropy source; a reseed takes about 45 ms.
- * The radio task uses rng_try_bytes() only, which never waits and never
- * reseeds. Network-key generation (#19, #37) needs full-strength output at
- * a moment without radio deadlines: call rng_bytes() from the net task, or
- * accept the wait. */
+ * The radio task's loop uses rng_try_bytes() only, which never waits and
+ * never reseeds. Network-key generation and the pairing random (#19, #37)
+ * need full-strength output at a moment without radio deadlines: call
+ * rng_bytes() from the net task, or accept the wait, as the radio task does
+ * when the pair button opens a window (pairing_trigger() in src/radio.c). */
 
 /* Start-up health test, then the first seed. Logs the result. False if the
  * test or the seed failed: no random numbers are available then. */
