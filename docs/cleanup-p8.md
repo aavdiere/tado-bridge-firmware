@@ -38,16 +38,16 @@ Expected size effect: "0" means text, data and bss equal to the baseline, with t
 
 | # | Status | Files | What | Size | Gate |
 | ---: | :--- | :--- | :--- | :--- | :--- |
-| 1 | todo | `src/FreeRTOSConfig.h`, `src/lwipopts.h`, `src/rng.h` | Stale stage notes: heap "PROVISIONAL ... revisit it in P4" (`FreeRTOSConfig.h:38-40`), "GDO0/GDO2 in P2" (`:55`), "from P4, TLS" (`lwipopts.h:9`), "TCP: provisional, to be sized with TLS in P4" (`lwipopts.h:71`), "by P4 for TLS" (`rng.h:10`). Replace with the measured state (`design.md`, "RAM measured (#16, #17)"). | 0 | |
-| 2 | todo | `src/radio.h`, `src/radio.c` | Comment drift: "Until P5 ... P6 takes the channel from the network record" (`radio.h:17-19`; the network record is #37 in P5 and the channel is asserted to be the test channel, `src/network.c:17`); history notes "until P5, GDO2 did" (`radio.c:21`), "until P5" (`radio.c:121`), "CMake checked this against BRIDGE_EUI64 until ..." (`radio.c:1780`). | 0 (`__LINE__`) | R |
-| 3 | todo | `src/cc110l.h`, `src/cc110l.c` | "as in the P2 images" (`cc110l.h:31`), "bring-up on the bench (P5)" (`cc110l.h:39`), "(30 s)" repeats the airtime budget (`cc110l.h:240`), "(as until 2026-11-17)" (`cc110l.c:216`); macro comments split by clang-format (`cc110l.c:73-76`); prototype array sizes `ack[29]`, `answered[16]` (`cc110l.h:258,295`) against `MAC_ACK_LEN`, `MAC_HDR_LEN` in the definitions (`cc110l.c:784,856-857`). | 0 (`__LINE__`) | R |
-| 4 | todo | `src/network.h` | A doc block for `network_create()` sits after its declaration (`network.h:37-41`); literal 2048 and 512 (`network.h:44-48`) stand for `STORE_CTR_LOW` and `STORE_CTR_ENTRIES` (`store.h:162,164`). | 0 | |
-| 5 | todo | `src/store.c` | File comment says "Network record and counter log (#37)" (`store.c:1-2`); the file also holds the identity record and the slotted records the boot state uses. | 0, boot hash | R |
-| 6 | todo | `src/board.c`, `src/app.c`, `src/main.c`, `src/watchdog.c`, `src/clock.c` | Orphan comment repeating `board.c:117-118` (`board.c:131-133`); "as before the button module" (`app.c:53`); "~2-6 s" against 2.0-5.6 s (`main.c:101`, `watchdog.h:8`); "at 100 MHz" for a 96 MHz clock (`watchdog.c:30`, `clock.h:7`); "Bench VDD is 3.20 V (hardware.md P0)" (`clock.c:39`) is the ST-Link's own reading from before the USB supply (`hardware.md:173,267`). | 0 (`__LINE__`) | |
-| 7 | todo | `src/fwupd.h`, `src/pa3_adc.c` | Comments broken by clang-format inside macros: `FWUPD_BLOCKS` (`fwupd.h:50-52`), `EOC_WAIT_US` (`pa3_adc.c:22-24`); move them above the macro. | 0 | |
-| 8 | todo | `src/enc28j60.h`, `src/net.c` | Short names `rx_begin()`, `rx_read()`, `rx_end()`, `tx_end()` (`enc28j60.h:69-72`, `net.c:229`) for `enc28j60_rx_begin()` etc. (`enc28j60.h:81-97`). | 0 | |
-| 9 | todo | `src/boot/bootctl.h` | `MAX_TRIES` (`bootctl.h:24`) for `BOOTCTL_MAX_TRIES` (`bootctl.h:32`). | 0, boot hash | |
-| 10 | todo | `tests/host/Makefile` | `test_airtime_SRCS` sits under the comment on the two cc110l programs (`Makefile:69-74`). | none | |
+| 1 | done `eacc70e`, `23f8dd7` | `src/FreeRTOSConfig.h`, `src/lwipopts.h`, `src/rng.h` | Stale stage notes: heap "PROVISIONAL ... revisit it in P4" (`FreeRTOSConfig.h:38-40`), "GDO0/GDO2 in P2" (`:55`), "from P4, TLS" (`lwipopts.h:9`), "TCP: provisional, to be sized with TLS in P4" (`lwipopts.h:71`), "by P4 for TLS" (`rng.h:10`). Replace with the measured state (`design.md`, "RAM measured (#16, #17)"). | 0 | |
+| 2 | done `5c19e0f` | `src/radio.h`, `src/radio.c` | Comment drift: "Until P5 ... P6 takes the channel from the network record" (`radio.h:17-19`; the network record is #37 in P5 and the channel is asserted to be the test channel, `src/network.c:17`); history notes "until P5, GDO2 did" (`radio.c:21`), "until P5" (`radio.c:121`), "CMake checked this against BRIDGE_EUI64 until ..." (`radio.c:1780`). | 0 (`__LINE__`) | R |
+| 3 | done `1da9cc0` | `src/cc110l.h`, `src/cc110l.c` | "as in the P2 images" (`cc110l.h:31`), "bring-up on the bench (P5)" (`cc110l.h:39`), "(30 s)" repeats the airtime budget (`cc110l.h:240`), "(as until 2026-11-17)" (`cc110l.c:216`); macro comments split by clang-format (`cc110l.c:73-76`); prototype array sizes `ack[29]`, `answered[16]` (`cc110l.h:258,295`) against `MAC_ACK_LEN`, `MAC_HDR_LEN` in the definitions (`cc110l.c:784,856-857`). | 0 (`__LINE__`) | R |
+| 4 | done `d1b10e7` | `src/network.h` | A doc block for `network_create()` sits after its declaration (`network.h:37-41`); literal 2048 and 512 (`network.h:44-48`) stand for `STORE_CTR_LOW` and `STORE_CTR_ENTRIES` (`store.h:162,164`). | 0 | |
+| 5 | done `fc887e1` | `src/store.c` | File comment says "Network record and counter log (#37)" (`store.c:1-2`); the file also holds the identity record and the slotted records the boot state uses. | 0, boot hash | R |
+| 6 | done `f2bf731`, `5a51bfc`, `1a81295` | `src/board.c`, `src/app.c`, `src/main.c`, `src/watchdog.c`, `src/clock.c` | Orphan comment repeating `board.c:117-118` (`board.c:131-133`); "as before the button module" (`app.c:53`); "~2-6 s" against 2.0-5.6 s (`main.c:101`, `watchdog.h:8`); "at 100 MHz" for a 96 MHz clock (`watchdog.c:30`, `clock.h:7`); "Bench VDD is 3.20 V (hardware.md P0)" (`clock.c:39`) is the ST-Link's own reading from before the USB supply (`hardware.md:173,267`). | 0 (`__LINE__`) | |
+| 7 | done `13d80e9`, `cde3050`, `23f8dd7` | `src/fwupd.h`, `src/pa3_adc.c` | Comments broken by clang-format inside macros: `FWUPD_BLOCKS` (`fwupd.h:50-52`), `EOC_WAIT_US` (`pa3_adc.c:22-24`); move them above the macro. | 0 | |
+| 8 | done `fe5fa6b` | `src/enc28j60.h`, `src/net.c` | Short names `rx_begin()`, `rx_read()`, `rx_end()`, `tx_end()` (`enc28j60.h:69-72`, `net.c:229`) for `enc28j60_rx_begin()` etc. (`enc28j60.h:81-97`). | 0 | |
+| 9 | done `9fdbf11` | `src/boot/bootctl.h` | `MAX_TRIES` (`bootctl.h:24`) for `BOOTCTL_MAX_TRIES` (`bootctl.h:32`). | 0, boot hash | |
+| 10 | done `4bbfbe4` | `tests/host/Makefile` | `test_airtime_SRCS` sits under the comment on the two cc110l programs (`Makefile:69-74`). | none | |
 | 11 | todo | `src/watchdog.c` | `IWDG_PR_DIV64` (`watchdog.c:47`) and `WDG_PRESCALER_DIV 64` (`watchdog.h:9`) are set apart; tie them with a `_Static_assert`. | 0 | |
 | 12 | todo | `src/fwupd.c`, `src/fwupd_task.c` | Durations and limits written into `why` strings next to the constants they repeat: "every 10 s", "448 KB", "0x08010000", "120 s", "10 min", "in 10 s" (`fwupd.c:296,323,454,486,495,529,533`; `fwupd_task.c:174,187` against `UPDATE_OP_WAIT_MS`, `radio.c:406`). Pin each with a `_Static_assert` on its constant (strings unchanged); name the 5 s cap (`fwupd.c:515`). | 0 | |
 | 13 | todo | `src/cc110l.c` | Magic numbers: strobe and status range 0x30-0x3D and FIFO 0x3F (`cc110l.c:152,161,164,170,463,677,979`), MARCSTATE mask 0x1F (`:612,633,841`), TXBYTES 0x80/0x7F (`:801,804`; `CC_RXBYTES_*` exist, `cc110l.h:129-130`), ISR CHIP_RDYn wait 100 us (`:907,964,986`), `tx_expect()` 11/160/75 (`:237`). Names only; codegen identical. | 0 | R |
@@ -63,6 +63,16 @@ Expected size effect: "0" means text, data and bss equal to the baseline, with t
 | 23 | owner | `tools/sdr/hs18place.py` | Reads the `hs18:` log lines of the temporary #18 test image (`hs18place.py:3-6`); no such line is left in `src/`. Delete, or keep as the record of the #18 measurement. | none | |
 
 Counts: 23 commits; 21 are #33 steps, 2 wait for an owner decision. 10 are comment-only (1-10), 8 are names and asserts with identical code (11-18), 3 change code inside one file or module (19-21). 9 rows (marked R) need a `fw-reviewer` verdict before they are merged; 6 must keep the bootloader hash.
+
+### Rows 1-10: result (#33, 2026-11-20) [V]
+
+Built from a clean export of each commit with the owner's `config/local.cmake` (not printed), outside the working tree, without the owner's local `src/airtime.h` edit. After every commit: `make format` clean; `make test` all passed (including `test_identity_tool` and `test_upload_tool`); text 171848, data 136, bss 85756, as in the baseline; bootloader `.bin` `eb2f44fb…5290` unchanged. A receive-only build (`RADIO_TX_ALLOWED=0`) of the last commit also compiles.
+
+- **Application `.bin`:** `508b33a1adbe1e2a4c13b9e0878138f7cf0540d3b408c6710f955b6ff16c61d9` after row 10. Against the baseline, `objdump -d` and `cmp -l` differ only in three `__LINE__` immediates passed to `fw_panic()`: `radio.c` 743 to 742 and 1296 to 1295 (row 2), `clock.c` 296 to 297 (row 6); 9 bytes in all. Every other commit left the `.bin` byte for byte as before.
+- **Split rows:** rows 6 and 7 span several modules, so they went in one commit per module (board; startup; clock and watchdog; `fwupd.h`; `pa3_adc.c`), as rule 1 asks.
+- **Clearly wrong comments found in the detailed read and fixed in the same commits:** `board.h` said the factory reset warning overrides the router, cloud and pairing LEDs and never the power LED. `led_overridden()` does the opposite (router, power and cloud; never the pairing LED), which is what the owner saw (`test-bench.md`, "Factory reset and LEDs"). `cc110l.c` named `cc110l_tx_start()` as the place where STX is strobed and frames are charged; since #19 that place is `tx_begin()`, which `cc110l_tx_answer()` also uses. `enc28j60.c:240` used a short name, the same drift as row 8. In `app.c`, `STACK_WORDS` is the housekeeping task's size only, not "2 KB each".
+- **Follow-up `23f8dd7` (entropy module):** `rng.h`, `entropy.h` and `pa3_adc.h` said the net task alone owns ADC1 and makes every call that can reseed. Since #19 the radio task also draws with `rng_random()`, in `network_create()` and `pairing_trigger()`, so a reseed can read the ADC in the radio task. `radio-runtime.md`, "Pairing (#19)", counts that reseed in the up to 0.8 s the trigger may take. The DRBG mutex serialises every request after `rng_init()`, so the ADC has one user at a time; the comments now say so. No code changed.
+- **Seen and left alone:** log format strings that clang-format split mid-sentence (`radio.c` wake-train and minute lines, `net.c`). Splitting them is codegen-neutral, but they are code, not comments. History notes that record where a measurement came from ("the P2 bench run" in the `radio.c` FREQEST block) stay. `app.c:31-32` still says the radio stack's deepest path is "to be measured". The bench logs (`test-bench.md`) show at least 494 of 896 words never used, but not whether that run took the deepest path.
 
 ## Not to change
 
@@ -92,31 +102,31 @@ These look redundant but are defence in depth; P8 leaves them as they are:
 
 ## Progress by module
 
-Status: **todo** (rows above), **none** (nothing found by the survey; detailed read at #33 time), **proposal** (only #34 items), **out** (not in scope).
+Status: **todo** (rows above), **done** (all its rows landed), **none** (nothing found by the survey; detailed read at #33 time), **proposal** (only #34 items), **out** (not in scope).
 
 | Module | Files | Read | Status | Rows |
 | :--- | :--- | :--- | :--- | :--- |
-| Startup, tasks | `main.c`, `app.c/.h`, `hooks.c`, `syscalls.c`, `faults.c/.h` | full | todo | 6; P10, P12 |
-| Board | `board.c/.h` | full | todo | 6, 20 |
+| Startup, tasks | `main.c`, `app.c/.h`, `hooks.c`, `syscalls.c`, `faults.c/.h` | full | done | 6 done; P10, P12 |
+| Board | `board.c/.h` | full | todo | 6 done; 20 |
 | Log, RTT | `log.c/.h`, `rtt.c/.h` | full | proposal | P4 |
-| Time, clock, watchdog | `timebase.c/.h`, `clock.c/.h`, `watchdog.c/.h` | full | todo | 6, 11, 19 |
+| Time, clock, watchdog | `timebase.c/.h`, `clock.c/.h`, `watchdog.c/.h` | full | todo | 6 done; 11, 19 |
 | Buttons, pairing LED | `button.c/.h`, `pair_led.c/.h` | full | none | |
-| Config headers | `FreeRTOSConfig.h`, `lwipopts.h`, `tado_mbedtls_config.h`, `arch/cc.h`, `lwip_port.c` | full | todo | 1 |
-| Entropy, DRBG | `pa3_adc.c/.h`, `entropy.c/.h`, `rng.c/.h` | full | todo | 1, 7 |
+| Config headers | `FreeRTOSConfig.h`, `lwipopts.h`, `tado_mbedtls_config.h`, `arch/cc.h`, `lwip_port.c` | full | done | 1 done |
+| Entropy, DRBG | `pa3_adc.c/.h`, `entropy.c/.h`, `rng.c/.h` | full | done | 1, 7 done |
 | SPI1 | `spi1.c/.h` | full | todo | 18 |
-| CC110L driver | `cc110l.c/.h` | full | todo | 3, 13; P6, P7 |
+| CC110L driver | `cc110l.c/.h` | full | todo | 3 done; 13; P6, P7 |
 | Airtime | `airtime.c/.h` | full | out (local edit) | P6 later |
 | Transmit gate | `txgate.c/.h` | full | todo | 15 |
-| Radio task | `radio.c/.h` | part | todo | 2, 14; P1, P6, P7, P10 |
+| Radio task | `radio.c/.h` | full (#33 row 2) | todo | 2 done; 14; P1, P6, P7, P10 |
 | MAC, CCM | `mac.c/.h`, `ccm.c/.h` | ccm full, mac skimmed | none | |
 | Link, 6LoWPAN, CSL, relay, msgq | `link.c/.h`, `lowpan.c/.h`, `csl.c/.h`, `relay.c/.h`, `msgq.c/.h` | msgq full, rest skimmed | proposal | P3 |
 | Pairing | `pair.c/.h` | skimmed | proposal | P3 |
 | External flash driver | `mx25r.c/.h`, `flash_layout.h` | full | proposal | P9, P11 |
-| Store, identity, network | `store.c/.h`, `store_port.c`, `identity.c/.h`, `network.c/.h` | full | todo | 4, 5, 17; P8 |
-| Images, update | `fwimg.c/.h`, `image_desc.c/.h`, `fwupd.c/.h`, `fwupd_task.c/.h`, `handoff.c/.h` | full | todo | 7, 12, 16; P2, P5 |
-| Bootloader | `boot/main.c`, `boot/bootctl.c/.h`, `boot/bl_hw.c/.h`, `boot/bl_mbedtls_config.h` | skimmed | todo | 9; P2, P4, P9 |
-| Ethernet, lwIP, net task | `enc28j60.c/.h`, `net.c/.h` | part | todo | 8; P4 |
+| Store, identity, network | `store.c/.h`, `store_port.c`, `identity.c/.h`, `network.c/.h` | full | todo | 4, 5 done; 17; P8 |
+| Images, update | `fwimg.c/.h`, `image_desc.c/.h`, `fwupd.c/.h`, `fwupd_task.c/.h`, `handoff.c/.h` | full | todo | 7 done; 12, 16; P2, P5 |
+| Bootloader | `boot/main.c`, `boot/bootctl.c/.h`, `boot/bl_hw.c/.h`, `boot/bl_mbedtls_config.h` | `bootctl.h` full, rest skimmed | done | 9 done; P2, P4, P9 |
+| Ethernet, lwIP, net task | `enc28j60.c/.h`, `net.c/.h` | `enc28j60.h`, `net.c` full; `enc28j60.c` part | done | 8 done; P4 |
 | TLS, WebSocket, CoAP, session | `tls.c/.h`, `ws.c/.h`, `coap.c/.h`, `session.c/.h` | skimmed | proposal | P4 |
-| Host tests | `tests/host/*` | Makefile full, rest skimmed | todo | 10, 22 |
+| Host tests | `tests/host/*` | Makefile full, rest skimmed | todo | 10 done; 22 |
 | Tools | `tools/sdr`, `tools/bench`, `tools/entropy`, `tools/identity`, `tools/update`, scripts | headers | owner | 23; rule 6 |
 | Build | `Makefile`, `cmake/*` | skimmed | todo | 21 |
