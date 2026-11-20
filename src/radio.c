@@ -18,9 +18,8 @@
  *   GDO2 (PA1, EXTI1, rising edge): IOCFG2 = 0x07 asserts when a packet has
  *     been received with CRC OK (cc110l.txt:2919). If an Enhanced ACK is
  *     prepared, the interrupt sends it (cc110l_ack_fire_from_isr()).
- * No interrupt announces a filling RX FIFO any more (until P5, GDO2 did):
- * from the sync edge to the end of the frame the task pumps the FIFO every
- * tick (1 ms, 6 bytes of a 64-byte FIFO), and every 100 ms otherwise.
+ * No interrupt announces a filling RX FIFO: from the sync edge to the end of the frame the task
+ * pumps the FIFO every tick (1 ms, 6 bytes of a 64-byte FIFO), and every 100 ms otherwise.
  *
  * ENHANCED ACK (docs/radio.md "ACK prebuild"; target: starts within 1 ms of
  * the end of the Data frame, also while the net task holds the CPU for a
@@ -117,8 +116,7 @@ _Static_assert(RADIO_CHANNEL == TXGATE_TEST_CHANNEL, "transmit only on the test 
  * The stock IB01 burst write 0x00..0x2E from the logic capture
  * (docs/radio.md "Stock CC110L register table", wiki
  * CC110-Register-Configuration.md:43-95), with four changes:
- *   IOCFG2  0x04 -> 0x07  GDO2 = packet received with CRC OK (see above;
- *                         0x00, the RX FIFO threshold, until P5)
+ *   IOCFG2  0x04 -> 0x07  GDO2 = packet received with CRC OK (see above)
  *   IOCFG0  0x01 -> 0x06  GDO0 = sync .. end of packet (see above)
  *   CHANNR  0x00/0x1A -> RADIO_CHANNEL (stock ends up on 26 = 0x1A)
  *   FSCTRL1 0x18 -> 0x06  IF 152 kHz, owner decision (docs/radio.md Conflicts)
@@ -255,12 +253,11 @@ static void notify_from_isr(uint32_t bits) {
  * 3522-3528), and EXTI0 would fire every 3.7 us (both edges) and starve every
  * lower task. Real edges are far rarer: GDO0 rises and falls once per packet,
  * and the shortest packet (4 preamble + 2 sync + length + 1 + 2 CRC bytes at
- * 160 us per byte) takes 1.6 ms; GDO2 rises at most once per packet. So more
- * than
- * STORM_MAX_EDGES edges of either pin within STORM_WINDOW_US means the pins
- * are not doing what the table says: both interrupts go off at once and the
- * radio task re-initialises, which enables them again only after the table
- * is loaded and verified. Both ISRs run at the same priority, so they never
+ * 160 us per byte) takes 1.6 ms; GDO2 rises at most once per packet. So
+ * more than STORM_MAX_EDGES edges of either pin within STORM_WINDOW_US means
+ * the pins are not doing what the table says: both interrupts go off at once
+ * and the radio task re-initialises, which enables them again only after the
+ * table is loaded and verified. Both ISRs run at the same priority, so they never
  * preempt each other and share the counter safely. */
 #define STORM_WINDOW_US 1000u
 #define STORM_MAX_EDGES 32u
@@ -615,13 +612,15 @@ static bool packet_arriving(void) {
  * got 0 or -1 on 452 of 453 frames from senders the SDR saw 5.1 kHz (about 3
  * units) apart. On the bench (2026-11-12, 300 s, 1706 frames [V]) the
  * in-packet sample differed by sender while a read after the packet, on the
- * same frames, still gave only 0 or -1. By then the packet has ended and, with MCSM1.RXOFF_MODE =
- * 11, the chip has gone through RX_END and RX_RST back to RX (MARCSTATE 14, 15, 13:
- * cc110l.txt:4481-4482). That restart re-arms the demodulator: RSSI is frozen at sync "until the
- * next time the chip enters the RX state" (cc110l.txt:2113-2115) and needs its response time again
- * after a packet "even if the radio has never exited RX mode" (cc110l.txt:2485-2489). The datasheet
- * says nothing about when FREQEST is held (cc110l.txt:1695-1698, 4429-4434); that the frequency
- * offset loop restarts there too is our inference [I] from the bench numbers.
+ * same frames, still gave only 0 or -1. By then the packet has ended and,
+ * with MCSM1.RXOFF_MODE = 11, the chip has gone through RX_END and RX_RST
+ * back to RX (MARCSTATE 14, 15, 13: cc110l.txt:4481-4482). That restart
+ * re-arms the demodulator: RSSI is frozen at sync "until the next time the
+ * chip enters the RX state" (cc110l.txt:2113-2115) and needs its response
+ * time again after a packet "even if the radio has never exited RX mode"
+ * (cc110l.txt:2485-2489). The datasheet says nothing about when FREQEST is
+ * held (cc110l.txt:1695-1698, 4429-4434); that the frequency offset loop
+ * restarts there too is our inference [I] from the bench numbers.
  *
  * So the task samples on the GDO0 rising edge (sync word found, IOCFG0 0x06,
  * cc110l.txt:2916): the offset loop has run over the preamble with
@@ -1777,8 +1776,8 @@ static void pairing_trigger(uint32_t now_ms) {
         LOG("pair: %s: no window", !flash_ready ? "flash not ready at boot" : "no identity");
         return;
     }
-    /* CMake checked this against BRIDGE_EUI64 until the identity moved to
-     * flash (#21); before any network is created over it. */
+    /* The target must not be the bridge itself (its EUI-64 from the
+     * identity record, #21); checked before any network is created. */
     if (memcmp(target, link_own(), MAC_EUI_LEN) == 0) {
         LOG("pair: PAIR_TARGET_EUI64 is the bridge's own EUI-64: no window");
         return;
@@ -1940,13 +1939,11 @@ static void rx_service(uint32_t bits) {
 /* --- Flash work while frames arrive (#22, src/mx25r.h) -------------------------
  * Flash writes start only at a quiet moment of the task loop (no frame
  * arriving, no coordinator transaction set up: flash_quiet()), but a
- * program cycle takes up to
- * 10 ms and a sector erase up to 240 ms (mx25r1635f.txt:3337-3341), and
- * frames keep coming. The driver therefore calls back here: between its
- * status polls, and instead of starting a bus transaction while a frame
- * arrives or a frame of ours is on the air. A pass here is the receiver's
- * part of a task loop pass: the FIFO is pumped every tick from the sync
- * edge on, so ack_consider() prepares the Enhanced ACK as in the loop, and
+ * program cycle takes up to 10 ms and a sector erase up to 240 ms
+ * (mx25r1635f.txt:3337-3341), and frames keep coming. The driver therefore calls back here: between
+ * its status polls, and instead of starting a bus transaction while a frame arrives or a frame of
+ * ours is on the air. A pass here is the receiver's part of a task loop pass: the FIFO is pumped
+ * every tick from the sync edge on, so ack_consider() prepares the Enhanced ACK as in the loop, and
  * complete frames are handled (frame_done(): link, beacon answer, log).
  * Not here: the coordinator (csl_step(), so no transaction starts during
  * flash work), the quiet-moment work, and the notifications for it, which
@@ -2094,8 +2091,8 @@ void radio_task_run(void) {
             wait = pdMS_TO_TICKS(hint / 1000u - 1u);
         }
         if (wait > 20 && link_pair_engaged((uint32_t)xTaskGetTickCount())) {
-            wait = 20; /* the quick flash of the pairing LED (100 ms halves) needs a pass every 20
-                          ms */
+            /* The quick flash of the pairing LED (100 ms halves) needs a pass every 20 ms. */
+            wait = 20;
         }
         if (wait > 1 && (rx.assembling || rx.in_packet)) {
             wait = 1; /* a frame is arriving: pump the FIFO every tick */
