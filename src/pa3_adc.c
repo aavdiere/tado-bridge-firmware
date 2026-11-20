@@ -20,7 +20,7 @@
 
 #define TSTAB_US 10u /* power-up time tSTAB max 3 µs (DS:6541) */
 /* 480 + 12 cycles take 20.5 µs at 24 MHz (RM:11872-11878); the rest is room
- * for preemption by the radio task and interrupts. */
+ * for preemption by interrupts (and by the radio task, in the net task). */
 #define EOC_WAIT_US 1000u
 
 void pa3_adc_on(enum pa3_smp smp) {

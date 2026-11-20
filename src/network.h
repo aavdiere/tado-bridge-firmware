@@ -35,9 +35,9 @@ void network_boot(void);
  * sector erase (up to 240 ms).
  * Refused unless network_absent(); after any failure, refused until the
  * next boot. Holds the radio task's loop for up to about 0.8 s (DRBG
- * reseed, sector erases); frames are received and acknowledged meanwhile
- * (#22, src/mx25r.h), but the coordinator waits: never while a pairing
- * window is open, and only with the coordinator idle (csl_idle()). */
+ * reseed, sector erases); frames are acknowledged during the sector erases
+ * (#22, src/mx25r.h) but not during the reseed, and the coordinator waits:
+ * never while a pairing window is open, and only with the coordinator idle (csl_idle()). */
 bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]);
 
 /* Radio task, with no frame arriving and the coordinator idle

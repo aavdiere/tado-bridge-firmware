@@ -96,7 +96,7 @@ bool rng_try_bytes(void *out, size_t len) {
     }
     /* mbedTLS reseeds inside a request once the counter has passed the
      * interval (vendor/mbedtls/library/ctr_drbg.c, mbedtls_ctr_drbg_random_
-     * with_add). Leave that request to the net task, which owns the ADC. */
+     * with_add). Leave that request to a caller that may wait. */
     bool ok =
         drbg.reseed_counter < drbg.reseed_interval && mbedtls_ctr_drbg_random(&drbg, out, len) == 0;
     xSemaphoreGive(lock);
