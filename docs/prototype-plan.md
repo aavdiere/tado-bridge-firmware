@@ -2,14 +2,14 @@
 
 Builds the IB01 firmware in stages. Each stage ends in something testable and settles specific open questions (`open-questions.md`). Design: `design.md`. Pins: `hardware.md`.
 
-**Status (2026-11-20): P0 to P4 and P3.1 are done and verified on the bench. P5 is done: #17, #18, #19 and #21 (P6) done; #11 (crystal offset) open; #20 skipped for now (owner decision 2026-11-18, listen-before-transmit stays on). P6 is done: #22 and the factory reset reviewed, flashed and checked 2026-11-18. P7: size check (#23), bootloader and application update side (#24) done and flashed and run on the bench 2026-11-19 (update A to B confirmed, rollback verified, `test-bench.md`, "Self-update (#24): first over-the-air update, result") [V]; the end of step 5 (upload A back, `test-bench.md`, "End of step 5") and the owner's power-cut test are done (power cut done 2026-11-20 [V], `test-bench.md`, "Power cut during an install (#24 step 6), 2026-11-20"), The Ethernet MAC (#39) is done: identity record v2 built, reviewed, and provisioned and verified on the bench 2026-11-20 [V]; the physical power cycle with it is done too (`test-bench.md`, "Power cycle with identity v2") [V]; the update with answers (`waitAck`) ran on the bench 2026-11-20 [V]. P6 and P7 are done (no open issues left; #23, #24, #39 closed). P8: #33 done, #34 parked by the owner (proposals). P9 (pull request to tanoclo, #38) waits until everything else works.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
+**Status (2026-11-20): P0 to P4 and P3.1 are done and verified on the bench. P5 is done: #17, #18, #19 and #21 (P6) done; #11 (crystal offset) open; #20 skipped for now (owner decision 2026-11-18, listen-before-transmit stays on), moved 2026-11-20 to the new stage P7.1 (channel 26, before P8). P6 is done: #22 and the factory reset reviewed, flashed and checked 2026-11-18. P7: size check (#23), bootloader and application update side (#24) done and flashed and run on the bench 2026-11-19 (update A to B confirmed, rollback verified, `test-bench.md`, "Self-update (#24): first over-the-air update, result") [V]; the end of step 5 (upload A back, `test-bench.md`, "End of step 5") and the owner's power-cut test are done (power cut done 2026-11-20 [V], `test-bench.md`, "Power cut during an install (#24 step 6), 2026-11-20"), The Ethernet MAC (#39) is done: identity record v2 built, reviewed, and provisioned and verified on the bench 2026-11-20 [V]; the physical power cycle with it is done too (`test-bench.md`, "Power cycle with identity v2") [V]; the update with answers (`waitAck`) ran on the bench 2026-11-20 [V]. P6 and P7 are done (no open issues left; #23, #24, #39 closed). P8: #33 done, #34 parked by the owner (proposals). P9 (pull request to tanoclo, #38) waits until everything else works.** The plan was reviewed on 2026-11-16; the changes are listed in "Plan review" at the end.
 
 ## Progress tracking on GitHub
 
 Requirement (user, 2026-11-11): progress is tracked in a GitHub repo on the user's account (`aavdiere`, logged in through `gh`).
 
 - **One public repo**, `tado-bridge-firmware`, holding the firmware and the design docs.
-- **Milestones** = the stages below, P0 to P9.
+- **Milestones** = the stages below, P0 to P9, including P7.1 (between P7 and P8).
 - **Issues** = the tasks in each stage.
 - **README** shows a status table per stage. Each finished task is a commit that closes its issue.
 - **Two number series.** Open questions in `open-questions.md` and GitHub issues both run from 1, and they do not match: open question 16 (ACK turnaround) is issue #18, and issue #16 was the RAM measurement (open question 17). In this file, "#N" always means GitHub issue N, and an open question is written "open question N". Older docs still write "#N" for open questions; read the number against the topic.
@@ -73,6 +73,7 @@ Each task is delegated to a subagent with its own model and effort, defined in `
 | P5 Radio link to devices | `fw-critical` | `rf-bench` for over-the-air timing; `fw-reviewer` before flashing |
 | P6 Storage | `fw-driver` | `fw-reviewer` for power-cut safety |
 | P7 Size check, bootloader, self-update | `fw-critical` | `fw-reviewer` before flashing; `log-reader` for size reports |
+| P7.1 Channel 26 and LBT | `fw-critical` | `rf-bench` for busy-rate and delivery; `fw-reviewer` before any channel-26 transmit image |
 | P8 Code clean-up | `fw-critical` (Opus, high) | `fw-reviewer`; `log-reader` for size reports |
 | Any stage | `docs-keeper` for docs, issues and commits | `fw-reviewer` before anything goes onto a board |
 
@@ -224,6 +225,33 @@ Restructured in the 2026-11-16 review. The steps run in this order, because each
 
   Done (#39 closed). Left for the owner: a physical power cycle with the version 2 record.
 - **Done when:** an update installs, a broken image rolls back, and a power cut during install recovers.
+
+### P7.1: Channel 26, listen-before-transmit and full check
+
+Owner decision 2026-11-20 (`docs/README.md`, "Project decisions"). Milestone "P7.1", issue #20. Runs after P7 and before P8. **Status: planned. Until it starts, the channel-26 hard rule (`CLAUDE.md`, `test-bench.md`) stays exactly as it is: nothing transmits on channel 26.**
+
+Plan:
+
+1. Loosen the channel-26 guard: the transmit gate (`src/txgate.h` `TXGATE_TEST_CHANNEL`), the network's test-channel assertion (`src/network.c:17`), `RADIO_CHANNEL` in `radio.c`, and the hard rule in `CLAUDE.md` and `test-bench.md`. The owner changes the rule at that point.
+2. Move the test network to channel 26, next to the live stock network.
+3. Run one test that verifies everything there: pairing, uplinks and downlinks, Enhanced ACK timing, wake trains, update over the air, and #20's delivery with listen-before-transmit (LBT), possibly on and off.
+
+Context:
+
+- freedo found that LBT halved CSL ACK delivery next to the stock network: 43.9 % against 81.7 % (`freedo/docs/PROTOCOL.md:1594-1602`) **[D]**.
+- Our LBT design: `radio-runtime.md:174`.
+- Bench so far on channel 16 **[V]**: quiet, 0 busy listens per minute, highest listen RSSI about -103 dBm, first-attempt delivery (71 of 71 downlinks during forced erases, #22). This says nothing about a busy channel.
+- Owner decisions: keep LBT (2026-11-11, `open-questions.md` row 25); #20 skipped for now (2026-11-18, `docs/README.md`).
+
+Open points to settle when the stage starts (none decided):
+
+- Risk to the owner's stock network: collisions, and the shared 1 % duty cycle.
+- How the spare device moves to channel 26: it must re-pair there, and pairing is only allowed on the test channel today.
+- The stock coordinator's frames must never be ACKed or answered by us (we answer only our EUI-64); confirm that on air.
+- An RX-only busy-rate pre-check on channel 26 as a first, low-risk step.
+- LBT on/off needs a temporary build option; per the no-test-code rule it is removed after the test.
+- Reviewer gate: `fw-reviewer` verdict before any channel-26 transmit image is flashed.
+- Afterwards: revert to channel 16, or keep 26.
 
 ### P8: Code clean-up checkpoint
 
