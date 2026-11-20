@@ -63,6 +63,14 @@ enum link_rx {
     LINK_RX_COUNT,
 };
 
+/* A result for a frame of our own network: CRC good and either opened under
+ * the network key (CCM* MIC good: Data to our address, broadcast) or the
+ * Enhanced ACK that closed our own transaction (sequence number, both
+ * addresses and its FCS checked, src/mac.c mac_ack_answers()). Not: frames
+ * of other networks or under the pairing key, beacon requests, other
+ * devices' ACKs, failed MICs (#11, src/freqoff.h). */
+bool link_rx_from_network(enum link_rx r);
+
 /* Radio task: one received frame without the radio's CRC bytes, the radio's
  * CRC result, the time its last bit arrived (csl_port_now() clock) and a
  * millisecond clock. */

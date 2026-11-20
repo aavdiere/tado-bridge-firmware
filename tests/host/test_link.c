@@ -393,6 +393,36 @@ static void test_pairing(uint32_t *now_ms) {
     CHECK(!link_pair_active(*now_ms));
 }
 
+/* Which outcomes count as frames of our own network for the frequency
+ * offset warning (#11, src/freqoff.h): every value, so a new one has to be
+ * placed here. */
+static void test_from_network(void) {
+    static const bool want[LINK_RX_COUNT] = {
+        [LINK_RX_BAD_CRC]       = false,
+        [LINK_RX_ACK_TAKEN]     = true,
+        [LINK_RX_ACK_OTHER]     = false,
+        [LINK_RX_FORWARDED]     = true,
+        [LINK_RX_HELD]          = true,
+        [LINK_RX_DUPLICATE]     = true,
+        [LINK_RX_NOT_RELAYED]   = true,
+        [LINK_RX_DROPPED]       = true,
+        [LINK_RX_NOT_FOR_US]    = false,
+        [LINK_RX_NO_KEY]        = false,
+        [LINK_RX_MIC_FAIL]      = false,
+        [LINK_RX_BROADCAST]     = true,
+        [LINK_RX_BEACON_REQ]    = false,
+        [LINK_RX_BEACON_ANSWER] = false,
+        [LINK_RX_PAIRING]       = false,
+        [LINK_RX_PAIRED]        = true,
+        [LINK_RX_OTHER]         = false,
+    };
+    _Static_assert(LINK_RX_OTHER + 1 == LINK_RX_COUNT, "a row for every link_rx");
+    for (int r = 0; r < LINK_RX_COUNT; r++) {
+        CHECK_EQ(link_rx_from_network((enum link_rx)r), want[r]);
+    }
+    CHECK(!link_rx_from_network(LINK_RX_COUNT));
+}
+
 int main(void) {
     static const uint8_t coap[] = {0x44, 0x02, 0x12, 0x34, 1, 2, 3, 4, 0xB1, 's', 0xFF, 7};
     static uint8_t       f[MAC_FRAME_MAX], msg[RELAY_MSG_MAX], out[RELAY_MSG_MAX];
@@ -523,5 +553,6 @@ int main(void) {
     CHECK_EQ(n_bcast, before);
 
     test_pairing(&now_ms);
+    test_from_network();
     return TEST_REPORT("test_link");
 }

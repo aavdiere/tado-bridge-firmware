@@ -274,6 +274,22 @@ void link_beacon_done(bool sent, uint32_t now_ms) {
     beacon_len = 0;
 }
 
+bool link_rx_from_network(enum link_rx r) {
+    switch (r) {
+        case LINK_RX_ACK_TAKEN: /* closes our transaction: mac_ack_answers() */
+        case LINK_RX_FORWARDED: /* the rest: mac_open_data() or mac_open() OK */
+        case LINK_RX_HELD:      /* under the network key */
+        case LINK_RX_DUPLICATE:
+        case LINK_RX_NOT_RELAYED:
+        case LINK_RX_DROPPED:
+        case LINK_RX_PAIRED:
+        case LINK_RX_BROADCAST:
+            return true;
+        default:
+            return false;
+    }
+}
+
 enum link_rx
 link_on_frame(const uint8_t *frame, size_t len, bool crc_ok, uint64_t end_us, uint32_t now_ms) {
     enum link_rx r = LINK_RX_OTHER;
