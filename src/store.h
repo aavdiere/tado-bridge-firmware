@@ -39,7 +39,8 @@ bool store_port_program(uint32_t addr, const uint8_t *src, size_t n);
 /* Erase the 4 KB sector at addr. */
 bool store_port_erase(uint32_t addr);
 
-#define STORE_XFER_MAX 64u /* = MX25R_XFER_MAX */
+#define STORE_XFER_MAX 64u   /* = MX25R_XFER_MAX */
+#define STORE_SECTOR   4096u /* = FLASH_SECTOR, the erase unit */
 
 /* --- Slotted records ------------------------------------------------------- */
 /* magic u32 | version u16 | length u16 | seq u32 | payload | CRC-32, all
@@ -159,7 +160,7 @@ bool store_net_commit(const struct store_net *n, struct store_net *out, uint32_t
 
 /* --- Counter log ----------------------------------------------------------- */
 #define STORE_CTR_ENTRY   8u
-#define STORE_CTR_ENTRIES (4096u / STORE_CTR_ENTRY) /* 512 per sector */
+#define STORE_CTR_ENTRIES (STORE_SECTOR / STORE_CTR_ENTRY) /* 512 per sector */
 #define STORE_CTR_AHEAD   4096u /* reserve this far ahead (freedo docs/PROTOCOL.md:1296-1298) */
 #define STORE_CTR_LOW     2048u /* extend once less than this remains */
 

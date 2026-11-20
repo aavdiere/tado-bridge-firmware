@@ -14,7 +14,8 @@
 _Static_assert(STORE_XFER_MAX <= FLASH_PAGE && FLASH_PAGE % STORE_XFER_MAX == 0,
                "a chunk never crosses a page");
 _Static_assert(STORE_REC_HDR + STORE_REC_PAYLOAD + 4u <= FLASH_SECTOR, "record fits a slot");
-_Static_assert(STORE_CTR_ENTRIES *STORE_CTR_ENTRY == FLASH_SECTOR, "log entries fill a sector");
+_Static_assert(STORE_SECTOR == FLASH_SECTOR, "the store's sector is the flash's erase unit");
+_Static_assert(FLASH_SECTOR == STORE_CTR_ENTRIES * STORE_CTR_ENTRY, "log entries fill a sector");
 _Static_assert(STORE_CTR_LOW < STORE_CTR_AHEAD, "extend before the reservation runs out");
 
 static void wipe(void *p, size_t n) {
