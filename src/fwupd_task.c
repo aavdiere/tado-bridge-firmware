@@ -171,15 +171,17 @@ static void block(void) {
  * test, or an image whose boot state could not be read, was not confirmed
  * within FWUPD_TEST_MAX_MS. Asked of the radio task first, which restarts
  * at a quiet moment (no flash write or frame of ours cut). If it has not
- * taken the request in 10 s, its loop does not run (the radio did not come
- * up, #24 review M1), and this task restarts the MCU itself, by the same
- * SYSRESETREQ. No flash write should be under way then: the radio task's
- * flash writes run in that same loop, at the same quiet moment as the
- * update's operations and just before them, each bounded at about 1 s
- * (src/radio.c); and the records survive a cut write (src/store.h). The
- * IWDG stays satisfied throughout: the radio task checks in during its
- * bring-up retries, and nothing here blocks another task. */
+ * taken the request in RADIO_UPDATE_OP_WAIT_MS (10 s, src/radio.h), its
+ * loop does not run (the radio did not come up, #24 review M1), and this
+ * task restarts the MCU itself, by the same SYSRESETREQ. No flash write
+ * should be under way then: the radio task's flash writes run in that same
+ * loop, at the same quiet moment as the update's operations and just
+ * before them, each bounded at about 1 s (src/radio.c); and the records
+ * survive a cut write (src/store.h). The IWDG stays satisfied throughout:
+ * the radio task checks in during its bring-up retries, and nothing here
+ * blocks another task. */
 #define RESTART_LOG_MS 200u /* time for the debugger to read the last RTT lines */
+_Static_assert(RADIO_UPDATE_OP_WAIT_MS == 10000u, "the log line in restart() says 10 s");
 
 static void restart(void) {
     struct fwupd_op o = {.kind = FWUPD_OP_RESTART};
