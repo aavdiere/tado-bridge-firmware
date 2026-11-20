@@ -267,6 +267,7 @@ add_executable(${BINARY}
     ../src/relay.c
     ../src/link.c
     ../src/pair.c
+    ../src/pair_remote.c
     ../src/image_desc.c
     ../src/fwimg.c
     ../src/fwupd.c
