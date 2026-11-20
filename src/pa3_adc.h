@@ -7,7 +7,8 @@
 /* Raw ADC1 readings of the unconnected pin PA3 (package pin 13, ADC1_IN3,
  * docs/datasheets/stm32f411ce.txt:2288), the entropy source of
  * docs/design.md "Entropy (#26)". Touches only PA3 (analog mode, no pull)
- * and ADC1; never PA13/PA14 or PB6/PB7. Single owner: the net task. */
+ * and ADC1; never PA13/PA14 or PB6/PB7. Used only by src/entropy.c, one
+ * caller at a time (see src/entropy.h). */
 
 /* Sampling time selection, ADC_SMPRx SMPx[2:0]: 0 = 3 cycles ... 7 = 480
  * cycles (docs/datasheets/rm0383.txt:12515-12527). */

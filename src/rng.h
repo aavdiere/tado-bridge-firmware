@@ -13,13 +13,14 @@
  * (src/network.c, src/radio.c).
  *
  * Any task, after the scheduler has started: one mutex serialises the DRBG
- * (#17). rng_init() and every call that can reseed belong to the net task,
- * which owns the ADC of the entropy source; a reseed takes about 45 ms.
- * The radio task's loop uses rng_try_bytes() only, which never waits and
- * never reseeds. Network-key generation and the pairing random (#19, #37)
- * need full-strength output at a moment without radio deadlines: call
- * rng_bytes() from the net task, or accept the wait, as the radio task does
- * when the pair button opens a window (pairing_trigger() in src/radio.c). */
+ * (#17), and with it the ADC of the entropy source, which a reseed reads
+ * for about 45 ms in the task whose request is due for it. rng_init() runs
+ * in the net task. The radio task's loop uses rng_try_bytes() only, which
+ * never waits and never reseeds. Network-key generation and the pairing
+ * random (#19, #37) need full-strength output at a moment without radio
+ * deadlines: call rng_bytes() from the net task, or accept the wait, as the
+ * radio task does when the pair button opens a window (pairing_trigger() in
+ * src/radio.c; docs/radio-runtime.md "Pairing (#19)"). */
 
 /* Start-up health test, then the first seed. Logs the result. False if the
  * test or the seed failed: no random numbers are available then. */

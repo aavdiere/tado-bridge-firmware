@@ -11,8 +11,11 @@
  * credited entropy: docs/design.md "Entropy: measurement".
  *
  * Fails closed: until entropy_startup() has passed, and after any health-test
- * failure, entropy_get() returns no output. Net task only (it owns ADC1);
- * no locking. */
+ * failure, entropy_get() returns no output. Called only by src/rng.c:
+ * entropy_startup() and the first seed in rng_init() (net task, before any
+ * other task may draw), and each reseed under the DRBG mutex, in whichever
+ * task's request is due for it (also the radio task when the pair button
+ * creates a network). No locking here. */
 
 struct entropy_report {
     uint32_t    samples;  /* readings taken by the start-up test */
