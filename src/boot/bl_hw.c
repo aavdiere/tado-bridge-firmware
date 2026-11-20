@@ -22,6 +22,7 @@
 #include "bootctl.h"
 #include "flash_layout.h"
 #include "fwimg.h"
+#include "mx25r_ops.h"
 #include "store.h"
 
 #include <libopencm3/cm3/scb.h>
@@ -186,20 +187,7 @@ void bl_hw_init(void) {
 }
 
 /* --- SPI1 and the MX25R1635F (as src/mx25r.c, without the radio) ---------- */
-#define OP_READ   0x03u
-#define OP_PP     0x02u
-#define OP_SE     0x20u
-#define OP_WREN   0x06u
-#define OP_WRDI   0x04u
-#define OP_RDSR   0x05u
-#define OP_RDSCUR 0x2Bu
-#define OP_RDID   0x9Fu
-
-#define SR_WIP     0x01u /* mx25r1635f.txt:1347-1350 */
-#define SR_WEL     0x02u /* :1352-1357 */
-#define SCUR_PFAIL 0x20u /* :2521-2523 */
-#define SCUR_EFAIL 0x40u /* :2525-2527 */
-
+/* Opcodes and status bits: src/mx25r_ops.h. */
 #define PP_TIMEOUT_MS 20u  /* 2 x tPP max, mx25r1635f.txt:3337 */
 #define SE_TIMEOUT_MS 480u /* 2 x tSE max, :3340 */
 #define SPIN          100000u
@@ -251,13 +239,13 @@ static void xfer(uint8_t op, const uint32_t *addr, const uint8_t *src, uint8_t *
 
 static uint8_t rdsr(void) {
     uint8_t sr = 0xFFu;
-    xfer(OP_RDSR, NULL, NULL, &sr, 1);
+    xfer(MX25R_OP_RDSR, NULL, NULL, &sr, 1);
     return sr;
 }
 
 static bool wait_wip(uint32_t timeout_ms, uint8_t *sr) {
     uint32_t t0 = ms_now();
-    while (bus_ok && ((*sr = rdsr()) & SR_WIP)) {
+    while (bus_ok && ((*sr = rdsr()) & MX25R_SR_WIP)) {
         if (ms_now() - t0 > timeout_ms) {
             return false;
         }
@@ -278,7 +266,7 @@ bool bl_flash_init(void) {
         return false;
     }
     uint8_t id[3] = {0};
-    xfer(OP_RDID, NULL, NULL, id, 3);
+    xfer(MX25R_OP_RDID, NULL, NULL, id, 3);
     return bus_ok && id[0] == 0xC2u && id[1] == 0x28u && id[2] == 0x15u;
 }
 
@@ -294,17 +282,17 @@ bool store_port_read(uint32_t addr, uint8_t *dst, size_t n) {
     if (!bus_ok || addr >= FLASH_SIZE || n > FLASH_SIZE - addr) {
         return false;
     }
-    xfer(OP_READ, &addr, NULL, dst, n);
+    xfer(MX25R_OP_READ, &addr, NULL, dst, n);
     return bus_ok;
 }
 
 static bool write_enable(void) {
-    if (rdsr() & SR_WIP) {
+    if (rdsr() & MX25R_SR_WIP) {
         return false;
     }
     for (unsigned i = 0; i < 4u; i++) {
-        xfer(OP_WREN, NULL, NULL, NULL, 0);
-        if (rdsr() & SR_WEL) {
+        xfer(MX25R_OP_WREN, NULL, NULL, NULL, 0);
+        if (rdsr() & MX25R_SR_WEL) {
             return bus_ok;
         }
     }
@@ -312,12 +300,12 @@ static bool write_enable(void) {
 }
 
 static bool cycle_ok(bool waited, uint8_t sr, uint8_t fail_bit) {
-    if (!waited || (sr & (SR_WIP | SR_WEL))) {
-        xfer(OP_WRDI, NULL, NULL, NULL, 0);
+    if (!waited || (sr & (MX25R_SR_WIP | MX25R_SR_WEL))) {
+        xfer(MX25R_OP_WRDI, NULL, NULL, NULL, 0);
         return false;
     }
     uint8_t s = 0xFFu;
-    xfer(OP_RDSCUR, NULL, NULL, &s, 1);
+    xfer(MX25R_OP_RDSCUR, NULL, NULL, &s, 1);
     return bus_ok && (s & fail_bit) == 0;
 }
 
@@ -329,10 +317,10 @@ bool store_port_program(uint32_t addr, const uint8_t *src, size_t n) {
     if (!bus_ok || !write_enable()) {
         return false;
     }
-    xfer(OP_PP, &addr, src, NULL, n);
+    xfer(MX25R_OP_PP, &addr, src, NULL, n);
     uint8_t sr     = 0;
     bool    waited = wait_wip(PP_TIMEOUT_MS, &sr);
-    return cycle_ok(waited, sr, SCUR_PFAIL);
+    return cycle_ok(waited, sr, MX25R_SCUR_PFAIL);
 }
 
 bool store_port_erase(uint32_t addr) {
@@ -343,10 +331,10 @@ bool store_port_erase(uint32_t addr) {
     if (!bus_ok || !write_enable()) {
         return false;
     }
-    xfer(OP_SE, &addr, NULL, NULL, 0);
+    xfer(MX25R_OP_SE, &addr, NULL, NULL, 0);
     uint8_t sr     = 0;
     bool    waited = wait_wip(SE_TIMEOUT_MS, &sr);
-    return cycle_ok(waited, sr, SCUR_EFAIL);
+    return cycle_ok(waited, sr, MX25R_SCUR_EFAIL);
 }
 
 /* --- Internal flash (rm0383.txt 3.5, :2238-2380) ----------------------------- */

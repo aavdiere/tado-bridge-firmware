@@ -26,22 +26,9 @@
 
 #include "flash_layout.h"
 #include "log.h"
+#include "mx25r_ops.h"
 #include "spi1.h"
 #include "timebase.h"
-
-#define OP_READ   0x03
-#define OP_PP     0x02
-#define OP_SE     0x20
-#define OP_WREN   0x06
-#define OP_WRDI   0x04
-#define OP_RDSR   0x05
-#define OP_RDSCUR 0x2B
-#define OP_RDID   0x9F
-
-#define SR_WIP     0x01u /* mx25r1635f.txt:1347-1350, 1383 */
-#define SR_WEL     0x02u /* :1352-1357 */
-#define SCUR_PFAIL 0x20u /* bit 5, :2521-2523, Table 8 :2531-2540 */
-#define SCUR_EFAIL 0x40u /* bit 6, :2525-2527, Table 8 */
 
 #define T_RDP_US 50u /* >= 45 us worst case, mx25r1635f.txt:3409 */
 
@@ -161,13 +148,13 @@ static void xfer(uint8_t op, const uint32_t *addr, const uint8_t *src, uint8_t *
 
 static uint8_t rdsr(void) {
     uint8_t sr;
-    xfer(OP_RDSR, NULL, NULL, &sr, 1);
+    xfer(MX25R_OP_RDSR, NULL, NULL, &sr, 1);
     return sr;
 }
 
 static uint8_t rdscur(void) {
     uint8_t s;
-    xfer(OP_RDSCUR, NULL, NULL, &s, 1);
+    xfer(MX25R_OP_RDSCUR, NULL, NULL, &s, 1);
     return s;
 }
 
@@ -185,7 +172,7 @@ bool mx25r_wake(void) {
 
 bool mx25r_read_id(uint32_t *id) {
     uint8_t b[3];
-    xfer(OP_RDID, NULL, NULL, b, 3);
+    xfer(MX25R_OP_RDID, NULL, NULL, b, 3);
     *id = ((uint32_t)b[0] << 16) | ((uint32_t)b[1] << 8) | b[2];
     return true;
 }
@@ -201,7 +188,7 @@ bool mx25r_read_status(uint8_t *sr) {
  * read is left in *sr. */
 static bool wait_wip(uint32_t timeout_us, uint8_t *sr) {
     uint32_t t0 = timebase_us();
-    while ((*sr = rdsr()) & SR_WIP) {
+    while ((*sr = rdsr()) & MX25R_SR_WIP) {
         if ((uint32_t)(timebase_us() - t0) > timeout_us) {
             return false;
         }
@@ -233,7 +220,7 @@ bool mx25r_read(uint32_t addr, uint8_t *dst, size_t n) {
     }
     while (n) {
         size_t k = n < MX25R_XFER_MAX ? n : MX25R_XFER_MAX;
-        xfer(OP_READ, &addr, NULL, dst, k);
+        xfer(MX25R_OP_READ, &addr, NULL, dst, k);
         addr += (uint32_t)k;
         dst += k;
         n -= k;
@@ -243,12 +230,12 @@ bool mx25r_read(uint32_t addr, uint8_t *dst, size_t n) {
 
 /* Not busy, and the write enable latch set by WREN (Figure 13). */
 static bool write_enable(void) {
-    if (rdsr() & SR_WIP) {
+    if (rdsr() & MX25R_SR_WIP) {
         return false; /* an earlier cycle has not finished */
     }
     for (unsigned i = 0; i < WEL_POLLS; i++) {
-        xfer(OP_WREN, NULL, NULL, NULL, 0);
-        if (rdsr() & SR_WEL) {
+        xfer(MX25R_OP_WREN, NULL, NULL, NULL, 0);
+        if (rdsr() & MX25R_SR_WEL) {
             return true;
         }
     }
@@ -257,8 +244,8 @@ static bool write_enable(void) {
 
 /* After the cycle: WEL must have cleared (:1354-1357), then the fail flag. */
 static bool cycle_ok(uint8_t sr, uint8_t fail_bit) {
-    if (sr & (SR_WIP | SR_WEL)) {
-        xfer(OP_WRDI, NULL, NULL, NULL, 0); /* leave no latch set behind */
+    if (sr & (MX25R_SR_WIP | MX25R_SR_WEL)) {
+        xfer(MX25R_OP_WRDI, NULL, NULL, NULL, 0); /* leave no latch set behind */
         return false;
     }
     return (rdscur() & fail_bit) == 0;
@@ -274,13 +261,13 @@ bool mx25r_program(uint32_t addr, const uint8_t *src, size_t n) {
     if (!write_enable()) {
         return false;
     }
-    xfer(OP_PP, &addr, src, NULL, n);
+    xfer(MX25R_OP_PP, &addr, src, NULL, n);
     uint8_t sr;
     /* tPP: 3.2 ms typical, 10 ms max (mx25r1635f.txt:3337-3338). */
     if (!wait_cycle(PP_TIMEOUT_US, &sr)) {
         return false;
     }
-    return cycle_ok(sr, SCUR_PFAIL);
+    return cycle_ok(sr, MX25R_SCUR_PFAIL);
 }
 
 bool mx25r_erase_sector(uint32_t addr) {
@@ -291,12 +278,12 @@ bool mx25r_erase_sector(uint32_t addr) {
     if (!write_enable()) {
         return false;
     }
-    xfer(OP_SE, &addr, NULL, NULL, 0);
+    xfer(MX25R_OP_SE, &addr, NULL, NULL, 0);
     uint8_t sr;
     /* tSE: 58 ms typical, 240 ms max (mx25r1635f.txt:3340-3341); the radio
      * is served throughout (#22). */
     if (!wait_cycle(SE_TIMEOUT_US, &sr)) {
         return false;
     }
-    return cycle_ok(sr, SCUR_EFAIL);
+    return cycle_ok(sr, MX25R_SCUR_EFAIL);
 }

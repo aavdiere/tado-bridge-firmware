@@ -261,7 +261,7 @@ static void fl_update(void) {
         fl.wel = false;
         if (fl.fail_next) {
             fl.fail_next = 0;
-            fl.scur |= (uint8_t)(fl.erase ? SCUR_EFAIL : SCUR_PFAIL);
+            fl.scur |= (uint8_t)(fl.erase ? MX25R_SCUR_EFAIL : MX25R_SCUR_PFAIL);
         } else if (fl.erase) {
             memset(mem + fl.cyc_addr, 0xFF, FLASH_SECTOR);
         } else {
@@ -306,7 +306,7 @@ static void start_cycle(bool erase, uint64_t lo, uint64_t hi) {
     fl.cyc_n    = fl.buf_n;
     memcpy(fl.cyc_buf, fl.buf, sizeof fl.buf);
     fl.wip_until = now_ns + rnd_range(lo, hi);
-    fl.scur &= (uint8_t)~(SCUR_PFAIL | SCUR_EFAIL);
+    fl.scur &= (uint8_t)~(MX25R_SCUR_PFAIL | MX25R_SCUR_EFAIL);
 }
 
 void spi1_deselect(enum spi1_dev dev) {
@@ -322,26 +322,26 @@ void spi1_deselect(enum spi1_dev dev) {
     }
     bool whole = fl.nbytes >= 1u;
     switch (whole ? fl.op : 0) {
-        case OP_WREN:
+        case MX25R_OP_WREN:
             if (fl.wip) {
                 fl.violations++;
             } else if (fl.nbytes == 1u) {
                 fl.wel = true;
             }
             break;
-        case OP_WRDI:
+        case MX25R_OP_WRDI:
             if (fl.nbytes == 1u) {
                 fl.wel = false;
             }
             break;
-        case OP_PP:
+        case MX25R_OP_PP:
             if (fl.wip || fl.nbytes < 5u) {
                 fl.violations++;
             } else if (fl.wel) {
                 start_cycle(false, fl.tpp_min, fl.tpp_max);
             }
             break;
-        case OP_SE:
+        case MX25R_OP_SE:
             if (fl.wip || fl.nbytes != 4u || fl.addr % FLASH_SECTOR) {
                 fl.violations++;
             } else if (fl.wel) {
@@ -362,30 +362,30 @@ uint8_t spi1_xfer(uint8_t out) {
         fl.op     = out;
         fl.addr   = 0;
         fl.buf_n  = 0;
-        bool busy = fl.wip && out != OP_RDSR && out != OP_RDSCUR;
+        bool busy = fl.wip && out != MX25R_OP_RDSR && out != MX25R_OP_RDSCUR;
         if (busy) {
             fl.violations++; /* only RDSR and RDSCUR while WIP = 1 */
         }
         return 0xFF;
     }
     switch (fl.op) {
-        case OP_RDSR:
-            return (uint8_t)((fl.wip ? SR_WIP : 0u) | (fl.wel ? SR_WEL : 0u));
-        case OP_RDSCUR:
+        case MX25R_OP_RDSR:
+            return (uint8_t)((fl.wip ? MX25R_SR_WIP : 0u) | (fl.wel ? MX25R_SR_WEL : 0u));
+        case MX25R_OP_RDSCUR:
             return fl.scur;
-        case OP_RDID:
+        case MX25R_OP_RDID:
             return i == 1u ? 0xC2 : i == 2u ? 0x28 : 0x15;
-        case OP_READ:
-        case OP_PP:
-        case OP_SE:
+        case MX25R_OP_READ:
+        case MX25R_OP_PP:
+        case MX25R_OP_SE:
             if (i <= 3u) {
                 fl.addr = fl.addr << 8 | out;
                 return 0xFF;
             }
-            if (fl.op == OP_READ) {
+            if (fl.op == MX25R_OP_READ) {
                 return mem[(fl.addr + (i - 4u)) % FLASH_SIZE];
             }
-            if (fl.op == OP_PP && fl.buf_n < FLASH_PAGE) {
+            if (fl.op == MX25R_OP_PP && fl.buf_n < FLASH_PAGE) {
                 fl.buf[fl.buf_n++] = out;
             }
             return 0xFF;
