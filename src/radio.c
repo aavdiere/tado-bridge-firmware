@@ -1343,7 +1343,11 @@ static bool flash_boot(void) {
     bool     idle = mx25r_wait_idle();
     uint32_t id   = 0;
     uint8_t  sr   = 0;
-    bool     ok   = idle && mx25r_read_id(&id) && mx25r_read_status(&sr) && id == MX25R_JEDEC_ID;
+    if (idle) {
+        id = mx25r_read_id();
+        sr = mx25r_read_status();
+    }
+    bool ok = idle && id == MX25R_JEDEC_ID;
     LOG("flash: JEDEC ID %06lx%s, status register %02x%s",
         (unsigned long)id,
         id == MX25R_JEDEC_ID ? " (MX25R1635F)" : " (UNEXPECTED, want c22815)",
@@ -1356,8 +1360,8 @@ static bool flash_boot(void) {
 
 static void flash_check(void) {
     bool     in_frame = rx.assembling || gpio_get(GPIOA, BOARD_GDO0_PIN);
-    uint32_t id       = 0;
-    if (mx25r_read_id(&id) && id == MX25R_JEDEC_ID) {
+    uint32_t id       = mx25r_read_id();
+    if (id == MX25R_JEDEC_ID) {
         COUNT(flash_ok);
     } else {
         COUNT(flash_bad);

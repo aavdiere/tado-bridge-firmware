@@ -166,20 +166,17 @@ bool mx25r_wake(void) {
     spi1_deselect(SPI1_DEV_FLASH);
     spi1_unlock();
     delay_us(T_RDP_US);
-    uint32_t id;
-    return mx25r_read_id(&id) && id == MX25R_JEDEC_ID;
+    return mx25r_read_id() == MX25R_JEDEC_ID;
 }
 
-bool mx25r_read_id(uint32_t *id) {
+uint32_t mx25r_read_id(void) {
     uint8_t b[3];
     xfer(MX25R_OP_RDID, NULL, NULL, b, 3);
-    *id = ((uint32_t)b[0] << 16) | ((uint32_t)b[1] << 8) | b[2];
-    return true;
+    return ((uint32_t)b[0] << 16) | ((uint32_t)b[1] << 8) | b[2];
 }
 
-bool mx25r_read_status(uint8_t *sr) {
-    *sr = rdsr();
-    return true;
+uint8_t mx25r_read_status(void) {
+    return rdsr();
 }
 
 /* RDSR until WIP = 0 or timeout_us, serving the radio between polls (#22):

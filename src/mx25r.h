@@ -83,10 +83,10 @@ enum mx25r_area mx25r_area(enum mx25r_area a);
  * tRDP, then reads the JEDEC ID. Call from the SPI1 owner (radio task). */
 bool mx25r_wake(void);
 /* JEDEC ID as 0xMMTTDD (manufacturer, memory type, density). */
-bool mx25r_read_id(uint32_t *id);
+uint32_t mx25r_read_id(void);
 /* Status register (WIP bit 0, WEL bit 1, BP bits 5:2, QE 6, SRWD 7;
  * mx25r1635f.txt:1380-1394). RDSR opcode 05h (mx25r1635f.txt:2647). */
-bool mx25r_read_status(uint8_t *sr);
+uint8_t mx25r_read_status(void);
 
 /* RDSR until WIP = 0, for up to 2 x tSE max (480 ms; a program or erase
  * the MCU did not see end, e.g. one cut short by an MCU reset, which does
