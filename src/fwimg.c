@@ -31,26 +31,50 @@ static void put16(uint8_t *p, uint16_t v) {
     p[1] = (uint8_t)(v >> 8);
 }
 
+/* Internal flash sectors of the application (rm0383.txt:2028-2031): sector 4
+ * is 64 KB at FWIMG_APP_BASE, sectors 5, 6 and 7 are 128 KB each from
+ * 0x08020000. */
+#define SECTOR4_SIZE 0x10000u
+#define SECTOR5_BASE 0x08020000u
+#define SECTOR5_SIZE 0x20000u /* also sectors 6 and 7 */
+_Static_assert(FWIMG_APP_BASE + SECTOR4_SIZE == SECTOR5_BASE, "sector 5 follows sector 4");
+_Static_assert(SECTOR4_SIZE + 3u * SECTOR5_SIZE == FWIMG_APP_MAX, "sectors 4-7 are the region");
+
 uint32_t fwimg_sector_addr(unsigned sector) {
-    /* 4: 0x08010000 (64 KB); 5, 6, 7: 0x08020000 + 128 KB each */
-    return sector <= 4u ? FWIMG_APP_BASE : 0x08020000u + (sector - 5u) * 0x20000u;
+    return sector <= FWIMG_APP_FIRST_SECTOR
+               ? FWIMG_APP_BASE
+               : SECTOR5_BASE + (sector - (FWIMG_APP_FIRST_SECTOR + 1u)) * SECTOR5_SIZE;
 }
 
 uint32_t fwimg_sector_size(unsigned sector) {
-    return sector <= 4u ? 0x10000u : 0x20000u;
+    return sector <= FWIMG_APP_FIRST_SECTOR ? SECTOR4_SIZE : SECTOR5_SIZE;
 }
+
+/* The image's first two vector table words: initial stack pointer, reset
+ * vector. */
+#define VT_OFF_SP    0u
+#define VT_OFF_RESET 4u
+
+/* The descriptor is read by its struct's offsets; a bootloader in the field
+ * reads these. */
+_Static_assert(offsetof(struct fwimg_desc, magic) == 0u
+                   && offsetof(struct fwimg_desc, version) == 4u
+                   && offsetof(struct fwimg_desc, len) == 6u
+                   && offsetof(struct fwimg_desc, image_end) == 8u,
+               "descriptor field offsets");
 
 bool fwimg_app_check(const uint8_t head[FWIMG_HEAD_LEN], uint32_t *size) {
     const uint8_t *d       = head + FWIMG_DESC_OFFSET;
-    uint32_t       end     = get32(d + 8);
+    uint32_t       end     = get32(d + offsetof(struct fwimg_desc, image_end));
     uint32_t       min_end = FWIMG_APP_BASE + FWIMG_HEAD_LEN;
-    if (get32(d) != FWIMG_DESC_MAGIC || get16(d + 4) != FWIMG_DESC_VERSION
-        || get16(d + 6) != FWIMG_DESC_LEN || end <= min_end || end > FWIMG_APP_BASE + FWIMG_APP_MAX
-        || end % 4u != 0) {
+    if (get32(d + offsetof(struct fwimg_desc, magic)) != FWIMG_DESC_MAGIC
+        || get16(d + offsetof(struct fwimg_desc, version)) != FWIMG_DESC_VERSION
+        || get16(d + offsetof(struct fwimg_desc, len)) != FWIMG_DESC_LEN || end <= min_end
+        || end > FWIMG_APP_BASE + FWIMG_APP_MAX || end % 4u != 0) {
         return false;
     }
-    uint32_t sp = get32(head);
-    uint32_t pc = get32(head + 4);
+    uint32_t sp = get32(head + VT_OFF_SP);
+    uint32_t pc = get32(head + VT_OFF_RESET);
     if (sp <= FWIMG_RAM_BASE || sp > FWIMG_RAM_BASE + FWIMG_RAM_SIZE || sp % 4u != 0) {
         return false;
     }
@@ -62,36 +86,50 @@ bool fwimg_app_check(const uint8_t head[FWIMG_HEAD_LEN], uint32_t *size) {
 }
 
 /* --- Slot header ---------------------------------------------------------- */
+/* Field offsets of the layout in fwimg.h. */
+#define HDR_OFF_MAGIC      0u
+#define HDR_OFF_VERSION    4u
+#define HDR_OFF_LEN        6u
+#define HDR_OFF_SIZE       8u
+#define HDR_OFF_FW_VERSION 12u
+#define HDR_OFF_LOAD_ADDR  16u
+#define HDR_OFF_SHA        20u
+#define HDR_OFF_RESERVED   (HDR_OFF_SHA + FWIMG_SHA_LEN) /* 8 bytes, 0 */
+#define HDR_OFF_CRC        60u                           /* CRC-32 over the bytes before it */
+_Static_assert(HDR_OFF_RESERVED == 52u && HDR_OFF_CRC + 4u == FWIMG_HDR_LEN, "slot header layout");
+
 void fwimg_hdr_build(const struct fwimg_hdr *h, uint8_t raw[FWIMG_HDR_LEN]) {
     memset(raw, 0, FWIMG_HDR_LEN);
-    put32(raw, FWIMG_HDR_MAGIC);
-    put16(raw + 4, FWIMG_HDR_VERSION);
-    put16(raw + 6, FWIMG_HDR_LEN);
-    put32(raw + 8, h->size);
-    put32(raw + 12, h->fw_version);
-    put32(raw + 16, FWIMG_APP_BASE);
-    memcpy(raw + 20, h->sha256, FWIMG_SHA_LEN);
-    put32(raw + 60, store_crc32(raw, 60));
+    put32(raw + HDR_OFF_MAGIC, FWIMG_HDR_MAGIC);
+    put16(raw + HDR_OFF_VERSION, FWIMG_HDR_VERSION);
+    put16(raw + HDR_OFF_LEN, FWIMG_HDR_LEN);
+    put32(raw + HDR_OFF_SIZE, h->size);
+    put32(raw + HDR_OFF_FW_VERSION, h->fw_version);
+    put32(raw + HDR_OFF_LOAD_ADDR, FWIMG_APP_BASE);
+    memcpy(raw + HDR_OFF_SHA, h->sha256, FWIMG_SHA_LEN);
+    put32(raw + HDR_OFF_CRC, store_crc32(raw, HDR_OFF_CRC));
 }
 
 bool fwimg_hdr_parse(const uint8_t raw[FWIMG_HDR_LEN], struct fwimg_hdr *out) {
-    if (get32(raw) != FWIMG_HDR_MAGIC || get16(raw + 4) != FWIMG_HDR_VERSION
-        || get16(raw + 6) != FWIMG_HDR_LEN || get32(raw + 60) != store_crc32(raw, 60)
-        || get32(raw + 16) != FWIMG_APP_BASE) {
+    if (get32(raw + HDR_OFF_MAGIC) != FWIMG_HDR_MAGIC
+        || get16(raw + HDR_OFF_VERSION) != FWIMG_HDR_VERSION
+        || get16(raw + HDR_OFF_LEN) != FWIMG_HDR_LEN
+        || get32(raw + HDR_OFF_CRC) != store_crc32(raw, HDR_OFF_CRC)
+        || get32(raw + HDR_OFF_LOAD_ADDR) != FWIMG_APP_BASE) {
         return false;
     }
-    for (unsigned i = 52; i < 60; i++) {
+    for (unsigned i = HDR_OFF_RESERVED; i < HDR_OFF_CRC; i++) {
         if (raw[i] != 0) {
             return false;
         }
     }
-    uint32_t size = get32(raw + 8);
+    uint32_t size = get32(raw + HDR_OFF_SIZE);
     if (size <= FWIMG_HEAD_LEN || size > FWIMG_APP_MAX || size % 4u != 0) {
         return false;
     }
     out->size       = size;
-    out->fw_version = get32(raw + 12);
-    memcpy(out->sha256, raw + 20, FWIMG_SHA_LEN);
+    out->fw_version = get32(raw + HDR_OFF_FW_VERSION);
+    memcpy(out->sha256, raw + HDR_OFF_SHA, FWIMG_SHA_LEN);
     return true;
 }
 
