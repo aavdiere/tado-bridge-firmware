@@ -21,9 +21,10 @@
  *     install cut short therefore never passes fwimg_app_check(), whatever
  *     the boot state says.
  *   - Every loop is bounded: installs and test boots are counted in the
- *     record before they happen (MAX_TRIES each), and a boot state that
- *     cannot be written makes the bootloader stop managing updates for that
- *     boot (it starts a valid application, or installs one from a slot). */
+ *     record before they happen (BOOTCTL_MAX_TRIES each), and a boot state
+ *     that cannot be written makes the bootloader stop managing updates for
+ *     that boot (it starts a valid application, or installs one from a
+ *     slot). */
 
 #include <stdbool.h>
 #include <stddef.h>
