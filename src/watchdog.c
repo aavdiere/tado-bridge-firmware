@@ -10,6 +10,12 @@
 #define DBGMCU_APB1_FZ (*(volatile uint32_t *)0xE0042008u) /* rm0383.txt:46197 */
 #define DBG_IWDG_STOP  (1u << 12)
 
+/* IWDG_PR holds a code, not the divider: code n divides by 4 << n
+ * (rm0383.txt:23271-23281). watchdog_start() writes IWDG_PR_DIV64; the timeout
+ * in watchdog.h and the boot log use WDG_PRESCALER_DIV. */
+_Static_assert((4u << IWDG_PR_DIV64) == WDG_PRESCALER_DIV,
+               "IWDG_PR_DIV64 does not divide by WDG_PRESCALER_DIV");
+
 static volatile uint32_t alive;
 
 void watchdog_log_reset_cause(void) {
