@@ -792,9 +792,27 @@ RTT host times are stamped to 1 ms and good to about 10 ms with 10 ms polling. P
 
 **Bench addresses [I].** The bridge now has the lease `10.42.0.13` instead of `10.42.0.43`. No bench tool or script depends on the bridge's address: the bridge connects out to `10.42.0.1`, and the tools use OpenOCD, RTT, the SDR and tanoclo's API on `10.42.0.1`. The `.43` in `build.md`, `prototype-plan.md` (P3) and the earlier sections here record what was measured then and stay as they are. tanoclo's optional per-client-IP certificate map ("How TLS reaches the bridge" below) is not used on the bench: the container's `ws-server/certs/` holds only `ip_certs.json.example` (checked 2026-11-20) **[V]**. And the TLS session came up at the new address without any change.
 
-**What this means for #39 [V].** Every bench step of the plan passed. The version 2 record went to slot B with seq 2 and left the version 1 record seq 1 in slot A for a rollback to an image from before #39. The bridge boots with the original bridge's MAC from the record and logs that without printing it. It got a new DHCP lease under that MAC, reconnected to tanoclo, and delivered and ACKed downlinks. Identity and network record stayed in place over three warm resets, with the counter floor rising each time. **Still outstanding (owner):** a physical power cycle (POR) with the version 2 record. Only warm resets were done here; the version 1 record survived a power cycle on 2026-11-18.
+**What this means for #39 [V].** Every bench step of the plan passed. The version 2 record went to slot B with seq 2 and left the version 1 record seq 1 in slot A for a rollback to an image from before #39. The bridge boots with the original bridge's MAC from the record and logs that without printing it. It got a new DHCP lease under that MAC, reconnected to tanoclo, and delivered and ACKed downlinks. Identity and network record stayed in place over three warm resets, with the counter floor rising each time. Only warm resets were done here; the version 1 record survived a power cycle on 2026-11-18. **The power cycle with the version 2 record was done later the same day:** see "Power cycle with identity v2 (2026-11-20)" below.
 
 **State the bench was left in (2026-11-20, 06:34 UTC) [V]:** image `ba8af1a3e7720e44` (`dabd7d1`, `FW_VERSION=5`) running from internal flash, boot state `CONFIRMED` (`update:` line in each boot), cand `ba8af1a3e7720e44`, prev `68a24dfcd65549c4`. Bootloader `eb2f44fb…` unchanged. **Identity: version 1 seq 1 in slot A (unchanged), version 2 seq 2 in slot B (in use), original bridge MAC**, DHCP lease `10.42.0.13`. Network record seq 1, channel 16. Overlay on zone 1 MANUAL 21 °C (read back). RTT logger and OpenOCD stopped (OpenOCD shut down over its Tcl port, no reset); SDR capture finished. Cables still connected.
+
+## Power cycle with identity v2 (2026-11-20) [V]
+
+After the earlier plain power cycle the owner had unplugged all cables, and the checks of that run were never completed. The owner then plugged the bench back in (USB power, ST-Link without 3V3, Ethernet, SDR), so this boot is a power-on boot. Sources: RTT, the dnsmasq journal through `tools/bench/mac_check.py`, and the local tanoclo, evening of 2026-11-20 (CET).
+
+| Item | Result |
+| :--- | :--- |
+| Boot log | `reset: RCC_CSR 0e000002: POR/PDR PIN BOR`; image 171952 bytes at `08010000`, VTOR `08010000`; HSE ready, SYSCLK 96 MHz; flash JEDEC `c22815` |
+| Identity | `identity: record seq 2, version 2: serial ..., EUI-64 set, Ethernet MAC set` (serial as before) |
+| Network record | `network: record seq 1, channel 16: key set, frame counter 118891, reserved below 122987`. The floor is above the last value before the power cycle (110699, "Warm reset 3" above), so the counter only went up |
+| DHCP | `mac_check.py`: the RTT log does not contain the MAC. dnsmasq shows DISCOVER, OFFER, REQUEST and ACK for `10.42.0.13` at 22:08:30 for the MAC from the owner's file, and `ip neigh` shows that MAC at `10.42.0.13` |
+| Session | The first attempts failed (`session: tls tcp (-14) (in connect)`, retrying). Cause: the laptop's tanoclo-ws and tanoclo-nginx containers had exited 9 hours earlier (laptop side, not the bridge). They were recreated (`docker compose -p tanoclo-bench ... up -d --force-recreate --no-deps node nginx`); the bridge's next retry opened the WebSocket on `/hw/v2`, and an uplink from the spare device was relayed and ACKed |
+| Downlink (22:12:04) | One overlay PUT on zone 1 (MANUAL 21 C, the value read back before it, so the overlay is unchanged): HTTP 200; `tx: datagram 21 ... attempt 1: delivered, 22 wake frames, short train`, the device's ACK, then its reply "to server, acked" |
+| 60 s stats | stale 0, overflow 0, acks too late 0; airtime 1014 ms of 30000 ms in the last hour; heap minimum 8560 after the session; stack words never used (radio/net/hk/update) 524/844/332/261 |
+
+**Not observed:** the boot-state line (`CONFIRMED` etc.). RTT was attached after the start of the boot log had scrolled past, so this run does not show it.
+
+**What this means for #39 and #24 [V].** Identity version 2 and the network record survive a real power-on reset, with the Ethernet MAC in use and the counter floor rising. #39 has no outstanding bench step. For #24 the boot-state line is still not seen after a power cycle, so step 3 stays open on that point. Still outstanding (owner, later): the power cut during an update install (#24 step 6).
 
 ## Bench network
 

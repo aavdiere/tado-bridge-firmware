@@ -62,7 +62,7 @@ Expected size effect: "0" means text, data and bss equal to the baseline, with t
 | 22 | owner | `tests/host/test_store.c`, `test_identity.c`, `test_boot.c`, `test_fwupd.c` | Four copies of the external-flash model with power cuts (`test_store.c:71-152`, `test_identity.c:59-96`, `test_boot.c:93-151`, `test_fwupd.c:112-173`) into one `tests/host/flash_model.h`. Test code only, but four files in one commit. | none | Skipped (owner decision, 2026-11-20): the four copies stay; they differ in the fault injection that each suite needs. |
 | 23 | owner | `tools/sdr/hs18place.py` | Reads the `hs18:` log lines of the temporary #18 test image (`hs18place.py:3-6`); no such line is left in `src/`. Delete, or keep as the record of the #18 measurement. | none |  Kept (owner decision, 2026-11-20): record of the #18 measurement. |
 
-Counts: 23 commits; 21 are #33 steps, 2 wait for an owner decision. 10 are comment-only (1-10), 8 are names and asserts with identical code (11-18), 3 change code inside one file or module (19-21). 9 rows (marked R) need a `fw-reviewer` verdict before they are merged; 6 must keep the bootloader hash.
+Counts: 23 commits; 21 are #33 steps; rows 21-23 are decided by the owner (21 skipped, 22 skipped, 23 kept). 10 are comment-only (1-10), 8 are names and asserts with identical code (11-18), 3 change code inside one file or module (19-21). 9 rows (marked R) need a `fw-reviewer` verdict before they are merged; 6 must keep the bootloader hash.
 
 ### Rows 1-10: result (#33, 2026-11-20) [V]
 
