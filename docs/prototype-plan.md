@@ -298,6 +298,6 @@ Changes made in this review, with the reason for each.
 
 Not changed, but worth knowing:
 
-- **No stage covers daily use.** The plan ends at P8. A soak run of several days, the production server address and CA in place of the bench values, and moving the stock network's devices over are not planned (owner, 2026-11-16: not now).
+- **No stage covers daily use.** The plan ends at P9. A soak run of several days, the production server address and CA in place of the bench values, and moving the stock network's devices over are not planned (owner, 2026-11-16: not now).
 - **The ACK target of 1 ms is stricter than stock.** `test-bench.md` notes that matching the stock 1.5-2.0 ms would be enough **[I]**; the project decision of 2026-11-11 keeps 1 ms. If P5 measures more than 1 ms but under 2 ms during a TLS handshake, that is a decision for the owner, not a failure of the port.
 - **Open questions 10-14** (stock behaviour seen through tanoclo's proxy mode) stay optional. The firmware matches tanoclo, not the stock cloud.
