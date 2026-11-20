@@ -5,6 +5,7 @@
 #include "lowpan.h"
 #include "msgq.h"
 #include "pair.h"
+#include "pair_found.h"
 #include "relay.h"
 
 #include <string.h>
@@ -189,6 +190,9 @@ static enum link_rx on_data(const uint8_t *frame, size_t len, uint32_t now_ms) {
             /* The target's answer to d/pair is the window's, not the server's. */
             switch (pair_reply(d.src, up.coap, up.coap_len)) {
                 case PAIR_REPLY_PAIRED:
+                    /* For the net task to report it to the server (#41): the
+                     * address its uplinks carry. A full queue is counted there. */
+                    (void)pair_found_post(up.ipv6);
                     return LINK_RX_PAIRED;
                 case PAIR_REPLY_OTHER:
                     return LINK_RX_NOT_RELAYED;

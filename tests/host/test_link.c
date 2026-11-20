@@ -6,6 +6,7 @@
 #include "csl.h"
 #include "lowpan.h"
 #include "pair.h"
+#include "pair_found.h"
 #include "relay.h"
 #include "txgate.h"
 
@@ -245,15 +246,27 @@ static void test_pairing(uint32_t *now_ms) {
      * spec 2026-11-17). */
     uint8_t reply[4] = {0x60, 0x44, (uint8_t)(mid >> 8), (uint8_t)mid};
     n                = frame_from(f, joiner, &key, 0x31, reply, sizeof reply);
+    uint8_t found[16];
+    CHECK(!pair_found_peek(found));
     CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_PAIRED);
     CHECK(link_pair_active(*now_ms));
     CHECK(!link_pair_engaged(*now_ms));
     CHECK(pair_key()->set);
     CHECK_EQ(link_uplink_peek(out, sizeof out), 0);
+    /* Its report for the server (#41): the address its uplinks carry, the
+     * one the server keys it by (fe80:: plus its interface identifier). */
+    uint8_t want[16];
+    relay_ipv6_from_wire(joiner, want);
+    CHECK(pair_found_peek(found));
+    CHECK_MEM(found, want, 16);
+    pair_found_pop();
+    CHECK(!pair_found_peek(found));
     /* From then on the device is one of the network's: to the server. */
     static const uint8_t token_req[] = {0x40, 0x02, 0x12, 0x99, 0xB4, 'a', 'u', 't', 'h'};
     n = frame_from(f, joiner, &key, 0x32, token_req, sizeof token_req);
     CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_FORWARDED);
+    CHECK(link_uplink_peek(out, sizeof out) > RELAY_HDR_LEN);
+    CHECK_MEM(out + 3, want, 16); /* the address of its report */
     link_uplink_pop();
     /* It may pair again while the window is open: its Beacon Request is
      * answered; a beacon that is not sent starts no exchange. */
