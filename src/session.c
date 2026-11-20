@@ -110,11 +110,9 @@ static struct {
  * on the next session's copy (pr_seen). Net task only. */
 #define PAIR_WAIT_MS 10000u
 static struct {
-    bool       pending;
-    uint16_t   mid;
-    uint8_t    token[8], tkl;
-    uint32_t   dur_s;
-    TickType_t t0;
+    bool                   pending;
+    struct pair_remote_key key;
+    TickType_t             t0;
 } pr;
 static struct pair_remote_seen pr_seen;
 
@@ -591,40 +589,40 @@ static void pair_log(uint16_t            mid,
 }
 
 static void on_pair(const struct coap_msg *m) {
-    enum pair_remote_rc rc;
-    uint32_t            secs = 0;
-    if (pr.pending && m->mid == pr.mid) {
-        LOG("session: POST pair resent (mid %04x) while the radio task has it: answered when done",
-            (unsigned)m->mid);
-        return;
-    }
-    if (pair_remote_seen_find(&pr_seen, m->mid, now_ms(), &rc, &secs)) {
-        /* A copy of a request the radio task acted on: its answer again,
-         * nothing done again (RFC 7252 4.5). */
-        pair_log(m->mid,
-                 UINT32_MAX,
-                 " resent, nothing done again",
-                 rc,
-                 secs,
-                 NULL,
-                 pair_answer(m->mid, m->token, m->tkl, rc));
-        return;
-    }
-    bool     open;
-    uint32_t dur;
+    enum pair_remote_rc    rc;
+    uint32_t               secs = 0;
+    bool                   open;
+    uint32_t               dur;
+    struct pair_remote_key k;
     rc = pair_remote_check(
         m, serial(), radio_pair_target_named(), RADIO_TX_ALLOWED != 0, &open, &dur);
     if (rc == PAIR_REMOTE_FORWARD) {
+        pair_remote_key_of(m, dur, &k);
+        if (pr.pending && pair_remote_same(&k, &pr.key)) {
+            LOG("session: POST pair resent (mid %04x) while the radio task has it: answered when "
+                "done",
+                (unsigned)m->mid);
+            return;
+        }
+        if (pair_remote_seen_find(&pr_seen, &k, now_ms(), &rc, &secs)) {
+            /* A copy of a request the radio task acted on: its answer
+             * again, nothing done again (RFC 7252 4.5). */
+            pair_log(m->mid,
+                     UINT32_MAX,
+                     " resent, nothing done again",
+                     rc,
+                     secs,
+                     NULL,
+                     pair_answer(m->mid, m->token, m->tkl, rc));
+            return;
+        }
         if (pr.pending || !pair_remote_post(open, open ? pair_remote_window_ms(dur) : 0u)) {
             rc = PAIR_REMOTE_BUSY;
         } else {
             radio_request_remote_pairing();
             pr.pending = true;
-            pr.mid     = m->mid;
-            pr.tkl     = m->tkl;
-            pr.dur_s   = dur;
+            pr.key     = k;
             pr.t0      = xTaskGetTickCount();
-            memcpy(pr.token, m->token, m->tkl);
             return; /* answered by pair_poll() */
         }
     }
@@ -651,15 +649,15 @@ static void pair_poll(void) {
         return;
     }
     if (pair_remote_result(&rc, &secs)) {
-        pair_remote_seen_add(&pr_seen, pr.mid, rc, secs, now_ms());
+        pair_remote_seen_add(&pr_seen, &pr.key, rc, secs, now_ms());
     } else if (elapsed(pr.t0, PAIR_WAIT_MS) && pair_remote_withdraw()) {
         rc = PAIR_REMOTE_NO_RADIO; /* never acted on: not remembered */
     } else {
         return; /* in work (once taken it always ends, within about a second) */
     }
     pr.pending = false;
-    bool sent  = phase == P_READY && pair_answer(pr.mid, pr.token, pr.tkl, rc);
-    pair_log(pr.mid, pr.dur_s, "", rc, secs, NULL, sent);
+    bool sent  = phase == P_READY && pair_answer(pr.key.mid, pr.key.token, pr.key.tkl, rc);
+    pair_log(pr.key.mid, pr.key.dur_s, "", rc, secs, NULL, sent);
 }
 
 /* Every binary message from the server (ws.c handler). */

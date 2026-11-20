@@ -89,7 +89,27 @@ uint8_t pair_remote_code(enum pair_remote_rc rc);
 const char *pair_remote_text(enum pair_remote_rc rc);
 
 /* --- Duplicates (RFC 7252 4.5) --------------------------------------------- */
-/* The requests the radio task acted on, by Message ID, for
+/* One request, as all its copies carry it: tanoclo resends the very frame
+ * it sent first (lib/coap-transport.js:195-234, the same wsFrame at 222),
+ * and gives each new request a new random token of 1-8 bytes
+ * (lib/command-api.js:115-118) and the duration it asks for. dur_s 0 is a
+ * close, above 0 an open, so it also holds the open/close flag. The Message
+ * ID alone is not enough: tanoclo starts its IDs at a random point after a
+ * restart (coap-transport.js:44), so a new request may reuse the ID of one
+ * acted on less than PAIR_REMOTE_LIFETIME_MS ago; with another token or
+ * duration it is a new request. */
+struct pair_remote_key {
+    uint16_t mid;
+    uint8_t  tkl, token[8];
+    uint32_t dur_s;
+};
+
+/* The key of m, which pair_remote_check() found FORWARD with dur_s. */
+void pair_remote_key_of(const struct coap_msg *m, uint32_t dur_s, struct pair_remote_key *k);
+/* Same Message ID, token and duration. */
+bool pair_remote_same(const struct pair_remote_key *a, const struct pair_remote_key *b);
+
+/* The requests the radio task acted on, by key, for
  * PAIR_REMOTE_LIFETIME_MS (EXCHANGE_LIFETIME, RFC 7252 4.8.2; tanoclo's
  * resends end 185 s after the first send). A resent copy gets the answer
  * of the first, and nothing is done again: so a late copy of an "open"
@@ -102,27 +122,30 @@ const char *pair_remote_text(enum pair_remote_rc rc);
 
 struct pair_remote_seen {
     struct {
-        bool     used;
-        uint16_t mid;
-        uint8_t  rc;
-        uint32_t secs, at_ms;
+        bool                   used;
+        struct pair_remote_key k;
+        uint8_t                rc;
+        uint32_t               secs, at_ms;
     } e[PAIR_REMOTE_SEEN];
     unsigned next;
 };
 
-/* A request with this Message ID was acted on less than
- * PAIR_REMOTE_LIFETIME_MS ago: its outcome. */
+/* A request with this key was acted on less than PAIR_REMOTE_LIFETIME_MS
+ * ago: its outcome. */
 bool pair_remote_seen_find(const struct pair_remote_seen *s,
-                           uint16_t                       mid,
+                           const struct pair_remote_key  *k,
                            uint32_t                       now_ms,
                            enum pair_remote_rc           *rc,
                            uint32_t                      *secs);
-/* Remember one; replaces the oldest when full. */
-void pair_remote_seen_add(struct pair_remote_seen *s,
-                          uint16_t                 mid,
-                          enum pair_remote_rc      rc,
-                          uint32_t                 secs,
-                          uint32_t                 now_ms);
+/* Remember one. It replaces an entry with the same Message ID (the same
+ * request after its lifetime, or a new request that reuses the ID: the old
+ * one's copies ended with the server's restart), else the oldest when
+ * full. */
+void pair_remote_seen_add(struct pair_remote_seen      *s,
+                          const struct pair_remote_key *k,
+                          enum pair_remote_rc           rc,
+                          uint32_t                      secs,
+                          uint32_t                      now_ms);
 
 /* --- Hand-over, net task (poster) to radio task (runner) -------------------- */
 /* One request at a time, four states:

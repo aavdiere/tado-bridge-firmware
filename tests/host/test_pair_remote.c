@@ -14,11 +14,11 @@
 #define SERIAL "IB1234567890"
 
 /* Duration 300 (tanoclo's default), 0 (close) and 65535 (its maximum). */
-#define REQ_HEAD                                                                           \
-    0x43, 0x02, 0x7a, 0xbc, 0xa1, 0xb2, 0xc3, 0x72, 0xff, 0xff, 0x41, 0x64, 0x01, 0x49,    \
-        0x0d, 0x09, 0x49, 0x42, 0x30, 0x30, 0x30, 0x30, 0x46, 0x54, 0x30, 0x31, 0x30, 0x30, \
-        0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x04, 0x70, 0x61, 0x69, \
-        0x72, 0x11, 0x2a, 0xff
+#define REQ_HEAD                                                                                  \
+    0x43, 0x02, 0x7a, 0xbc, 0xa1, 0xb2, 0xc3, 0x72, 0xff, 0xff, 0x41, 0x64, 0x01, 0x49, 0x0d,     \
+        0x09, 0x49, 0x42, 0x30, 0x30, 0x30, 0x30, 0x46, 0x54, 0x30, 0x31, 0x30, 0x30, 0x31, 0x32, \
+        0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x04, 0x70, 0x61, 0x69, 0x72, 0x11, 0x2a, \
+        0xff
 static const uint8_t req_300[]   = {REQ_HEAD, 0x01, 0x04, 0x00, 0x00, 0x01, 0x2c, 0x02, 0x01, 0x00};
 static const uint8_t req_0[]     = {REQ_HEAD, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00, 0x02, 0x01, 0x00};
 static const uint8_t req_65535[] = {REQ_HEAD, 0x01, 0x04, 0x00, 0x00, 0xff, 0xff, 0x02, 0x01, 0x00};
@@ -40,7 +40,8 @@ static enum pair_remote_rc check_bytes(const uint8_t *b,
 }
 
 /* A POST on path segs (joined by '/') with the given payload. */
-static size_t build(uint8_t *b, size_t cap, uint8_t code, const char *path, const uint8_t *p, size_t pn) {
+static size_t
+build(uint8_t *b, size_t cap, uint8_t code, const char *path, const uint8_t *p, size_t pn) {
     static const uint8_t tok[3] = {0xa1, 0xb2, 0xc3};
     struct coap_writer   w;
     coap_begin(&w, b, cap, COAP_CON, code, 0x7abc, tok, sizeof tok);
@@ -122,11 +123,11 @@ static void test_paths(void) {
 
     /* The pair path, but another serial: 4.04, nothing opened. */
     static const char *const other[] = {
-        "d/I/IB0000FT01001234567891/pair", /* last digit */
-        "d/I/IB0000FT0100123456789/pair",  /* one short */
+        "d/I/IB0000FT01001234567891/pair",  /* last digit */
+        "d/I/IB0000FT0100123456789/pair",   /* one short */
         "d/I/IB0000FT010012345678900/pair", /* one more */
-        "d/I/IB0000FT0101234567890/pair",  /* prefix one short */
-        "d/I/IB1234567890/pair",           /* the bare serial */
+        "d/I/IB0000FT0101234567890/pair",   /* prefix one short */
+        "d/I/IB1234567890/pair",            /* the bare serial */
         "d/I/IB0000FT0100IB1234567890/pair",
         "d/I/ib0000ft01001234567890/pair",
         "d/I/IB0000FT0100/pair",
@@ -169,7 +170,7 @@ static void test_paths(void) {
 static enum pair_remote_rc check_payload(const uint8_t *p, size_t pn, bool *open, uint32_t *dur) {
     uint8_t         b[128];
     struct coap_msg m;
-    size_t n = build(b, sizeof b, COAP_POST, "d/I/IB0000FT01001234567890/pair", p, pn);
+    size_t          n = build(b, sizeof b, COAP_POST, "d/I/IB0000FT01001234567890/pair", p, pn);
     if (!n || !coap_parse(b, n, &m)) {
         return PAIR_REMOTE_RC_COUNT;
     }
@@ -188,8 +189,8 @@ static void test_payloads(void) {
     static const uint8_t tag2_first[] = {0x02, 0x01, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01};
     CHECK_EQ(check_payload(tag2_first, sizeof tag2_first, &open, &dur), PAIR_REMOTE_FORWARD);
     CHECK_EQ(dur, 1);
-    static const uint8_t unknown[] = {0x7f, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00, 0x02,
-                                      0x33, 0x03, 0xaa, 0xbb, 0xcc};
+    static const uint8_t unknown[] = {
+        0x7f, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00, 0x02, 0x33, 0x03, 0xaa, 0xbb, 0xcc};
     CHECK_EQ(check_payload(unknown, sizeof unknown, &open, &dur), PAIR_REMOTE_FORWARD);
     CHECK_EQ(dur, 2);
     /* Upper bytes set (tanoclo never does): read as u32, the window capped. */
@@ -206,17 +207,17 @@ static void test_payloads(void) {
         uint8_t b[12];
         size_t  n;
     } bad[] = {
-        {{0}, 0},                                                 /* no payload */
-        {{0x01}, 1},                                              /* header cut */
-        {{0x01, 0x04, 0x00, 0x00, 0x01}, 5},                      /* value cut */
-        {{0x01, 0x02, 0x01, 0x2c}, 4},                            /* duration of 2 bytes */
-        {{0x01, 0x05, 0x00, 0x00, 0x00, 0x01, 0x2c}, 7},          /* of 5 bytes */
-        {{0x01, 0x00}, 2},                                        /* of 0 bytes */
-        {{0x02, 0x01, 0x00}, 3},                                  /* no duration */
-        {{0x01, 0x04, 0, 0, 1, 0x2c, 0x01, 0x04, 0, 0, 0, 0}, 12}, /* two durations */
-        {{0x01, 0x04, 0x00, 0x00, 0x01, 0x2c, 0x02}, 7},          /* trailing header byte */
+        {{0}, 0},                                                    /* no payload */
+        {{0x01}, 1},                                                 /* header cut */
+        {{0x01, 0x04, 0x00, 0x00, 0x01}, 5},                         /* value cut */
+        {{0x01, 0x02, 0x01, 0x2c}, 4},                               /* duration of 2 bytes */
+        {{0x01, 0x05, 0x00, 0x00, 0x00, 0x01, 0x2c}, 7},             /* of 5 bytes */
+        {{0x01, 0x00}, 2},                                           /* of 0 bytes */
+        {{0x02, 0x01, 0x00}, 3},                                     /* no duration */
+        {{0x01, 0x04, 0, 0, 1, 0x2c, 0x01, 0x04, 0, 0, 0, 0}, 12},   /* two durations */
+        {{0x01, 0x04, 0x00, 0x00, 0x01, 0x2c, 0x02}, 7},             /* trailing header byte */
         {{0x01, 0x04, 0x00, 0x00, 0x01, 0x2c, 0x02, 0x02, 0x00}, 9}, /* trailing value cut */
-        {{0x02, 0xff, 0x01, 0x04, 0x00, 0x00, 0x01, 0x2c}, 8},    /* length past the end */
+        {{0x02, 0xff, 0x01, 0x04, 0x00, 0x00, 0x01, 0x2c}, 8},       /* length past the end */
     };
     for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
         open = true;
@@ -275,52 +276,139 @@ static void test_codes(void) {
     CHECK_EQ(pair_remote_code(PAIR_REMOTE_RC_COUNT), COAP_INTERNAL);
 }
 
+/* A key as pair_remote_key_of() makes it, from made-up values. */
+static struct pair_remote_key key(uint16_t mid, const char *tok, uint32_t dur) {
+    struct coap_msg m = {.mid = mid, .tkl = (uint8_t)strlen(tok), .token = (const uint8_t *)tok};
+    struct pair_remote_key k;
+    pair_remote_key_of(&m, dur, &k);
+    return k;
+}
+
+static void test_key(void) {
+    /* Every copy of tanoclo's frame gives the same key, its Message ID,
+     * token and duration. */
+    struct coap_msg        m;
+    struct pair_remote_key a, b;
+    bool                   open;
+    uint32_t               dur;
+    CHECK(coap_parse(req_300, sizeof req_300, &m));
+    CHECK_EQ(pair_remote_check(&m, SERIAL, true, true, &open, &dur), PAIR_REMOTE_FORWARD);
+    pair_remote_key_of(&m, dur, &a);
+    CHECK_EQ(a.mid, 0x7abc);
+    CHECK_EQ(a.tkl, 3);
+    CHECK(memcmp(a.token, "\xa1\xb2\xc3", 3) == 0);
+    CHECK_EQ(a.dur_s, 300);
+    CHECK(coap_parse(req_300, sizeof req_300, &m));
+    pair_remote_key_of(&m, 300, &b);
+    CHECK(pair_remote_same(&a, &b));
+    /* The close with the same Message ID and token is another request. */
+    CHECK(coap_parse(req_0, sizeof req_0, &m));
+    CHECK_EQ(pair_remote_check(&m, SERIAL, true, true, &open, &dur), PAIR_REMOTE_FORWARD);
+    pair_remote_key_of(&m, dur, &b);
+    CHECK(!pair_remote_same(&a, &b));
+
+    a = key(0x7abc, "ab", 300);
+    b = key(0x7abc, "ab", 300);
+    CHECK(pair_remote_same(&a, &b));
+    b = key(0x7abd, "ab", 300);
+    CHECK(!pair_remote_same(&a, &b)); /* Message ID */
+    b = key(0x7abc, "ac", 300);
+    CHECK(!pair_remote_same(&a, &b)); /* token */
+    b = key(0x7abc, "abc", 300);
+    CHECK(!pair_remote_same(&a, &b)); /* token length */
+    b = key(0x7abc, "a", 300);
+    CHECK(!pair_remote_same(&a, &b));
+    b = key(0x7abc, "ab", 30);
+    CHECK(!pair_remote_same(&a, &b)); /* duration */
+    b = key(0x7abc, "ab", 0);
+    CHECK(!pair_remote_same(&a, &b)); /* open against close */
+    b = key(0x7abc, "", 300);
+    a = key(0x7abc, "", 300);
+    CHECK(pair_remote_same(&a, &b)); /* no token */
+    /* The bytes past the token do not count. */
+    a          = key(0x7abc, "ab", 300);
+    b          = a;
+    b.token[5] = 0x55;
+    CHECK(pair_remote_same(&a, &b));
+}
+
 static void test_seen(void) {
     struct pair_remote_seen s;
     memset(&s, 0, sizeof s);
-    enum pair_remote_rc rc;
-    uint32_t            secs;
-    CHECK(!pair_remote_seen_find(&s, 0x7abc, 0, &rc, &secs));
+    enum pair_remote_rc          rc;
+    uint32_t                     secs;
+    const struct pair_remote_key op = key(0x7abc, "\x01\x02", 300);
+    const struct pair_remote_key cl = key(0x7abd, "\x03", 0);
+    CHECK(!pair_remote_seen_find(&s, &op, 0, &rc, &secs));
 
     /* A resent open gets the first answer for the lifetime, on a wrapping clock. */
     uint32_t t0 = 0xFFFFFF00u;
-    pair_remote_seen_add(&s, 0x7abc, PAIR_REMOTE_OPENED, 300, t0);
-    CHECK(pair_remote_seen_find(&s, 0x7abc, t0, &rc, &secs));
+    pair_remote_seen_add(&s, &op, PAIR_REMOTE_OPENED, 300, t0);
+    CHECK(pair_remote_seen_find(&s, &op, t0, &rc, &secs));
     CHECK_EQ(rc, PAIR_REMOTE_OPENED);
     CHECK_EQ(secs, 300);
-    CHECK(pair_remote_seen_find(&s, 0x7abc, t0 + 185000u, &rc, &secs));
-    CHECK(pair_remote_seen_find(&s, 0x7abc, t0 + PAIR_REMOTE_LIFETIME_MS - 1u, &rc, &secs));
-    CHECK(!pair_remote_seen_find(&s, 0x7abc, t0 + PAIR_REMOTE_LIFETIME_MS, &rc, &secs));
-    CHECK(!pair_remote_seen_find(&s, 0x7abd, t0, &rc, &secs));
+    CHECK(pair_remote_seen_find(&s, &op, t0 + 185000u, &rc, &secs));
+    CHECK(pair_remote_seen_find(&s, &op, t0 + PAIR_REMOTE_LIFETIME_MS - 1u, &rc, &secs));
+    CHECK(!pair_remote_seen_find(&s, &op, t0 + PAIR_REMOTE_LIFETIME_MS, &rc, &secs));
+    CHECK(!pair_remote_seen_find(&s, &cl, t0, &rc, &secs));
 
     /* Open, close, then a late copy of the open: still the open's answer
      * (nothing reopened), the close's own copy gets the close's. */
-    pair_remote_seen_add(&s, 0x7abd, PAIR_REMOTE_CLOSED, 0, t0 + 10u);
-    CHECK(pair_remote_seen_find(&s, 0x7abc, t0 + 20u, &rc, &secs));
+    pair_remote_seen_add(&s, &cl, PAIR_REMOTE_CLOSED, 0, t0 + 10u);
+    CHECK(pair_remote_seen_find(&s, &op, t0 + 20u, &rc, &secs));
     CHECK_EQ(rc, PAIR_REMOTE_OPENED);
-    CHECK(pair_remote_seen_find(&s, 0x7abd, t0 + 20u, &rc, &secs));
+    CHECK(pair_remote_seen_find(&s, &cl, t0 + 20u, &rc, &secs));
     CHECK_EQ(rc, PAIR_REMOTE_CLOSED);
 
-    /* The same ID again after its lifetime: one entry, the new outcome. */
-    pair_remote_seen_add(&s, 0x7abc, PAIR_REMOTE_WAS_OPEN, 12, t0 + PAIR_REMOTE_LIFETIME_MS);
-    CHECK(pair_remote_seen_find(&s, 0x7abc, t0 + PAIR_REMOTE_LIFETIME_MS, &rc, &secs));
-    CHECK_EQ(rc, PAIR_REMOTE_WAS_OPEN);
-    CHECK_EQ(secs, 12);
+    /* fw-reviewer L2 of #40: after a restart tanoclo's IDs start at a
+     * random point, so a new request may carry the ID of one in the cache.
+     * Another token, or the same token with another duration or a close,
+     * is not a copy: it is acted on. */
+    static const struct {
+        const char *tok;
+        uint32_t    dur;
+    } news[] = {
+        {"\x09\x09", 300}, {"\x01", 300}, {"\x01\x02\x03", 300}, {"\x01\x02", 30}, {"\x01\x02", 0}};
+    for (unsigned i = 0; i < sizeof news / sizeof news[0]; i++) {
+        const struct pair_remote_key n = key(0x7abc, news[i].tok, news[i].dur);
+        CHECK(!pair_remote_seen_find(&s, &n, t0 + 20u, &rc, &secs));
+    }
+    const struct pair_remote_key cl2 = key(0x7abd, "\x04", 0);
+    CHECK(!pair_remote_seen_find(&s, &cl2, t0 + 20u, &rc, &secs));
+    /* Once acted on, the new request replaces the old one's entry: the old
+     * one's copies ended with the server's restart. */
+    const struct pair_remote_key op2 = key(0x7abc, "\x09\x09", 0);
+    pair_remote_seen_add(&s, &op2, PAIR_REMOTE_WAS_CLOSED, 0, t0 + 30u);
+    CHECK(pair_remote_seen_find(&s, &op2, t0 + 40u, &rc, &secs));
+    CHECK_EQ(rc, PAIR_REMOTE_WAS_CLOSED);
+    CHECK(!pair_remote_seen_find(&s, &op, t0 + 40u, &rc, &secs));
+    CHECK(pair_remote_seen_find(&s, &cl, t0 + 40u, &rc, &secs));
     unsigned used = 0;
     for (unsigned i = 0; i < PAIR_REMOTE_SEEN; i++) {
-        used += s.e[i].used && s.e[i].mid == 0x7abc;
+        used += s.e[i].used && s.e[i].k.mid == 0x7abc;
+    }
+    CHECK_EQ(used, 1);
+
+    /* The same request again after its lifetime: one entry, the new outcome. */
+    pair_remote_seen_add(&s, &op, PAIR_REMOTE_WAS_OPEN, 12, t0 + PAIR_REMOTE_LIFETIME_MS);
+    CHECK(pair_remote_seen_find(&s, &op, t0 + PAIR_REMOTE_LIFETIME_MS, &rc, &secs));
+    CHECK_EQ(rc, PAIR_REMOTE_WAS_OPEN);
+    CHECK_EQ(secs, 12);
+    used = 0;
+    for (unsigned i = 0; i < PAIR_REMOTE_SEEN; i++) {
+        used += s.e[i].used && s.e[i].k.mid == 0x7abc;
     }
     CHECK_EQ(used, 1);
 
     /* Full: the oldest goes first. */
     memset(&s, 0, sizeof s);
     for (unsigned i = 0; i < PAIR_REMOTE_SEEN + 2u; i++) {
-        pair_remote_seen_add(&s, (uint16_t)(0x7000u + i), PAIR_REMOTE_CLOSED, 0, i);
+        const struct pair_remote_key k = key((uint16_t)(0x7000u + i), "t", 0);
+        pair_remote_seen_add(&s, &k, PAIR_REMOTE_CLOSED, 0, i);
     }
-    CHECK(!pair_remote_seen_find(&s, 0x7000, 100, &rc, &secs));
-    CHECK(!pair_remote_seen_find(&s, 0x7001, 100, &rc, &secs));
-    for (unsigned i = 2; i < PAIR_REMOTE_SEEN + 2u; i++) {
-        CHECK(pair_remote_seen_find(&s, (uint16_t)(0x7000u + i), 100, &rc, &secs));
+    for (unsigned i = 0; i < PAIR_REMOTE_SEEN + 2u; i++) {
+        const struct pair_remote_key k = key((uint16_t)(0x7000u + i), "t", 0);
+        CHECK_EQ(pair_remote_seen_find(&s, &k, 100, &rc, &secs), i >= 2u);
     }
 }
 
@@ -347,7 +435,7 @@ static void test_handover(void) {
     CHECK_EQ(wms, 300000);
     CHECK(!pair_remote_pending());
     CHECK(!pair_remote_claim(&open, &wms)); /* once */
-    CHECK(!pair_remote_withdraw());          /* claimed: it runs to its end */
+    CHECK(!pair_remote_withdraw());         /* claimed: it runs to its end */
     CHECK(!pair_remote_post(false, 0));
     CHECK(!pair_remote_result(&rc, &secs));
     pair_remote_finish(PAIR_REMOTE_OPENED, 300);
@@ -382,6 +470,7 @@ int main(void) {
     test_payloads();
     test_build_guards();
     test_codes();
+    test_key();
     test_seen();
     test_handover();
     return TEST_REPORT("test_pair_remote");

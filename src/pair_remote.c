@@ -146,13 +146,26 @@ const char *pair_remote_text(enum pair_remote_rc rc) {
 }
 
 /* --- Duplicates ---------------------------------------------------------------- */
+void pair_remote_key_of(const struct coap_msg *m, uint32_t dur_s, struct pair_remote_key *k) {
+    memset(k, 0, sizeof *k);
+    k->mid   = m->mid;
+    k->tkl   = m->tkl <= sizeof k->token ? m->tkl : (uint8_t)sizeof k->token;
+    k->dur_s = dur_s;
+    memcpy(k->token, m->token, k->tkl);
+}
+
+bool pair_remote_same(const struct pair_remote_key *a, const struct pair_remote_key *b) {
+    return a->mid == b->mid && a->tkl == b->tkl && a->dur_s == b->dur_s
+           && memcmp(a->token, b->token, a->tkl) == 0;
+}
+
 bool pair_remote_seen_find(const struct pair_remote_seen *s,
-                           uint16_t                       mid,
+                           const struct pair_remote_key  *k,
                            uint32_t                       now_ms,
                            enum pair_remote_rc           *rc,
                            uint32_t                      *secs) {
     for (unsigned i = 0; i < PAIR_REMOTE_SEEN; i++) {
-        if (s->e[i].used && s->e[i].mid == mid
+        if (s->e[i].used && pair_remote_same(&s->e[i].k, k)
             && (uint32_t)(now_ms - s->e[i].at_ms) < PAIR_REMOTE_LIFETIME_MS) {
             *rc   = (enum pair_remote_rc)s->e[i].rc;
             *secs = s->e[i].secs;
@@ -162,27 +175,24 @@ bool pair_remote_seen_find(const struct pair_remote_seen *s,
     return false;
 }
 
-void pair_remote_seen_add(struct pair_remote_seen *s,
-                          uint16_t                 mid,
-                          enum pair_remote_rc      rc,
-                          uint32_t                 secs,
-                          uint32_t                 now_ms) {
-    unsigned k = PAIR_REMOTE_SEEN;
-    for (unsigned i = 0; i < PAIR_REMOTE_SEEN; i++) {
-        if (s->e[i].used && s->e[i].mid == mid) {
-            k = i; /* the same ID again (after its lifetime): one entry */
-            break;
-        }
+void pair_remote_seen_add(struct pair_remote_seen      *s,
+                          const struct pair_remote_key *k,
+                          enum pair_remote_rc           rc,
+                          uint32_t                      secs,
+                          uint32_t                      now_ms) {
+    unsigned i = 0;
+    while (i < PAIR_REMOTE_SEEN && !(s->e[i].used && s->e[i].k.mid == k->mid)) {
+        i++; /* the same ID again: one entry, the newest request with it */
     }
-    if (k == PAIR_REMOTE_SEEN) {
-        k       = s->next % PAIR_REMOTE_SEEN;
-        s->next = (k + 1u) % PAIR_REMOTE_SEEN;
+    if (i == PAIR_REMOTE_SEEN) {
+        i       = s->next % PAIR_REMOTE_SEEN;
+        s->next = (i + 1u) % PAIR_REMOTE_SEEN;
     }
-    s->e[k].used  = true;
-    s->e[k].mid   = mid;
-    s->e[k].rc    = (uint8_t)rc;
-    s->e[k].secs  = secs;
-    s->e[k].at_ms = now_ms;
+    s->e[i].used  = true;
+    s->e[i].k     = *k;
+    s->e[i].rc    = (uint8_t)rc;
+    s->e[i].secs  = secs;
+    s->e[i].at_ms = now_ms;
 }
 
 /* --- Hand-over ------------------------------------------------------------------ */
