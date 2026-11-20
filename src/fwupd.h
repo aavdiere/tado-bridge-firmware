@@ -47,9 +47,8 @@
 
 #define FWUPD_BLOCK 1024u /* Block1 block size */
 #define FWUPD_SZX   6u    /* 2^(6 + 4) = 1024 (RFC 7959 2.2) */
-#define FWUPD_BLOCKS                                                            \
-    ((FWIMG_APP_MAX + FWUPD_BLOCK - 1u) / FWUPD_BLOCK) /* image blocks, at most \
-                                                        */
+/* Image blocks, at most. */
+#define FWUPD_BLOCKS ((FWIMG_APP_MAX + FWUPD_BLOCK - 1u) / FWUPD_BLOCK)
 
 #define FWUPD_PROG_MAX 256u  /* one program operation: at most one 256-byte page */
 #define FWUPD_READ_MAX 1024u /* one read operation */
