@@ -58,9 +58,9 @@ Expected size effect: "0" means text, data and bss equal to the baseline, with t
 | 18 | done `b7d22bd` | `src/spi1.c` | `clock.h` included after the libopencm3 headers (`spi1.c:28`); `br << 3` (`spi1.c:64`) as the BR field shift. | 0 | |
 | 19 | done `fe15ebc` | `src/clock.c` | SysTick set-up repeated (`clock.c:102-105`, `:298-301`) and "back to HSI and wait" repeated (`clock.c:182-187`, `:202-207`): two static helpers; `0` passed for a NULL pointer (`clock.c:125,151,158,181,187,200,207`). | about -20 to -40 B text | |
 | 20 | done `28f8b68` | `src/board.c`, `src/board.h` | LED and button pins defined in `board.c:8-12` and raw in `GPIOB_USED` (`board.c:35-37`), unlike the `BOARD_*_PIN` table (`board.h:7-21`); the PB1 MODER write by hand (`board.c:128`) repeats the pattern of `board_cs_early()` (`board.c:61-64`): one static helper. | about 0 | |
-| 21 | todo | `cmake/toolchain-arm-none-eabi.cmake`, `cmake/CMakeLists.txt` | Template leftovers: C++ flags with no C++ source (`toolchain-arm-none-eabi.cmake:89,134,150,168`), the "e.g. STM32L476RG" comment (`CMakeLists.txt:130`). Optional: lwIP sources compiled while their options are off (`raw.c`, `stats.c`, `ip4_frag.c`; `lwipopts.h:36,47-48,87`). | 0 | |
+| 21 | owner | `cmake/toolchain-arm-none-eabi.cmake`, `cmake/CMakeLists.txt` | Template leftovers: C++ flags with no C++ source (`toolchain-arm-none-eabi.cmake:89,134,150,168`), the "e.g. STM32L476RG" comment (`CMakeLists.txt:130`). Optional: lwIP sources compiled while their options are off (`raw.c`, `stats.c`, `ip4_frag.c`; `lwipopts.h:36,47-48,87`). | 0 |  Skipped (owner decision, 2026-11-20): left as is. |
 | 22 | owner | `tests/host/test_store.c`, `test_identity.c`, `test_boot.c`, `test_fwupd.c` | Four copies of the external-flash model with power cuts (`test_store.c:71-152`, `test_identity.c:59-96`, `test_boot.c:93-151`, `test_fwupd.c:112-173`) into one `tests/host/flash_model.h`. Test code only, but four files in one commit. | none | Skipped (owner decision, 2026-11-20): the four copies stay; they differ in the fault injection that each suite needs. |
-| 23 | owner | `tools/sdr/hs18place.py` | Reads the `hs18:` log lines of the temporary #18 test image (`hs18place.py:3-6`); no such line is left in `src/`. Delete, or keep as the record of the #18 measurement. | none | |
+| 23 | owner | `tools/sdr/hs18place.py` | Reads the `hs18:` log lines of the temporary #18 test image (`hs18place.py:3-6`); no such line is left in `src/`. Delete, or keep as the record of the #18 measurement. | none |  Kept (owner decision, 2026-11-20): record of the #18 measurement. |
 
 Counts: 23 commits; 21 are #33 steps, 2 wait for an owner decision. 10 are comment-only (1-10), 8 are names and asserts with identical code (11-18), 3 change code inside one file or module (19-21). 9 rows (marked R) need a `fw-reviewer` verdict before they are merged; 6 must keep the bootloader hash.
 
@@ -149,6 +149,6 @@ Status: **todo** (rows above), **done** (all its rows landed), **none** (nothing
 | Bootloader | `boot/main.c`, `boot/bootctl.c/.h`, `boot/bl_hw.c/.h`, `boot/bl_mbedtls_config.h` | `bootctl.h` full, rest skimmed | done | 9 done; P2, P4, P9 |
 | Ethernet, lwIP, net task | `enc28j60.c/.h`, `net.c/.h` | `enc28j60.h`, `net.c` full; `enc28j60.c` part | done | 8 done; P4 |
 | TLS, WebSocket, CoAP, session | `tls.c/.h`, `ws.c/.h`, `coap.c/.h`, `session.c/.h` | skimmed | proposal | P4 |
-| Host tests | `tests/host/*` | Makefile full, rest skimmed | todo | 10 done; 22 |
-| Tools | `tools/sdr`, `tools/bench`, `tools/entropy`, `tools/identity`, `tools/update`, scripts | headers | owner | 23; rule 6 |
-| Build | `Makefile`, `cmake/*` | skimmed | todo | 21 |
+| Host tests | `tests/host/*` | Makefile full, rest skimmed | done | 10 done; 22 skipped |
+| Tools | `tools/sdr`, `tools/bench`, `tools/entropy`, `tools/identity`, `tools/update`, scripts | headers | done | 23 kept; rule 6 |
+| Build | `Makefile`, `cmake/*` | skimmed | done (owner skipped) | 21 skipped |
