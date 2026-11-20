@@ -33,10 +33,10 @@
  * transmit.
  *
  * tx_permit is set only in the transmit functions at the end of this file
- * (cc110l_tx_start(), cc110l_tx_feed(), cc110l_tx_abort() for its SFTX, and
- * cc110l_ack_fire_from_isr()), and only when RADIO_TX_ALLOWED is 1. STX is
- * strobed in two places, cc110l_tx_start() and cc110l_ack_fire_from_isr(),
- * and only when all of this holds:
+ * (tx_begin() for cc110l_tx_start() and cc110l_tx_answer(), cc110l_tx_feed(),
+ * cc110l_tx_abort() for its SFTX, and cc110l_ack_fire_from_isr()), and only
+ * when RADIO_TX_ALLOWED is 1. STX is strobed in two places, tx_begin() and
+ * cc110l_ack_fire_from_isr(), and only when all of this holds:
  *   - the whole register table has been written since the last reset;
  *   - PATABLE[0] has been set by cc110l_set_pa() since the last reset and
  *     reads back as set, before every frame and every ACK;
@@ -53,7 +53,7 @@
  *   - the frame's airtime fits in the rolling one-hour budget (airtime.h:
  *     30 s per hour against the band's 1 %). Every frame is charged here,
  *     before it is keyed: an Enhanced ACK when it is prepared, any other
- *     frame in cc110l_tx_start().
+ *     frame in tx_begin().
  * The bytes that go into the TX FIFO are the driver's own copy of the
  * approved frame. */
 #include "cc110l.h"
@@ -70,10 +70,10 @@
 #define HDR_BURST 0x40
 #define HDR_ADDR  0x3F
 
-#define CHIP_RDY_TIMEOUT_US \
-    1000u /* SO goes low at once unless in SLEEP/XOFF, cc110l.txt:1297-1299 */
-#define RESET_RDY_TIMEOUT_US \
-    5000u /* XOSC restart after SRES; 150 us typical, cc110l.txt:1333,1356-1362 */
+/* SO goes low at once unless in SLEEP/XOFF, cc110l.txt:1297-1299. */
+#define CHIP_RDY_TIMEOUT_US 1000u
+/* XOSC restart after SRES; 150 us typical, cc110l.txt:1333,1356-1362. */
+#define RESET_RDY_TIMEOUT_US 5000u
 
 static volatile bool tx_state_seen;
 
@@ -212,13 +212,13 @@ static struct {
  * interrupt (an Enhanced ACK).
  *
  * The time is kept as a start and a length, and compared as an unsigned
- * elapsed time: an end time compared as a signed difference (as until
- * 2026-11-17) reads "still on the air" from 35.8 to 71.6 minutes after the
- * frame if nobody looked in between, which in a quiet network nobody does,
- * and the TX-state watch would then take a stray TX state for ours. The
- * elapsed time can still wrap after 71.6 minutes; tx_active is cleared once
- * the frame is over, so that needs no call for 71.6 minutes, and the radio
- * task calls cc110l_tx_expected() on every loop pass.
+ * elapsed time: an end time compared as a signed difference reads "still
+ * on the air" from 35.8 to 71.6 minutes after the frame if nobody looked in
+ * between, which in a quiet network nobody does, and the TX-state watch
+ * would then take a stray TX state for ours. The elapsed time can still
+ * wrap after 71.6 minutes; tx_active is cleared once the frame is over, so
+ * that needs no call for 71.6 minutes, and the radio task calls
+ * cc110l_tx_expected() on every loop pass.
  *
  * Who may clear tx_active: the interrupt, which nothing preempts here, and
  * the task only while no ACK is prepared. Only a prepared ACK can make the
@@ -947,7 +947,7 @@ enum cc110l_ack_fire cc110l_ack_fire_from_isr(void) {
     struct txgate_radio r = shadow_radio();
     /* Not over a frame of ours that is still on the air: the chip cannot
      * report a received packet then, so that edge is not a packet's, and
-     * the SFTX below would be dropped (see cc110l_tx_start()). */
+     * the SFTX below would be dropped (see tx_begin()). */
     if (!shadow_full || !pa_ok || cc110l_tx_expected() || !cc110l_cal_ok()
         || (uint32_t)(timebase_us() - ack.verified_us) > ACK_VERIFY_MAX_US
         || txgate_check_channel(&r) != TXGATE_OK) {

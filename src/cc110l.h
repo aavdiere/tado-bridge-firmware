@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "mac.h"
 #include "txgate.h"
 
 /* TI CC110L register-level access over SPI1 (docs/datasheets/cc110l.txt,
@@ -28,15 +29,15 @@
  *      read back from the chip, within the airtime budget (src/airtime.h)
  *      and at an output power at most the reset level (cc110l_set_pa()).
  *   0: a receive-only image (`make RADIO_TX_ALLOWED=0`): the transmit
- *      functions refuse, and STX, SFTX and the TX FIFO panic as in the P2
- *      images. */
+ *      functions refuse, and the guard panics on STX, SFTX and any TX FIFO
+ *      access. */
 #ifndef RADIO_TX_ALLOWED
 #error "RADIO_TX_ALLOWED comes from the build: CMake option, default ON, 0 for receive-only"
 #elif RADIO_TX_ALLOWED != 0 && RADIO_TX_ALLOWED != 1
 #error "RADIO_TX_ALLOWED must be 0 or 1"
 #endif
 
-/* Output power for the bring-up on the bench (P5): PATABLE 0x26, -10 dBm
+/* Output power, set at every bring-up of the radio: PATABLE 0x26, -10 dBm
  * at 868 MHz with wire-wound inductors (cc110l.txt:2828, Table 5-14); with
  * multi-layer inductors -10 dBm is 0x27 (cc110l.txt:2862, Table 5-16). The
  * IB01's inductor type is not known, so the real level is within about a
@@ -141,8 +142,9 @@
  * IDLE with reset defaults. False if SO never went low. */
 bool cc110l_reset(void);
 
-/* The only strobe entry point. Panics on a strobe outside the receive-only
- * whitelist. status may be NULL. */
+/* The strobe entry point for every caller outside this driver. Panics on
+ * any strobe but SRES, SCAL, SRX, SIDLE, SFRX and SNOP: STX and SFTX go
+ * out only from the transmit functions below. status may be NULL. */
 bool radio_strobe(uint8_t strobe, uint8_t *status);
 
 /* Configuration registers 0x00..0x2E. Burst writes are checked byte by byte
@@ -237,7 +239,7 @@ enum cc110l_tx_result {
 };
 enum txgate_verdict cc110l_tx_verdict(void);
 
-/* Airtime charged in the last hour, at most AIRTIME_BUDGET_US (30 s).
+/* Airtime charged in the last hour, at most AIRTIME_BUDGET_US.
  * Radio task only. */
 uint32_t cc110l_airtime_used_us(void);
 
@@ -254,8 +256,10 @@ enum cc110l_tx_result cc110l_tx_start(const uint8_t *frame, size_t len, unsigned
  * gate needs to see: the Enhanced Beacon answering a Beacon Request
  * (answered: the request's first 16 bytes; flags: TXGATE_PAIRING; #19).
  * Refused without answered. */
-enum cc110l_tx_result
-cc110l_tx_answer(const uint8_t *frame, size_t len, const uint8_t answered[16], unsigned flags);
+enum cc110l_tx_result cc110l_tx_answer(const uint8_t *frame,
+                                       size_t         len,
+                                       const uint8_t  answered[MAC_HDR_LEN],
+                                       unsigned       flags);
 
 /* Tops the TX FIFO up for a frame longer than the FIFO. *left: bytes not
  * yet written. False on a TX FIFO underflow or an SPI failure; the caller
@@ -292,7 +296,8 @@ bool cc110l_tx_expected(void);
  *   interrupt puts it back in RX itself (CC_ACK_FAILED), or reports
  *   CC_ACK_REARM if it cannot.
  * cancel drops a prepared ACK. Each prepared ACK is sent at most once. */
-enum cc110l_tx_result cc110l_ack_prepare(const uint8_t ack[29], const uint8_t answered[16]);
+enum cc110l_tx_result cc110l_ack_prepare(const uint8_t ack[MAC_ACK_LEN],
+                                         const uint8_t answered[MAC_HDR_LEN]);
 void                  cc110l_ack_cancel(void);
 
 /* Result of the interrupt's attempt. */
