@@ -1851,6 +1851,8 @@ static void pairing_trigger(uint32_t now_ms) {
     } else if (rc == PAIR_REMOTE_QUEUED) {
         LOG("pair: frames of the last window still queued: no window; hold the button again in "
             "a few seconds");
+    } else if (rc == PAIR_REMOTE_OPEN_FAILED) {
+        LOG("pair: %s", pair_remote_text(rc));
     } else {
         LOG("pair: %s: no window", pair_remote_text(rc));
     }
