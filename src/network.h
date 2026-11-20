@@ -35,8 +35,9 @@ void network_boot(void);
  * failure also leaves no key set until the next boot, which loads the
  * newest valid record. May wait for a DRBG reseed (about 45 ms) and for a
  * sector erase (up to 240 ms).
- * Refused unless network_absent(); after any failure, refused until the
- * next boot. Holds the radio task's loop for up to about 0.8 s (DRBG
+ * Refused unless network_absent() or network_replaceable(); after any
+ * failure, refused until the next boot. Holds the radio task's loop for
+ * up to about 0.8 s (DRBG
  * reseed, sector erases); frames are acknowledged during the sector erases
  * (#22, src/mx25r.h) but not during the reseed, and the coordinator waits:
  * never while a pairing window is open, and only with the coordinator idle (csl_idle()). */
@@ -57,9 +58,20 @@ bool network_active(void);
 
 /* At boot the flash was read and holds no network record at all, not even
  * a damaged or refused one (store_net_probe()), and nothing has been
- * written since: the only state in which network_create() runs. False if
- * network_boot() did not run (no identity, flash not ready). */
+ * written since: one of the two states in which network_create() runs.
+ * False if network_boot() did not run (no identity, flash not ready). */
 bool network_absent(void);
+
+/* The other state (stage P7.1): at boot the newest network record was a
+ * sound one (store_net_other_channel(): every slot empty or valid, tado
+ * PAN) for another channel, written by an image built for another
+ * RADIO_NET_CHANNEL, and nothing has been written since. This image never
+ * uses it (no key, nothing sent, receiving goes on) and never retunes to
+ * it; network_create(), asked for by pairing (the button or the server's
+ * request, pairing_open() in src/radio.c), may replace it with a new
+ * network on this image's channel. *channel (if not NULL): the record's
+ * channel. A damaged or unreadable record still blocks network_create(). */
+bool network_replaceable(uint8_t *channel);
 
 /* Factory reset (P6): the link drops its key and any pairing window at
  * once (nothing is acknowledged or sent from here on), no network may be

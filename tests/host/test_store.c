@@ -1064,10 +1064,96 @@ static void test_factory_reset_failing(void) {
     }
 }
 
+/* A record written around the policy, as an image built for that channel
+ * writes it (raw payload: pan, channel, 0, key, floor). */
+static void raw_net(uint8_t channel, uint16_t pan, uint8_t tag) {
+    uint8_t p[STORE_NET_LEN] = {(uint8_t)pan, (uint8_t)(pan >> 8), channel, 0};
+    for (unsigned i = 0; i < CCM_KEY_LEN; i++) {
+        p[4 + i] = (uint8_t)(tag + i);
+    }
+    CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
+}
+
+/* Stage P7.1: a record for another channel (an image built for another
+ * RADIO_NET_CHANNEL) is reported as such, never loaded, and a new record
+ * for this image's channel replaces it; a cut at any step of that write
+ * leaves the old record or the new one. */
+static void test_record_other_channel(void) {
+    uint8_t  ch  = 0;
+    uint32_t seq = 0;
+    flash_stock();
+    reboot();
+    CHECK(!store_net_other_channel(&ch, &seq)); /* stock data in slot A: no record */
+    raw_net(REFUSED_CH, MAC_PAN_ID, 1);
+    struct store_net got;
+    CHECK(!store_net_load(&got, &seq));
+    CHECK(store_net_other_channel(&ch, &seq));
+    CHECK_EQ(ch, REFUSED_CH);
+    CHECK_EQ(seq, 1);
+    /* Only the newest counts: ours on top of it is a record of ours. */
+    raw_net(TXGATE_TEST_CHANNEL, MAC_PAN_ID, 2);
+    CHECK(store_net_load(&got, &seq));
+    CHECK(!store_net_other_channel(&ch, &seq));
+    /* Another channel again on top of ours (seq 3), the older one ours. */
+    raw_net(10u, MAC_PAN_ID, 3);
+    CHECK(store_net_other_channel(&ch, &seq));
+    CHECK_EQ(ch, 10u);
+    CHECK_EQ(seq, 3);
+    /* The older slot damaged (a flipped bit): not "another channel" any
+     * more, since a damaged record may hold devices. */
+    uint32_t old_slot = FLASH_NET_B; /* seq 1 and 3 went to A, seq 2 to B */
+    CHECK_EQ(mem[FLASH_NET_A + 8], 3);
+    mem[old_slot + STORE_REC_HDR + 6] ^= 0x01;
+    CHECK(!store_net_other_channel(&ch, &seq));
+    mem[old_slot + STORE_REC_HDR + 6] ^= 0x01;
+    CHECK(store_net_other_channel(&ch, &seq));
+    /* Another PAN, a channel off the plan, a non-zero reserved byte: no. */
+    flash_stock();
+    reboot();
+    raw_net(REFUSED_CH, 0x1234, 4);
+    CHECK(!store_net_other_channel(&ch, &seq));
+    flash_stock();
+    reboot();
+    raw_net(50u, MAC_PAN_ID, 5);
+    CHECK(!store_net_other_channel(&ch, &seq));
+
+    /* The replacement, cut at every step. */
+    unsigned cases = 0;
+    for (unsigned k = 1;; k++) {
+        flash_stock();
+        reboot();
+        raw_net(REFUSED_CH, MAC_PAN_ID, 6);
+        struct store_net neu = make_net(12, 99);
+        fm.cut_in            = k;
+        bool ok              = store_net_write(&neu, NULL);
+        if (fm.cut_in != 0) {
+            CHECK(ok);
+            break;
+        }
+        CHECK(!ok);
+        cases++;
+        reboot();
+        if (store_net_load(&got, &seq)) {
+            CHECK_EQ(seq, 2);
+            CHECK(same_net(&got, &neu));
+            CHECK(!store_net_other_channel(&ch, &seq));
+        } else {
+            CHECK(store_net_other_channel(&ch, &seq));
+            CHECK_EQ(ch, REFUSED_CH);
+            CHECK_EQ(seq, 1);
+        }
+    }
+    CHECK(cases >= 3u);
+    CHECK(store_net_load(&got, &seq));
+    CHECK_EQ(seq, 2);
+    CHECK(!store_net_other_channel(&ch, &seq));
+}
+
 int main(void) {
     test_crc();
     test_record_basic();
     test_record_policy();
+    test_record_other_channel();
     test_record_cuts();
     test_net_commit();
     test_counter_floor();

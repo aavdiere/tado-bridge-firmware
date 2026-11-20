@@ -144,6 +144,13 @@ bool store_net_allowed(const struct store_net *n);
 
 /* The newest valid network record that store_net_allowed() accepts. */
 bool store_net_load(struct store_net *out, uint32_t *seq);
+/* The newest valid network record is one for the tado PAN on a channel of
+ * the plan other than this image's (written by an image built for another
+ * RADIO_NET_CHANNEL, stage P7.1): true, with its channel and seq. False
+ * for no record, a damaged or unreadable one, one store_net_allowed()
+ * accepts, or one for another PAN or off the plan. Its key is never
+ * returned. */
+bool store_net_other_channel(uint8_t *channel, uint32_t *seq);
 /* Is there any network record at all, valid or not? Reads the first four
  * bytes of both slots: *any is true if either holds the record's magic,
  * which is programmed last (the commit mark), so a write that was cut

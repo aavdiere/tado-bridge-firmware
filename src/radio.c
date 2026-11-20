@@ -1866,6 +1866,13 @@ static enum pair_remote_rc pairing_open(uint32_t window_ms) {
         LOG("pair: no network yet: creating one on channel %u before the window opens",
             RADIO_CHANNEL);
         ok = network_create(RADIO_CHANNEL, key);
+    } else if (network_replaceable(NULL)) {
+        /* A record written by an image for another channel (stage P7.1,
+         * src/network.h): this pair request replaces it. */
+        LOG("pair: the network record is for another channel: a new network on channel %u "
+            "replaces it before the window opens",
+            RADIO_CHANNEL);
+        ok = network_create(RADIO_CHANNEL, key);
     } else {
         return PAIR_REMOTE_NETWORK;
     }
