@@ -1,4 +1,7 @@
-/* Network record and counter log (#37). See store.h and docs/design.md
+/* Records in external flash: the slotted record format, which the boot
+ * state also uses (#24, src/fwimg.c; this file is linked into the
+ * bootloader), the identity record (#21, #39), the network record and the
+ * counter log (#37), and the factory reset. See store.h and docs/design.md
  * "Persistent storage (#27)". */
 #include "store.h"
 
