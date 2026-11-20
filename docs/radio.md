@@ -156,7 +156,7 @@ The CC110L is a simpler CC1101. Freedo's register use carries over: see `datashe
 
 ## ACK prebuild (P5 plan) [I]
 
-**Implemented (#17, 2026-11-17), host-tested only:** the ACK is built while the frame arrives but written to the TX FIFO in the CRC-OK interrupt, and `STX` is strobed from IDLE, not RX. This differs from steps 2 and 3 below; see `radio-runtime.md`, "P5 link implementation (#17)", for the path, the guards and the expected 0.15-0.3 ms latency. Transmit was off then (`RADIO_TX_ALLOWED` 0); since 2026-11-17 it is a build option, default 1 (owner decision, `README.md`, "Project decisions"; `src/cc110l.h:20-37`), and an ACK still needs a network key. Nothing is measured on air yet (#18).
+**Implemented (#17, 2026-11-17), host-tested only:** the ACK is built while the frame arrives but written to the TX FIFO in the CRC-OK interrupt, and `STX` is strobed from IDLE, not RX. This differs from steps 2 and 3 below; see `radio-runtime.md`, "P5 link implementation (#17)", for the path, the guards and the expected 0.15-0.3 ms latency. Transmit was off then (`RADIO_TX_ALLOWED` 0); since 2026-11-17 it is a build option, default 1 (owner decision, `README.md`, "Project decisions"; `src/cc110l.h:21-38`), and an ACK still needs a network key. Nothing is measured on air yet (#18).
 
 The Enhanced ACK is 29 bytes and unencrypted (`wiki/Tado-868-MHz-Link-Protocol.md:335-356`). Almost all of it is known before the Data frame ends:
 
