@@ -870,6 +870,8 @@ The 5-10 KB estimate of "Size check (#23)" holds.
 3. Send, await the ACK, and answer `{ok: true, ack: {code, mid, payloadHex}}` from the object `handleAckReceived()` resolves (`code`, `hex`).
 4. On a timeout answer 504 `{error: "Timeout waiting for device ACK"}`.
 
+**Built and bench-tested locally 2026-11-20 [V]** (branch `bench/send-raw-waitack` in `../tanoclo`, commit `229c990`, never pushed; `test-bench.md`, "Update with answers (waitAck), 2026-11-20"). One difference from the plan above, to keep for the PR: the ACK object's `code` arrives as a number (69 for 2.05) because `coapMsg.codeStr` is not set on that path, so the handler formats it as "c.dd" (found when the first `status` call failed with "GET b/fw: 69"). A frame shorter than 32 bytes gives 400.
+
 Without `waitAck`, nothing changes. Nothing else is needed:
 - the bridge's ACK already reaches the API process (`ACK_RECEIVED`);
 - an ACK returns before tanoclo's own Block1 reassembly (`lib/message-router/index.js:542-573`);
@@ -883,5 +885,5 @@ The uploader uses Message IDs 0x0100-0x6FFF, below tanoclo's own 0x7000-0xFFFF (
 - `--watch` follows `GET b/fw` until the new image is `CONFIRMED`, or reports a rollback.
 - `status` sends one `GET b/fw`.
 - `--docker tanoclo-ws` runs every API request inside the container (one `docker exec ... node` relay for the whole run), as the localhost rule needs.
-- Without #38 (the PR is postponed to the very end, owner decision 2026-11-20, so `--blind` is the normal mode until then), `--blind` sends at a fixed pace (120 s after block 0, 1.5 s per block) and sees only the reconnect. A lost or early block makes the bridge refuse the rest, and nothing is marked, so it is safe but slow and blind; it is the working mode until #38 lands.
+- The bench tanoclo runs the local `waitAck` patch since 2026-11-20 (owner decision; the PR stays postponed to the very end), so non-blind is the bench mode. `--blind`, for an unpatched tanoclo, sends at a fixed pace (120 s after block 0, 1.5 s per block) and sees only the reconnect. A lost or early block makes the bridge refuse the rest, and nothing is marked, so it is safe but slow and blind; it is the mode for tanoclo as it is upstream.
 - Host test `tests/host/test_upload_tool.sh`: the tool's frames for four image sizes are taken apart as `src/session.c` does and fed to `src/fwupd.c` (DONE, candidate verified, `PENDING`, installed by the real `bootctl.c`); the body is the header block and the image byte for byte; odd, oversized and non-application images are refused. 39 checks. Run on the real build: `info build/tado-bridge.bin` gives 161376 bytes, 158 image blocks, and the bootloader's `.bin` is refused **[V]**.

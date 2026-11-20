@@ -551,7 +551,7 @@ Run on 2026-11-19 (steps 0-5; step 6 run on 2026-11-20, see "Power cut during an
 
 **Stack stop rule (steps 0 and 4):** the `alive:` line's update-task figure (stack words never used) should be at least about 170, and about 250 is expected. Stop if it is below 100.
 
-**Uploader command** (bench host, tanoclo in the container `tanoclo-ws`): `tools/update/upload.py --docker tanoclo-ws upload <image.bin> --bridge <bench serial> --blind`. In blind mode it waits 120 s after block 0 and 1.5 s per block after that, then for the bridge to reconnect.
+**Uploader command** (bench host, tanoclo in the container `tanoclo-ws`): `tools/update/upload.py --docker tanoclo-ws upload <image.bin> --bridge <bench serial> --blind` (since 2026-11-20 the bench tanoclo has the `waitAck` patch, so leave `--blind` off and add `--watch`; see "Update with answers"). In blind mode it waits 120 s after block 0 and 1.5 s per block after that, then for the bridge to reconnect.
 
 **Steps:**
 0. **Flash A** with `tools/flash.sh` (bootloader and application, `Verified OK` twice). The boot log shows `update: running <A> (<n> B); boot state none tries 0 ...` (ids as 16 hex digits) and then session ready. `boot state unread` instead means the boot-state read was not taken within 10 s (the radio task's loop did not run): stop and read the log. Apply the stack stop rule above.
@@ -854,6 +854,18 @@ Owner hand work on the bench bridge, after "Power cycle with identity v2 (2026-1
 **State left [V].** Image 6 (`9e92ac7de0709ab0`) confirmed; the previous slot holds `ba8af1a3e7720e44` (image 5); bootloader unchanged.
 
 **What this means for #24 [V]/[I].** Step 6 is done: a power cut during a real install recovered, and the new image confirmed. With steps 0-5, every bench step of the plan has passed.
+
+## Update with answers (waitAck), 2026-11-20 [V]
+
+**Local tanoclo patch (owner decision 2026-11-20).** Branch `bench/send-raw-waitack` in `../tanoclo`, commit `229c990`, never pushed: `handleSendRaw` in `ws-server/lib/command-api.js` takes optional `waitAck` and `timeoutMs` (default 35000, clamped 1..300000), reads the Message ID at frame bytes 30-31, registers `waitForAck(mid)` before sending, answers `{ok, ack: {code, mid, payloadHex}}` or 504 on timeout, and 400 for a frame under 32 bytes. The ACK `code` arrives as a number (69), so the handler formats it "c.dd" (`design.md`, "Uploader and tanoclo"). Deployed by bind-mounting that one file read-only over the image's copy in `~/tanoclo-bench/docker-compose.override.yml` (outside git), after checking the container's file equalled tanoclo main; container recreated with `--force-recreate --no-deps node`. `upload.py --docker tanoclo-ws status` then returned the bridge's line (run 9e92ac7d, boot confirmed, tries 0, prev ba8af1a3).
+
+**Update, no `--blind` [V].** Image 7 (FW_VERSION=7, same clean export of reviewed source as image 6; id `7d8005945fcea5d5`), `upload.py --docker tanoclo-ws upload <v7.bin> --bridge <bench serial> --watch`, started 22:35:04 CET.
+- Block 0 answered 2.31 after 10.9 s (running image saved to the previous slot, 10870 ms).
+- All 169 blocks sent in 22.8 s (image 6 blind: 372.4 s).
+- 22:35:27 last block 2.04 verified, PENDING; 22:35:29 restart into the bootloader; 22:35:41 app boot; reconnect 21:35:50Z.
+- Watch: `boot testing tries 1`, then at 60 s `boot confirmed tries 0`, prev = image 6. Command time 1 min 47 s including the 60 s confirm wait. No retries, no 5.03.
+
+**State left [V].** Image 7 (`7d8005945fcea5d5`) confirmed; previous slot image 6 (`9e92ac7de0709ab0`).
 
 ## Bench network
 
