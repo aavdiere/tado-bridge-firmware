@@ -37,6 +37,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 | [`build.md`](build.md) | Build, flash (OpenOCD) and RTT log commands. |
 | [`design.md`](design.md) | Firmware design proposals. Persistent storage, entropy, software stack, self-update and first flash. |
 | [`radio.md`](radio.md) | 868 MHz PHY, CC110L registers, frames, coordinator behaviour, repo conflicts, reuse. |
+| [`cleanup-p8.md`](cleanup-p8.md) | P8 clean-up survey (#32): baseline sizes, rules per commit, the ordered #33 commit list, #34 proposals, progress by module. |
 
 ## Project decisions
 
