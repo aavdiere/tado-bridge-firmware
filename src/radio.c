@@ -55,10 +55,12 @@
  * when idle, with no other radio access in between) after the access that
  * caused it.
  *
- * PAIRING (#19, src/pair.h). The pair button (held 1 s, src/app.c) asks this
- * task to open a window for the device named in the build
+ * PAIRING (#19, src/pair.h). The pair button (held 1 s, src/app.c), or the
+ * server's POST d/I/<serial>/pair (#40, src/pair_remote.h, from the net
+ * task), asks this task to open a window for the device named in the build
  * (PAIR_TARGET_EUI64 in config/local.cmake): at a quiet moment it creates
- * the network first if there has never been one, then opens the window.
+ * the network first if there has never been one, then opens the window
+ * (10 minutes from the button, the server's duration up to 10 minutes).
  * The Enhanced Beacon that answers the target's Beacon Request is built
  * while the request is taken (link_on_frame()) and sent from frame_done(),
  * before anything logs, PAIR_BEACON_TX_AT_US after the request's end edge
@@ -83,6 +85,7 @@
 #include "network.h"
 #include "pair.h"
 #include "pair_led.h"
+#include "pair_remote.h"
 #include "provision.h"
 #include "rng.h"
 #include "spi1.h"
@@ -245,11 +248,12 @@ _Static_assert(FXOSC_HZ * (8u + (DEVIATN_VAL & 7u)) * (1u << ((DEVIATN_VAL >> 4)
 /* The ACK interrupt could not strobe STX after making the chip IDLE (see
  * cc110l_ack_fire_from_isr()): CHECK, it strobed SRX again, confirm RX;
  * REARM, it could not, abort and re-arm now. */
-#define NOTE_ACK_CHECK (1u << 6)
-#define NOTE_ACK_REARM (1u << 7)
-#define NOTE_PAIR      (1u << 8)  /* the pair button: open or close a window (#19) */
-#define NOTE_RESET     (1u << 9)  /* the factory reset button (P6) */
-#define NOTE_UPDATE    (1u << 10) /* the update task posted a flash operation (#24) */
+#define NOTE_ACK_CHECK   (1u << 6)
+#define NOTE_ACK_REARM   (1u << 7)
+#define NOTE_PAIR        (1u << 8)  /* the pair button: open or close a window (#19) */
+#define NOTE_RESET       (1u << 9)  /* the factory reset button (P6) */
+#define NOTE_UPDATE      (1u << 10) /* the update task posted a flash operation (#24) */
+#define NOTE_PAIR_REMOTE (1u << 11) /* a pair request of the server is posted (#40) */
 
 /* FreeRTOS FromISR calls need a numeric priority >= 5 (FreeRTOSConfig.h,
  * configMAX_SYSCALL_INTERRUPT_PRIORITY = 0x50). */
@@ -1760,26 +1764,34 @@ static void beacon_answer(uint32_t fall_us, bool own_end) {
     }
 }
 
-/* The pair button (#19): open a window for the device named in the build,
- * or close the one that is open. Runs at flash_quiet() (no packet
- * arriving, no transaction set up), never inside a window: creating a
- * network blocks this task for up to about 0.8 s (fw-reviewer items 1-3 of
- * #19). The pairing trigger therefore needs, all of them: a target named in
- * config/local.cmake (PAIR_TARGET_EUI64), the transmitter built in
- * (RADIO_TX_ALLOWED, the CMake option), the flash read at boot, an
- * identity, the radio up with PLL lock, and the owner's hand on the
- * button. Without a target the code below is not even compiled: the build
- * then holds no path to network_create() or link_pair_open(). */
+/* Opening a pairing window (#19), for the pair button and for the
+ * server's remote trigger (#40) alike: for the device named in the build,
+ * for window_ms (at most PAIR_WINDOW_MS, src/pair.h). Runs at
+ * flash_quiet() (no packet arriving, no transaction set up), never inside
+ * a window: creating a network blocks this task for up to about 0.8 s
+ * (fw-reviewer items 1-3 of #19). A window therefore needs, all of them: a
+ * target named in config/local.cmake (PAIR_TARGET_EUI64), the transmitter
+ * built in (RADIO_TX_ALLOWED, the CMake option), the flash read at boot,
+ * an identity, the radio up with PLL lock, no frame of the last window
+ * still queued, and the owner's hand on the button or the server's
+ * request. Without a target the code below is not even compiled: the build
+ * then holds no path to network_create() or link_pair_open(). Returns
+ * PAIR_REMOTE_OPENED or why not (src/pair_remote.h); logs only the
+ * creation of a network. */
 static bool flash_ready; /* flash_boot() succeeded: the records may be read and written */
 
-static void pairing_trigger(uint32_t now_ms) {
-    if (link_pair_active(now_ms)) {
-        link_pair_close();
-        LOG("pair: window closed by the pair button");
-        return;
-    }
+bool radio_pair_target_named(void) {
+#ifdef PROVISION_PAIR_EUI64
+    return true;
+#else
+    return false;
+#endif
+}
+
+static enum pair_remote_rc pairing_open(uint32_t window_ms) {
 #ifndef PROVISION_PAIR_EUI64
-    LOG("pair: no device named for pairing (PAIR_TARGET_EUI64 in config/local.cmake): no window");
+    (void)window_ms;
+    return PAIR_REMOTE_NO_TARGET;
 #else
     static const uint8_t eui[MAC_EUI_LEN] = PROVISION_PAIR_EUI64;
     uint8_t              target[MAC_EUI_LEN];
@@ -1787,27 +1799,21 @@ static void pairing_trigger(uint32_t now_ms) {
         target[i] = eui[MAC_EUI_LEN - 1u - i]; /* wire order, as link_start() */
     }
     if (!RADIO_TX_ALLOWED) {
-        LOG("pair: receive-only image (RADIO_TX_ALLOWED 0): no window");
-        return;
+        return PAIR_REMOTE_RX_ONLY;
     }
     if (!flash_ready || !link_own()) {
-        LOG("pair: %s: no window", !flash_ready ? "flash not ready at boot" : "no identity");
-        return;
+        return !flash_ready ? PAIR_REMOTE_NO_FLASH : PAIR_REMOTE_NO_IDENTITY;
     }
     /* The target must not be the bridge itself (its EUI-64 from the
      * identity record, #21); checked before any network is created. */
     if (memcmp(target, link_own(), MAC_EUI_LEN) == 0) {
-        LOG("pair: PAIR_TARGET_EUI64 is the bridge's own EUI-64: no window");
-        return;
+        return PAIR_REMOTE_SELF_TARGET;
     }
     if (!gdo_irq_on || !cc110l_cal_ok()) {
-        LOG("pair: radio not ready to transmit (no PLL lock or interrupts off): no window");
-        return;
+        return PAIR_REMOTE_RADIO;
     }
     if (link_pair_frames_queued()) {
-        LOG("pair: frames of the last window still queued: no window; hold the button again in "
-            "a few seconds");
-        return;
+        return PAIR_REMOTE_QUEUED;
     }
     uint8_t key[CCM_KEY_LEN], rnd[PAIR_RAND_LEN];
     bool    ok;
@@ -1818,23 +1824,73 @@ static void pairing_trigger(uint32_t now_ms) {
             RADIO_CHANNEL);
         ok = network_create(RADIO_CHANNEL, key);
     } else {
-        LOG("pair: a network record exists but is not in use: no window, no new network over it");
-        return;
+        return PAIR_REMOTE_NETWORK;
     }
     ok = ok && rng_random(NULL, rnd, sizeof rnd) == 0
-         && link_pair_open(target, key, rnd, (uint32_t)xTaskGetTickCount(), PAIR_WINDOW_MS);
+         && link_pair_open(target, key, rnd, (uint32_t)xTaskGetTickCount(), window_ms);
     mbedtls_platform_zeroize(key, sizeof key);
     mbedtls_platform_zeroize(rnd, sizeof rnd);
-    if (ok) {
+    return ok ? PAIR_REMOTE_OPENED : PAIR_REMOTE_OPEN_FAILED;
+#endif
+}
+
+/* The pair button (#19): open a window of PAIR_WINDOW_MS, or close the one
+ * that is open (whoever opened it). */
+static void pairing_trigger(uint32_t now_ms) {
+    if (link_pair_active(now_ms)) {
+        link_pair_close();
+        LOG("pair: window closed by the pair button");
+        return;
+    }
+    enum pair_remote_rc rc = pairing_open(PAIR_WINDOW_MS);
+    if (rc == PAIR_REMOTE_OPENED) {
         LOG("pair: window open for %u s on channel %u, for the device named in the build only; "
             "LED flashing until it is found",
             PAIR_WINDOW_MS / 1000u,
             RADIO_CHANNEL);
+    } else if (rc == PAIR_REMOTE_QUEUED) {
+        LOG("pair: frames of the last window still queued: no window; hold the button again in "
+            "a few seconds");
     } else {
-        LOG("pair: window not opened (network key not read back, no random numbers, or the "
-            "target is not a device address)");
+        LOG("pair: %s: no window", pair_remote_text(rc));
     }
-#endif
+}
+
+/* The server's remote trigger (#40, src/pair_remote.h), posted by the net
+ * task (src/session.c): duration 0 closes the open window, whoever opened
+ * it; a duration above 0 opens one through pairing_open() above, with
+ * every guard of the button, or leaves an open window as it is (its
+ * length, its counters and an exchange in progress unchanged). At
+ * flash_quiet(), as the button. The outcome goes back to the net task,
+ * which answers the request and writes its one log line; nothing is logged
+ * here except a network's creation. */
+static void pairing_remote(uint32_t now_ms) {
+    bool     open;
+    uint32_t window_ms, secs = 0;
+    if (!pair_remote_claim(&open, &window_ms)) {
+        return;
+    }
+    enum pair_remote_rc rc;
+    if (!open) {
+        rc = PAIR_REMOTE_WAS_CLOSED;
+        if (link_pair_active(now_ms)) {
+            link_pair_close();
+            rc = PAIR_REMOTE_CLOSED;
+        }
+    } else if (link_pair_active(now_ms)) {
+        rc   = PAIR_REMOTE_WAS_OPEN;
+        secs = link_pair_left_ms(now_ms) / 1000u;
+    } else {
+        rc   = pairing_open(window_ms);
+        secs = rc == PAIR_REMOTE_OPENED ? window_ms / 1000u : 0u;
+    }
+    pair_remote_finish(rc, secs);
+}
+
+void radio_request_remote_pairing(void) {
+    if (self) {
+        xTaskNotify(self, NOTE_PAIR_REMOTE, eSetBits);
+    }
 }
 
 /* Factory reset (P6, docs/design.md "Lifecycle"): erase the network record
@@ -2166,8 +2222,9 @@ void radio_task_run(void) {
          * it takes frames (#22), so the moment is asked for again after
          * each step that may write or read the flash. Flash work waits for
          * flash_quiet(): no transaction set up at all. While work that may
-         * program or erase is due (factory reset, pairing trigger, which
-         * may create a network, counter reservation, an update operation),
+         * program or erase is due (factory reset, pairing trigger from the
+         * button or the server, which may create a network, counter
+         * reservation, an update operation),
          * the coordinator is held: it starts nothing new, so it is idle by
          * the end of the transaction in flight, however full its queue.
          * The hold is dropped on the same pass as the work, before the
@@ -2175,7 +2232,8 @@ void radio_task_run(void) {
         flash_due |= (bits & NOTE_FLASH) != 0;
         pair_due |= (bits & NOTE_PAIR) != 0;
         reset_due |= (bits & NOTE_RESET) != 0;
-        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now) || handoff_pending());
+        csl_hold(reset_due || pair_due || pair_remote_pending()
+                 || network_service_due((uint32_t)now) || handoff_pending());
         if (flash_due && flash_quiet()) {
             flash_due = false;
             flash_check();
@@ -2189,13 +2247,17 @@ void radio_task_run(void) {
             pair_due = false;
             pairing_trigger((uint32_t)now);
         }
+        if (pair_remote_pending() && flash_quiet()) {
+            pairing_remote((uint32_t)xTaskGetTickCount());
+        }
         if (flash_quiet()) {
             network_service((uint32_t)now); /* writes only if network_service_due() */
         }
         if (handoff_pending() && flash_quiet()) {
             update_op_run();
         }
-        csl_hold(reset_due || pair_due || network_service_due((uint32_t)now) || handoff_pending());
+        csl_hold(reset_due || pair_due || pair_remote_pending()
+                 || network_service_due((uint32_t)now) || handoff_pending());
         if (quiet()) {
             if ((int32_t)(now - next_health) >= 0) {
                 next_health = now + pdMS_TO_TICKS(HEALTH_PERIOD_MS);
@@ -2213,8 +2275,8 @@ void radio_task_run(void) {
         /* The pairing LED (#19, owner spec 2026-11-17, amended 2026-11-18;
          * src/pair_led.h): slow flash while the window waits, quick flash
          * during an exchange, lit for 2 s after a pairing, off once the
-         * window has closed (after PAIR_WINDOW_MS, or by the button; a
-         * pairing does not close it). On the tick clock at this loop's
+         * window has closed (after its length, or by the button or the
+         * server; a pairing does not close it). On the tick clock at this loop's
          * pace (at most 100 ms late); at its 49.7-day wrap one phase is
          * cut short. */
         uint32_t t       = (uint32_t)xTaskGetTickCount();

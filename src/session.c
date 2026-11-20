@@ -9,7 +9,9 @@
  *   then needs the serial or its home in `websocket_whitelist`, unless that
  *   table is empty (lib/db-auth.js:45-52), else 4.01 (handlers.js:246-251).
  * - Replies are piggybacked ACKs with code 2.05 (handlers.js:154, 309).
- * - GET time: 2.05 with 0D + u32le Unix seconds (lib/coap.js:503-508). */
+ * - GET time: 2.05 with 0D + u32le Unix seconds (lib/coap.js:503-508).
+ * The bridge answers the server's own requests for it: PUT d/config,
+ * b/fw (#24) and POST d/I/<serial>/pair (#40, src/pair_remote.h). */
 #include "session.h"
 
 #include "board.h"
@@ -18,6 +20,7 @@
 #include "identity.h"
 #include "link.h"
 #include "log.h"
+#include "pair_remote.h"
 #include "radio.h"
 #include "relay.h"
 #include "rng.h"
@@ -98,6 +101,22 @@ static struct {
     bool     more;
     unsigned szx;
 } fw;
+
+/* The server's pair request (#40) the radio task has: answered when its
+ * outcome is back (pair_poll()), or with 5.03 if the radio task has not
+ * taken it after PAIR_WAIT_MS (its loop does not run; the same limit as
+ * RADIO_UPDATE_OP_WAIT_MS, src/radio.c says why it is enough). Kept across
+ * a session's end: the radio task acts on it anyway, and the answer goes
+ * on the next session's copy (pr_seen). Net task only. */
+#define PAIR_WAIT_MS 10000u
+static struct {
+    bool       pending;
+    uint16_t   mid;
+    uint8_t    token[8], tkl;
+    uint32_t   dur_s;
+    TickType_t t0;
+} pr;
+static struct pair_remote_seen pr_seen;
 
 /* The serial from the identity record (#21, src/identity.h). Only called
  * once identity_init() has found one. */
@@ -505,6 +524,144 @@ static void on_fw(const struct coap_msg *m) {
     }
 }
 
+/* --- Remote pairing trigger, POST d/I/<serial>/pair (#40) -------------------- */
+/* Answered as tanoclo answers its own requests: a piggybacked ACK with the
+ * request's Message ID and token, no options, no payload; 2.04 when the
+ * window is open or closed as asked, 4.xx or 5.xx otherwise
+ * (src/pair_remote.h). tanoclo stops resending on any ACK with its Message
+ * ID and reads neither code nor payload (lib/coap-transport.js:237-265). */
+static uint32_t now_ms(void) {
+    return (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+}
+
+static bool pair_answer(uint16_t mid, const uint8_t *token, size_t tkl, enum pair_remote_rc rc) {
+    uint8_t            buf[4 + 8];
+    struct coap_writer w;
+    coap_begin(&w, buf, sizeof buf, COAP_ACK, pair_remote_code(rc), mid, token, tkl);
+    return !w.overflow && send_coap(buf, w.len);
+}
+
+/* The one log line of a request. dur: the duration it asked for, or
+ * UINT32_MAX if it was not read; how: "" or what kind of copy it was. */
+static void pair_log(uint16_t            mid,
+                     uint32_t            dur,
+                     const char         *how,
+                     enum pair_remote_rc rc,
+                     uint32_t            secs,
+                     const char         *path,
+                     bool                sent) {
+    char    what[160], d[24] = "";
+    uint8_t c = pair_remote_code(rc);
+    switch (rc) {
+        case PAIR_REMOTE_OPENED:
+            snprintf(
+                what,
+                sizeof what,
+                "window opened for %lu s on channel %u, for the device named in the build only",
+                (unsigned long)secs,
+                RADIO_CHANNEL);
+            break;
+        case PAIR_REMOTE_WAS_OPEN:
+            snprintf(what,
+                     sizeof what,
+                     "window already open, %lu s left: left as it is",
+                     (unsigned long)secs);
+            break;
+        case PAIR_REMOTE_CLOSED:
+        case PAIR_REMOTE_WAS_CLOSED:
+            snprintf(what, sizeof what, "%s", pair_remote_text(rc));
+            break;
+        default:
+            snprintf(what, sizeof what, "refused: %s", pair_remote_text(rc));
+            break;
+    }
+    if (dur != UINT32_MAX) {
+        snprintf(d, sizeof d, ", dur %lu s", (unsigned long)dur);
+    }
+    LOG("session: POST pair%s (mid %04x%s%s%s): %s: %u.%02u %s",
+        how,
+        (unsigned)mid,
+        d,
+        path ? ", /" : "",
+        path ? path : "",
+        what,
+        (unsigned)(c >> 5),
+        (unsigned)(c & 31u),
+        sent ? "sent" : "not sent (no session or send queue full; the server resends)");
+}
+
+static void on_pair(const struct coap_msg *m) {
+    enum pair_remote_rc rc;
+    uint32_t            secs = 0;
+    if (pr.pending && m->mid == pr.mid) {
+        LOG("session: POST pair resent (mid %04x) while the radio task has it: answered when done",
+            (unsigned)m->mid);
+        return;
+    }
+    if (pair_remote_seen_find(&pr_seen, m->mid, now_ms(), &rc, &secs)) {
+        /* A copy of a request the radio task acted on: its answer again,
+         * nothing done again (RFC 7252 4.5). */
+        pair_log(m->mid,
+                 UINT32_MAX,
+                 " resent, answered as before, nothing done",
+                 rc,
+                 secs,
+                 NULL,
+                 pair_answer(m->mid, m->token, m->tkl, rc));
+        return;
+    }
+    bool     open;
+    uint32_t dur;
+    rc = pair_remote_check(
+        m, serial(), radio_pair_target_named(), RADIO_TX_ALLOWED != 0, &open, &dur);
+    if (rc == PAIR_REMOTE_FORWARD) {
+        if (pr.pending || !pair_remote_post(open, open ? pair_remote_window_ms(dur) : 0u)) {
+            rc = PAIR_REMOTE_BUSY;
+        } else {
+            radio_request_remote_pairing();
+            pr.pending = true;
+            pr.mid     = m->mid;
+            pr.tkl     = m->tkl;
+            pr.dur_s   = dur;
+            pr.t0      = xTaskGetTickCount();
+            memcpy(pr.token, m->token, m->tkl);
+            return; /* answered by pair_poll() */
+        }
+    }
+    char path[48] = "";
+    if (rc == PAIR_REMOTE_NOT_OURS) {
+        coap_path(m, path, sizeof path);
+    }
+    pair_log(m->mid,
+             rc == PAIR_REMOTE_NOT_OURS || rc == PAIR_REMOTE_METHOD || rc == PAIR_REMOTE_MALFORMED
+                 ? UINT32_MAX
+                 : dur,
+             "",
+             rc,
+             0,
+             rc == PAIR_REMOTE_NOT_OURS ? path : NULL,
+             pair_answer(m->mid, m->token, m->tkl, rc));
+}
+
+/* The radio task's outcome for the request it has: remember it, answer. */
+static void pair_poll(void) {
+    enum pair_remote_rc rc;
+    uint32_t            secs = 0;
+    if (!pr.pending) {
+        return;
+    }
+    if (pair_remote_result(&rc, &secs)) {
+        pair_remote_seen_add(&pr_seen, pr.mid, rc, secs, now_ms());
+    } else if (elapsed(pr.t0, PAIR_WAIT_MS) && pair_remote_withdraw()) {
+        rc = PAIR_REMOTE_NO_RADIO; /* never acted on: not remembered */
+    } else {
+        return; /* in work (once taken it always ends, within about a second) */
+    }
+    pr.pending = false;
+    bool sent  = phase == P_READY && pair_answer(pr.mid, pr.token, pr.tkl, rc);
+    pair_log(pr.mid, pr.dur_s, "", rc, secs, NULL, sent);
+}
+
 /* Every binary message from the server (ws.c handler). */
 static void on_message(const uint8_t *d, size_t n) {
     if (n < FRAME_HDR || d[2] != 16u) {
@@ -555,10 +712,14 @@ static void on_message(const uint8_t *d, size_t n) {
         on_fw(&m);
         return;
     }
+    if (to_us && m.type == COAP_CON && pair_remote_path(&m)) {
+        on_pair(&m);
+        return;
+    }
     char path[40];
     coap_path(&m, path, sizeof path);
-    /* Other requests for the bridge itself (d/rfkey, d/pair, d/reboot, ...)
-     * are not answered yet (docs/server-api.md "Bridge handles itself"). */
+    /* Other requests for the bridge itself (d/rfkey, d/reboot, ...) are not
+     * answered yet (docs/server-api.md "Bridge handles itself"). */
     LOG("session: downlink %s type %u code %u.%02u mid %04x /%s (%u bytes payload) not handled yet",
         to_us ? "for the bridge" : "for no device address",
         (unsigned)m.type,
@@ -635,6 +796,7 @@ void session_poll(bool net_up, const ip_addr_t *server, bool *busy) {
     *busy = false;
     relay_uplinks();
     fw_poll();
+    pair_poll();
     if (!started) {
         /* The radio task reads the identity record at boot (it owns SPI1):
          * wait for its verdict, then decide once. */

@@ -43,6 +43,16 @@ void radio_notify_link(void);
  * task. */
 void radio_request_pairing(void);
 
+/* The net task posted the server's pair request (#40,
+ * pair_remote_post(), src/pair_remote.h): wake the radio task, which acts
+ * on it at its next quiet moment (pairing_remote(), src/radio.c) and
+ * leaves the outcome for pair_remote_result(). Any task. */
+void radio_request_remote_pairing(void);
+
+/* The build names a pairing target (PAIR_TARGET_EUI64 in
+ * config/local.cmake): without one no window ever opens. Any task. */
+bool radio_pair_target_named(void);
+
 /* The factory reset button was held (src/app.c, P6): at its next quiet
  * moment the radio task erases the network record and the counter log
  * (network_factory_reset()), keeps the identity record, and restarts the
