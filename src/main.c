@@ -47,9 +47,11 @@ int main(void) {
     /* One log line holds 191 characters (src/log.c). The variant comes from
      * the build's switches themselves (RADIO_TX_ALLOWED, the CMake option;
      * radio_pair_target_named() for PAIR_TARGET_EUI64 in config/local.cmake),
-     * not from this text. */
-    LOG("tado-bridge P5 #19: %s image (RADIO_TX_ALLOWED %d): radio link on channel %u, "
+     * not from this text; "fw" is the image descriptor's fw_version (the
+     * FW_VERSION build option, src/image_desc.c). */
+    LOG("tado-bridge fw %lu: %s image (RADIO_TX_ALLOWED %d): radio link on channel %u, "
         "transmitter %s; network from flash",
+        (unsigned long)image_desc.fw_version,
         RADIO_TX_ALLOWED ? "TRANSMIT" : "RECEIVE-ONLY",
         RADIO_TX_ALLOWED,
         RADIO_CHANNEL,
