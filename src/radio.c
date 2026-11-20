@@ -1811,16 +1811,21 @@ static void beacon_answer(uint32_t fall_us, bool own_end) {
  * creation of a network. */
 static bool flash_ready; /* flash_boot() succeeded: the records may be read and written */
 
-bool radio_pair_target_named(void) {
+/* The one test for a target named in the build: radio_pair_target_named()
+ * for the boot banner (src/main.c) and the session (src/session.c), and
+ * the compile-time switch of pairing_open(). */
 #ifdef PROVISION_PAIR_EUI64
-    return true;
+#define PAIR_TARGET_NAMED 1
 #else
-    return false;
+#define PAIR_TARGET_NAMED 0
 #endif
+
+bool radio_pair_target_named(void) {
+    return PAIR_TARGET_NAMED;
 }
 
 static enum pair_remote_rc pairing_open(uint32_t window_ms) {
-#ifndef PROVISION_PAIR_EUI64
+#if !PAIR_TARGET_NAMED
     (void)window_ms;
     return PAIR_REMOTE_NO_TARGET;
 #else

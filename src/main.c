@@ -8,7 +8,6 @@
 #include "faults.h"
 #include "image_desc.h"
 #include "log.h"
-#include "provision.h"
 #include "radio.h"
 #include "spi1.h"
 #include "timebase.h"
@@ -22,13 +21,6 @@
 #include <libopencm3/stm32/flash.h>
 #include <libopencm3/stm32/pwr.h>
 #include <libopencm3/stm32/rcc.h>
-
-/* For the boot banner: the same test as pairing_trigger() in src/radio.c. */
-#ifdef PROVISION_PAIR_EUI64
-#define PAIR_TARGET_NAMED 1
-#else
-#define PAIR_TARGET_NAMED 0
-#endif
 
 int main(void) {
     /* Our own vector table at 0x08010000 (#24). The bootloader sets VTOR
@@ -54,7 +46,8 @@ int main(void) {
     log_init();
     /* One log line holds 191 characters (src/log.c). The variant comes from
      * the build's switches themselves (RADIO_TX_ALLOWED, the CMake option;
-     * PROVISION_PAIR_EUI64 from config/local.cmake), not from this text. */
+     * radio_pair_target_named() for PAIR_TARGET_EUI64 in config/local.cmake),
+     * not from this text. */
     LOG("tado-bridge P5 #19: %s image (RADIO_TX_ALLOWED %d): radio link on channel %u, "
         "transmitter %s; network from flash",
         RADIO_TX_ALLOWED ? "TRANSMIT" : "RECEIVE-ONLY",
@@ -63,7 +56,7 @@ int main(void) {
         RADIO_TX_ALLOWED ? "on, test channel only" : "switched off");
     LOG("tado-bridge: pairing %s",
         !RADIO_TX_ALLOWED ? "off (receive-only image): the pair button opens no window"
-        : PAIR_TARGET_NAMED
+        : radio_pair_target_named()
             ? "for the device named in the build only (PAIR_TARGET_EUI64)"
             : "off (no PAIR_TARGET_EUI64 in the build): the pair button opens no window");
     LOG("tado-bridge: Ethernet with lwIP (DHCP, DNS), PA3 entropy and CTR_DRBG, TLS and "
