@@ -126,16 +126,23 @@
 #define CC_MARC_TX_END      0x14
 #define CC_MARC_RXTX_SWITCH 0x15
 #define CC_MARC_TXFIFO_UNF  0x16
+#define CC_MARC_STATE_MASK  0x1F /* MARC_STATE, bits 4:0, cc110l.txt:4479 */
 
-#define CC_RXBYTES_OVERFLOW 0x80 /* RXBYTES bit 7, cc110l.txt:4545-4548 */
-#define CC_RXBYTES_NUM      0x7F
-#define CC_FIFO_SIZE        64 /* cc110l.txt:2580-2582 */
+#define CC_RXBYTES_OVERFLOW  0x80 /* RXBYTES bit 7, cc110l.txt:4545-4548 */
+#define CC_RXBYTES_NUM       0x7F
+#define CC_TXBYTES_UNDERFLOW 0x80 /* TXBYTES bit 7, cc110l.txt:4539-4542 */
+#define CC_TXBYTES_NUM       0x7F
+#define CC_FIFO_SIZE         64 /* cc110l.txt:2580-2582 */
 
 /* Chip status byte STATE field (bits 6:4), cc110l.txt:1381-1405. */
 #define CC_STATE(status)    (((status) >> 4) & 0x07)
 #define CC_STATE_TX         2
 #define CC_STATE_FSTXON     3
 #define CC_STATE_TXFIFO_UNF 7
+
+/* IDLE to TX without calibration (MCSM0 FS_AUTOCAL = 0): 75.2 us
+ * (cc110l.txt:2542, Table 5-11). */
+#define CC_IDLE_TO_TX_US 75u
 
 /* Manual reset: CSn strobe low/high (>= 40 us high), then SRES with a wait
  * for CHIP_RDYn before and after (cc110l.txt:2398-2408). Leaves the chip in

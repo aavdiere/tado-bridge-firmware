@@ -70,10 +70,18 @@
 #define HDR_BURST 0x40
 #define HDR_ADDR  0x3F
 
+/* Header addresses above the configuration registers (see above). */
+#define ADDR_CMD_FIRST 0x30 /* strobes without the burst bit, status registers with it */
+#define ADDR_CMD_LAST  0x3D
+#define ADDR_FIFO      0x3F /* TX FIFO with a write header, RX FIFO with a read */
+
 /* SO goes low at once unless in SLEEP/XOFF, cc110l.txt:1297-1299. */
 #define CHIP_RDY_TIMEOUT_US 1000u
 /* XOSC restart after SRES; 150 us typical, cc110l.txt:1333,1356-1362. */
 #define RESET_RDY_TIMEOUT_US 5000u
+/* The same wait in the GDO2 interrupt, kept short: the chip never sleeps
+ * there, so SO is low at once. */
+#define ISR_RDY_TIMEOUT_US 100u
 
 static volatile bool tx_state_seen;
 
@@ -149,7 +157,7 @@ static void guard_header(uint8_t hdr) {
     if (addr < CC_NUM_CONFIG_REGS) {
         return; /* configuration register; written values go through guard_write */
     }
-    if (addr >= 0x30 && addr <= 0x3D && !burst) {
+    if (addr >= ADDR_CMD_FIRST && addr <= ADDR_CMD_LAST && !burst) {
         if (!strobe_allowed(addr)) {
             fw_panic("radio guard: strobe refused", __FILE__, __LINE__);
         }
@@ -158,16 +166,16 @@ static void guard_header(uint8_t hdr) {
         }
         return;
     }
-    if (read && burst && addr >= 0x30 && addr <= 0x3D) {
+    if (read && burst && addr >= ADDR_CMD_FIRST && addr <= ADDR_CMD_LAST) {
         return; /* status register */
     }
-    if (read && addr == 0x3F) {
+    if (read && addr == ADDR_FIFO) {
         return; /* RX FIFO */
     }
     if (addr == PATABLE && !burst && (read || pa_permit)) {
         return; /* PATABLE[0]: a read, or the checked write of cc110l_set_pa() */
     }
-    if (!read && burst && addr == 0x3F && RADIO_TX_ALLOWED && tx_permit) {
+    if (!read && burst && addr == ADDR_FIFO && RADIO_TX_ALLOWED && tx_permit) {
         return; /* TX FIFO, an approved frame */
     }
     fw_panic("radio guard: TX FIFO / PATABLE / unknown access refused", __FILE__, __LINE__);
@@ -229,12 +237,14 @@ static volatile bool     tx_active;
 static volatile uint32_t tx_start_us, tx_len_us;
 
 /* Airtime of a frame of n bytes: 4 preamble, 4 sync, the length byte and 2
- * CRC bytes around it at 160 us per byte (docs/radio.md "Data frame
- * plaintext"), plus IDLE to TX (75 us, cc110l.txt Table 5-11) and a margin
+ * CRC bytes around it at 160 us per byte, 8 bits at 50 kBaud (docs/radio.md
+ * "Data frame plaintext"), plus IDLE to TX (CC_IDLE_TO_TX_US) and a margin
  * for the interrupt and task that watch for it. */
-#define TX_MARGIN_US 2000u
+#define TX_OVERHEAD_BYTES (4u + 4u + 1u + 2u)
+#define TX_BYTE_US        160u
+#define TX_MARGIN_US      2000u
 static void tx_expect(size_t n) {
-    tx_len_us   = (uint32_t)(11u + n) * 160u + 75u + TX_MARGIN_US;
+    tx_len_us   = (uint32_t)(TX_OVERHEAD_BYTES + n) * TX_BYTE_US + CC_IDLE_TO_TX_US + TX_MARGIN_US;
     tx_start_us = timebase_us();
     tx_active   = true;
 }
@@ -460,7 +470,7 @@ bool cc110l_read_rxfifo(uint8_t *dst, size_t n) {
     if (n == 0 || n > CC_FIFO_SIZE) {
         return false;
     }
-    if (!begin(0x3F | HDR_READ | HDR_BURST, NULL)) {
+    if (!begin(ADDR_FIFO | HDR_READ | HDR_BURST, NULL)) {
         return false;
     }
     for (size_t i = 0; i < n; i++) {
@@ -609,7 +619,8 @@ static bool wait_idle(uint32_t timeout_us) {
     uint32_t start = timebase_us();
     uint8_t  m;
     do {
-        if (cc110l_read_status_stable(CC_MARCSTATE, &m) && (m & 0x1Fu) == CC_MARC_IDLE) {
+        if (cc110l_read_status_stable(CC_MARCSTATE, &m)
+            && (m & CC_MARC_STATE_MASK) == CC_MARC_IDLE) {
             return true;
         }
         delay_us(50);
@@ -630,7 +641,8 @@ enum cc110l_cal cc110l_calibrate(uint8_t fscal[3], unsigned *tries) {
         /* SCAL works from IDLE only (cc110l.txt:2746-2747); its own status
          * byte would tell the state too late, after the strobe. */
         uint8_t m = 0;
-        if (!cc110l_read_status_stable(CC_MARCSTATE, &m) || (m & 0x1Fu) != CC_MARC_IDLE) {
+        if (!cc110l_read_status_stable(CC_MARCSTATE, &m)
+            || (m & CC_MARC_STATE_MASK) != CC_MARC_IDLE) {
             return CC_CAL_ERROR;
         }
         if (!radio_strobe(CC_SCAL, NULL)) {
@@ -674,7 +686,7 @@ static uint8_t more(uint8_t hdr) {
 }
 
 static bool txfifo_write(const uint8_t *p, size_t n) {
-    if (!begin(0x3F | HDR_BURST, NULL)) {
+    if (!begin(ADDR_FIFO | HDR_BURST, NULL)) {
         return false;
     }
     for (size_t i = 0; i < n; i++) {
@@ -798,10 +810,10 @@ bool cc110l_tx_feed(size_t *left) {
         return true;
     }
     uint8_t tb;
-    if (!cc110l_read_status_stable(CC_TXBYTES, &tb) || (tb & 0x80u)) {
+    if (!cc110l_read_status_stable(CC_TXBYTES, &tb) || (tb & CC_TXBYTES_UNDERFLOW)) {
         return false; /* underflow: only SFTX gets out of it (cc110l.txt:1944-1945) */
     }
-    size_t used = tb & 0x7Fu;
+    size_t used = tb & CC_TXBYTES_NUM;
     if (used >= CC_FIFO_SIZE) {
         return true; /* full, or a corrupt read (cc110l.txt:1436-1441): try again */
     }
@@ -836,9 +848,9 @@ void cc110l_tx_abort(void) {
     if (!RADIO_TX_ALLOWED) {
         return;
     }
-    uint8_t m = 0;
-    bool    underflow =
-        cc110l_read_status_stable(CC_MARCSTATE, &m) && (m & 0x1Fu) == CC_MARC_TXFIFO_UNF;
+    uint8_t m         = 0;
+    bool    underflow = cc110l_read_status_stable(CC_MARCSTATE, &m)
+                        && (m & CC_MARC_STATE_MASK) == CC_MARC_TXFIFO_UNF;
     if (!underflow) {
         (void)radio_strobe(CC_SIDLE, NULL);
         delay_us(TX_TO_IDLE_US);
@@ -904,7 +916,7 @@ static bool rx_back_from_isr(void) {
     if (!spi1_select_from_isr(SPI1_DEV_RADIO)) {
         return false;
     }
-    bool ok = wait_so_low(100);
+    bool ok = wait_so_low(ISR_RDY_TIMEOUT_US);
     if (ok && state_blocks_flush(more(CC_SIDLE))) {
         ok = false; /* a transmit state: the task's TX-state watch handles it */
     }
@@ -961,7 +973,7 @@ enum cc110l_ack_fire cc110l_ack_fire_from_isr(void) {
     tx_permit                          = true;
     /* CHIP_RDYn: SO is low at once unless the chip sleeps (cc110l.txt:
      * 1297-1299), which it never does here. */
-    if (!wait_so_low(100)) {
+    if (!wait_so_low(ISR_RDY_TIMEOUT_US)) {
         spi1_deselect_from_isr(SPI1_DEV_RADIO);
         goto out;
     }
@@ -976,14 +988,14 @@ enum cc110l_ack_fire cc110l_ack_fire_from_isr(void) {
         goto out;
     }
     (void)more(CC_SFTX);
-    (void)more(0x3F | HDR_BURST);
+    (void)more(ADDR_FIFO | HDR_BURST);
     for (size_t i = 0; i < sizeof ack.buf; i++) {
         (void)spi1_xfer(ack.buf[i]);
     }
     spi1_deselect_from_isr(SPI1_DEV_RADIO);
 
     if (spi1_select_from_isr(SPI1_DEV_RADIO)) {
-        if (wait_so_low(100)) {
+        if (wait_so_low(ISR_RDY_TIMEOUT_US)) {
             tx_expect(MAC_ACK_LEN);
             (void)more(CC_STX);
             spi1_deselect_from_isr(SPI1_DEV_RADIO);
