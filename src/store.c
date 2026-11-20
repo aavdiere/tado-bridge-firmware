@@ -372,7 +372,8 @@ _Static_assert(STORE_NET_LEN == 2u + 1u + 1u + CCM_KEY_LEN + 4u, "network payloa
 _Static_assert(STORE_NET_LEN <= STORE_REC_PAYLOAD, "network payload fits");
 
 bool store_net_allowed(const struct store_net *n) {
-    return n->channel == TXGATE_TEST_CHANNEL && n->channel != TXGATE_PROTECTED_CHANNEL
+    return n->channel == TXGATE_TEST_CHANNEL
+           && (n->channel != TXGATE_PROTECTED_CHANNEL || TXGATE_NET_ON_PROTECTED)
            && n->pan_id == MAC_PAN_ID;
 }
 

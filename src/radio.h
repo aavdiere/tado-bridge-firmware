@@ -14,14 +14,18 @@ struct fwupd_op;
  * decision of 2026-11-17 (channel 10 before; docs/README.md "Project
  * decisions", src/txgate.h). The radio receives and, unless the image is
  * built receive-only (RADIO_TX_ALLOWED=0, src/cc110l.h), transmits there.
+ * It is the build option RADIO_NET_CHANNEL (default 16; channel 26 only
+ * with RADIO_ALLOW_CH26=1 as well, stage P7.1, src/txgate.h): fixed per
+ * image, never retuned at run time.
  * The network record (#37, docs/design.md "Persistent storage") holds this
  * channel only: src/network.c asserts it, and a record for another channel
- * is not used. */
+ * is not used: the image then sends nothing and keeps receiving. */
 #define RADIO_CHANNEL TXGATE_TEST_CHANNEL
 
 /* Protected channel: the owner's stock network, channel 26 (868.3237 MHz,
  * docs/test-bench.md rule 2). The transmit gate (src/txgate.c) refuses it
- * and everything within 1 MHz of it. */
+ * and everything within 1 MHz of it; a channel-26 build with the opt-in
+ * refuses everything within 1 MHz of it except channel 26 itself. */
 #define RADIO_PROTECTED_CHANNEL TXGATE_PROTECTED_CHANNEL
 
 /* Radio task body: flash ID at boot, CC110L reset and configuration, then

@@ -8,7 +8,13 @@
  * (cmake/CMakeLists.txt, owner decision 2026-11-17): this program tests the
  * driver as the default firmware builds it, and tests/host/Makefile
  * compiles it with RADIO_TX_ALLOWED=1. test_cc110l_off.c tests a
- * receive-only build (RADIO_TX_ALLOWED=0). */
+ * receive-only build (RADIO_TX_ALLOWED=0).
+ *
+ * The network channel is a build option too (RADIO_NET_CHANNEL, stage
+ * P7.1, src/txgate.h): test_cc110l runs the default channel 16,
+ * test_cc110l_ch26 the channel-26 build with its opt-in RADIO_ALLOW_CH26
+ * (tests/host/Makefile). In that one every STX must be on channel 26's own
+ * carrier, and its neighbours stay refused. */
 #include "../../src/cc110l.c"
 
 #include "cc110l_model.h"
@@ -16,8 +22,19 @@
 
 _Static_assert(RADIO_TX_ALLOWED == 1, "this program tests the driver with the transmitter built in");
 
-#define TEST_HZ 866324157ll /* the test channel 16 (src/txgate.h) */
+#define CH16_HZ 866324157ll /* the test channel 16 (src/txgate.h) */
 #define CH26_HZ 868323668ll /* the protected channel */
+#if RADIO_NET_CHANNEL == 16 && !TXGATE_NET_ON_PROTECTED
+#define TEST_HZ   CH16_HZ
+#define OTHER_CH  26u /* a channel the chip may be moved to behind the shadow */
+#define PROT_DIST 999000 /* every STX at least this far from channel 26 */
+#elif RADIO_NET_CHANNEL == 26 && TXGATE_NET_ON_PROTECTED
+#define TEST_HZ   CH26_HZ
+#define OTHER_CH  16u
+#define PROT_DIST 0 /* channel 26's own carrier; TEST_HZ checks it */
+#else
+#error "test_cc110l covers the channel 16 and channel 26 builds"
+#endif
 #define MIN_US  60000000u
 
 static const uint8_t own[8]     = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC5, 0x1B, 0x00};
@@ -69,7 +86,7 @@ static long long dist(long long a, long long b) {
 static void check_chip(void) {
     for (unsigned i = 0; i < chip.stx_count && i < MODEL_MAX_STX; i++) {
         CHECK(dist(chip.stx[i].carrier_hz, TEST_HZ) <= 51000);
-        CHECK(dist(chip.stx[i].carrier_hz, CH26_HZ) >= 999000);
+        CHECK(dist(chip.stx[i].carrier_hz, CH26_HZ) >= PROT_DIST);
         CHECK_EQ(chip.stx[i].pa, RADIO_PA_BRINGUP);
     }
     CHECK_EQ(chip.forbidden, 0);
@@ -236,20 +253,26 @@ static void test_channels(void) {
     CHECK_EQ(chip.stx_count, 1);
     CHECK_EQ(chip.tx_fifo_writes, n + 1u);
 
-    /* The protected channel by name, with the verdict. */
+    /* The protected channel by name, with the verdict (in the channel-26
+     * build: a neighbour of it). */
+#if TXGATE_NET_ON_PROTECTED
+    bring_up(TXGATE_PROTECTED_CHANNEL - 1u);
+#else
     bring_up(TXGATE_PROTECTED_CHANNEL);
+#endif
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
     CHECK_EQ(cc110l_tx_verdict(), TXGATE_PROTECTED);
 
     /* "Channel 16" moved onto 868.3 MHz by the base frequency: 10 channels
-     * of 199.951 kHz are 0x13B0 FREQ units up. */
-    make_table(TXGATE_TEST_CHANNEL);
+     * of 199.951 kHz are 0x13B0 FREQ units up. Refused in every build: as
+     * the protected channel, or (channel-26 build) as off the plan. */
+    make_table(16u);
     table[CC_FREQ1] = 0x46;
     table[CC_FREQ0] = 0x26;
     bring_up_table();
     CHECK(dist(model_carrier_hz(), CH26_HZ) <= 1);
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
-    CHECK_EQ(cc110l_tx_verdict(), TXGATE_PROTECTED);
+    CHECK_EQ(cc110l_tx_verdict(), TXGATE_NET_ON_PROTECTED ? TXGATE_OFF_PLAN : TXGATE_PROTECTED);
     CHECK_EQ(chip.stx_count, 1);
     check_clean();
 }
@@ -293,10 +316,11 @@ static void test_chip_changed(void) {
         }
     }
 
-    /* The chip on the protected channel behind a shadow that says 16. */
+    /* The chip on the protected channel behind a shadow that says 16 (in
+     * the channel-26 build: on channel 16 behind a shadow that says 26). */
     bring_up(TXGATE_TEST_CHANNEL);
     unsigned before          = chip.stx_count;
-    chip.reg[CC_CHANNR]      = TXGATE_PROTECTED_CHANNEL;
+    chip.reg[CC_CHANNR]      = OTHER_CH;
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
     uint8_t ackf[MAC_ACK_LEN], up[MAC_FRAME_MAX];
     CHECK(data_frame(up, own, device, 10) > 0);
@@ -921,7 +945,7 @@ static void test_calibration(void) {
      * fails, and nothing goes out. */
     bring_up(TXGATE_TEST_CHANNEL);
     CHECK(radio_strobe(CC_SIDLE, NULL));
-    chip.reg[CC_CHANNR] = TXGATE_PROTECTED_CHANNEL;
+    chip.reg[CC_CHANNR] = OTHER_CH;
     CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_ERROR);
     CHECK(radio_strobe(CC_SRX, NULL));
     refused_no_lock(f, n, ackf, up);
@@ -1316,7 +1340,7 @@ static void test_random(void) {
             /* The STX of this step, by the chip's registers at that moment. */
             const struct model_stx *x = &chip.stx[chip.stx_count - 1u];
             CHECK(dist(x->carrier_hz, TEST_HZ) <= 51000);
-            CHECK(dist(x->carrier_hz, CH26_HZ) >= 999000);
+            CHECK(dist(x->carrier_hz, CH26_HZ) >= PROT_DIST);
             sent++;
         } else {
             refused++;
@@ -1355,5 +1379,5 @@ int main(void) {
     test_power();
     test_duty();
     test_random();
-    return TEST_REPORT("test_cc110l");
+    return TEST_REPORT(TEST_NAME);
 }

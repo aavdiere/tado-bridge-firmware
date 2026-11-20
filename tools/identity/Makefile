@@ -10,7 +10,9 @@ OUT     := $(ROOT)/build/host-tools
 CFLAGS := -std=c11 -O1 -g -Wall -Wextra -Werror -Wundef -Wshadow -Wconversion \
           -Wno-sign-conversion -I$(SRC) -I$(ROOT)/vendor/mbedtls/include \
           -I$(ROOT)/tests/host -DMBEDTLS_CONFIG_FILE='"mbedtls_host_config.h"' \
-          -DRADIO_TX_ALLOWED=0
+          -DRADIO_TX_ALLOWED=0 -DRADIO_NET_CHANNEL=16 -DRADIO_ALLOW_CH26=0
+# The channel (src/txgate.h, which src/store.c includes) does not matter
+# here: the tool writes the identity record only, never a network record.
 
 .PHONY: all
 all: $(OUT)/identity

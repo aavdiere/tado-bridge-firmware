@@ -136,8 +136,10 @@ struct store_net {
     uint32_t counter_floor; /* counters below this were possibly used */
 };
 
-/* Is this a network the bridge may run? For now only the test channel and
- * the tado PAN (docs/test-bench.md; never the protected channel 26). */
+/* Is this a network the bridge may run? For now only the test channel (the
+ * build's RADIO_NET_CHANNEL, src/txgate.h) and the tado PAN
+ * (docs/test-bench.md; never the protected channel 26, except in a
+ * channel-26 build with the opt-in RADIO_ALLOW_CH26, stage P7.1). */
 bool store_net_allowed(const struct store_net *n);
 
 /* The newest valid network record that store_net_allowed() accepts. */

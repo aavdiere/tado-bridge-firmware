@@ -14,6 +14,9 @@
 
 #include <string.h>
 
+/* The record holds the build's channel only (RADIO_NET_CHANNEL, the test
+ * channel, src/txgate.h): a record written by an image for another channel
+ * is not used, and no new network is created over it (network_boot()). */
 _Static_assert(RADIO_CHANNEL == TXGATE_TEST_CHANNEL, "the record holds the test channel only");
 
 #define RETRY_MS 10000u /* after a failed counter-log write */
@@ -96,7 +99,8 @@ bool network_key(uint8_t key_out[CCM_KEY_LEN]) {
 }
 
 bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]) {
-    if (channel != TXGATE_TEST_CHANNEL || channel == TXGATE_PROTECTED_CHANNEL) {
+    if (channel != TXGATE_TEST_CHANNEL
+        || (channel == TXGATE_PROTECTED_CHANNEL && !TXGATE_NET_ON_PROTECTED)) {
         LOG("network: create on channel %u refused (test channel %u only)",
             channel,
             TXGATE_TEST_CHANNEL);

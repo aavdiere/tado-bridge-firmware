@@ -13,11 +13,15 @@
 #define PLAN_CHANSPC_E 2u
 #define PLAN_CHANSPC_M 0xF8u
 
-/* Rules 1 and 2 cannot both hold for a test channel near the protected one. */
+/* Rules 1 and 2 cannot both hold for a test channel near the protected one.
+ * The one exception is the channel-26 build with its opt-in
+ * (TXGATE_NET_ON_PROTECTED, src/txgate.h): the protected channel itself,
+ * never a neighbour of it. */
 _Static_assert(TXGATE_TEST_CHANNEL <= TXGATE_MAX_CHANNEL
                    && (TXGATE_TEST_CHANNEL + TXGATE_MIN_CHANNEL_DIST <= TXGATE_PROTECTED_CHANNEL
-                       || TXGATE_TEST_CHANNEL
-                              >= TXGATE_PROTECTED_CHANNEL + TXGATE_MIN_CHANNEL_DIST),
+                       || TXGATE_TEST_CHANNEL >= TXGATE_PROTECTED_CHANNEL + TXGATE_MIN_CHANNEL_DIST
+                       || (TXGATE_NET_ON_PROTECTED
+                           && TXGATE_TEST_CHANNEL == TXGATE_PROTECTED_CHANNEL)),
                "the test channel is at least 5 channels from the protected one");
 
 /* Carrier in units of fXOSC / 2^18 (99.2 Hz), which keeps every term whole:
@@ -47,12 +51,16 @@ static int64_t protected_hz(void) {
 }
 
 enum txgate_verdict txgate_check_channel(const struct txgate_radio *r) {
-    /* The distance in Hz first: it holds whatever the other registers say. */
+    /* The distance in Hz first: it holds whatever the other registers say.
+     * In the channel-26 build (TXGATE_NET_ON_PROTECTED) a carrier near
+     * channel 26 goes on to the checks below instead, which pass it only
+     * with the plan's base and spacing, a trim within TXGATE_MAX_TRIM and
+     * CHANNR 26: channel 26's own carrier, never a neighbour's. */
     int64_t d = txgate_carrier_hz(r) - protected_hz();
     if (d < 0) {
         d = -d;
     }
-    if (d < TXGATE_MIN_DIST_HZ) {
+    if (d < TXGATE_MIN_DIST_HZ && !TXGATE_NET_ON_PROTECTED) {
         return TXGATE_PROTECTED;
     }
     long freq = (long)r->freq2 << 16 | (long)r->freq1 << 8 | r->freq0;
@@ -66,7 +74,8 @@ enum txgate_verdict txgate_check_channel(const struct txgate_radio *r) {
     }
     unsigned cd = r->channr > TXGATE_PROTECTED_CHANNEL ? r->channr - TXGATE_PROTECTED_CHANNEL
                                                        : TXGATE_PROTECTED_CHANNEL - r->channr;
-    if (cd < TXGATE_MIN_CHANNEL_DIST) {
+    if (cd < TXGATE_MIN_CHANNEL_DIST
+        && !(TXGATE_NET_ON_PROTECTED && r->channr == TXGATE_PROTECTED_CHANNEL)) {
         return TXGATE_PROTECTED;
     }
     if (r->channr != TXGATE_TEST_CHANNEL) {

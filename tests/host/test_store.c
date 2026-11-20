@@ -325,13 +325,25 @@ static void test_record_basic(void) {
     CHECK(same_net(&got, &d));
 }
 
+/* The channel the record policy must refuse besides the old ones: the
+ * protected channel 26, or in the channel-26 build (RADIO_NET_CHANNEL 26
+ * with the opt-in, test_store_ch26) the default test channel 16, so that
+ * an image never runs a network of another image's channel. */
+#if TXGATE_NET_ON_PROTECTED
+#define REFUSED_CH 16u
+_Static_assert(TXGATE_TEST_CHANNEL == TXGATE_PROTECTED_CHANNEL, "the channel-26 build");
+#else
+#define REFUSED_CH TXGATE_PROTECTED_CHANNEL
+_Static_assert(TXGATE_TEST_CHANNEL == 16u, "the default build");
+#endif
+
 static void test_record_policy(void) {
     flash_stock();
     reboot();
     struct store_net n = make_net(5, 0), got;
     uint32_t         seq;
     unsigned         ops_start = fm.ops;
-    n.channel                  = TXGATE_PROTECTED_CHANNEL;
+    n.channel                  = REFUSED_CH;
     CHECK(!store_net_write(&n, NULL));
     n.channel = TXGATE_TEST_CHANNEL - 1u;
     CHECK(!store_net_write(&n, NULL));
@@ -345,8 +357,8 @@ static void test_record_policy(void) {
     CHECK_EQ(fm.ops, ops_start);
 
     /* A well-formed record for channel 26 (written around the policy) is
-     * never loaded. */
-    uint8_t p[STORE_NET_LEN] = {0xCD, 0xAB, TXGATE_PROTECTED_CHANNEL, 0};
+     * never loaded (channel-26 build: one for channel 16). */
+    uint8_t p[STORE_NET_LEN] = {0xCD, 0xAB, REFUSED_CH, 0};
     CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
     CHECK(!store_net_load(&got, &seq));
     bool any = false;
@@ -360,7 +372,7 @@ static void test_record_policy(void) {
     CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
     CHECK(store_net_load(&got, &seq));
     CHECK_EQ(seq, 3); /* after the two refused records */
-    p[2] = TXGATE_PROTECTED_CHANNEL;
+    p[2] = REFUSED_CH;
     CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, NULL));
     CHECK(!store_net_load(&got, &seq)); /* the newest is refused, not an older one taken */
 }
@@ -1068,5 +1080,5 @@ int main(void) {
     test_factory_reset();
     test_factory_reset_cuts();
     test_factory_reset_failing();
-    return TEST_REPORT("test_store");
+    return TEST_REPORT(TEST_NAME);
 }

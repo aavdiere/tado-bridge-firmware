@@ -51,6 +51,54 @@ else()
 endif()
 
 ################################################################################
+# Network channel (stage P7.1, docs/prototype-plan.md; src/txgate.h): the
+# one channel the image receives and transmits on, and the only one its
+# network record may hold. Default 16, the test channel (owner decision
+# 2026-11-17). It must be at least 5 channels from the protected channel 26
+# (docs/test-bench.md rule 2), or 26 itself with the second opt-in
+# RADIO_ALLOW_CH26=ON, so that no one-word slip builds a channel-26 image.
+# Channel 26 stays under the hard rule of CLAUDE.md; its P7.1 exception
+# (owner, 2026-11-20) allows a transmitter there only in an image built with
+# this opt-in, with a fw-reviewer "safe to flash" verdict for it, under the
+# abort rules of docs/test-bench.md "P7.1 channel 26, plan". Checked again
+# in src/txgate.h. From the top-level
+# Makefile: `make RADIO_NET_CHANNEL=n` (and RADIO_ALLOW_CH26=1 for 26).
+# Before project(), so a refused value stops the configure at once.
+set(RADIO_NET_CHANNEL 16 CACHE STRING "Network channel 0-49 (default 16, the test channel)")
+option(RADIO_ALLOW_CH26 "Allow RADIO_NET_CHANNEL 26, the protected channel (stage P7.1 only)" OFF)
+string(TOUPPER "${RADIO_ALLOW_CH26}" allow26)
+if(allow26 MATCHES "^(1|ON|TRUE|YES)$")
+    set(RADIO_ALLOW_CH26_DEF 1)
+elseif(allow26 MATCHES "^(0|OFF|FALSE|NO)$")
+    set(RADIO_ALLOW_CH26_DEF 0)
+else()
+    message(FATAL_ERROR "RADIO_ALLOW_CH26 '${RADIO_ALLOW_CH26}' must be ON or OFF (1 or 0)")
+endif()
+if(NOT RADIO_NET_CHANNEL MATCHES "^(0|[1-9][0-9]?)$" OR RADIO_NET_CHANNEL GREATER 49)
+    message(FATAL_ERROR "RADIO_NET_CHANNEL must be a channel of the plan, 0-49, not '${RADIO_NET_CHANNEL}'")
+endif()
+if(RADIO_NET_CHANNEL EQUAL 26)
+    if(NOT RADIO_ALLOW_CH26_DEF)
+        message(FATAL_ERROR "RADIO_NET_CHANNEL=26 is the protected channel, the owner's stock "
+            "tado network (CLAUDE.md hard rule, docs/test-bench.md \"The other tado network\"). "
+            "Only its P7.1 exception allows a transmitter there: an image built with "
+            "RADIO_ALLOW_CH26=ON as well, a fw-reviewer \"safe to flash\" verdict for it, and "
+            "the abort rules of docs/test-bench.md \"P7.1 channel 26, plan\".")
+    endif()
+    message("Radio: network channel 26, THE PROTECTED CHANNEL (RADIO_ALLOW_CH26=ON, stage P7.1)")
+else()
+    if(RADIO_ALLOW_CH26_DEF)
+        message(FATAL_ERROR "RADIO_ALLOW_CH26=ON is for RADIO_NET_CHANNEL=26 only, not ${RADIO_NET_CHANNEL}")
+    endif()
+    math(EXPR ch_dist "${RADIO_NET_CHANNEL} - 26")
+    if(ch_dist GREATER -5 AND ch_dist LESS 5)
+        message(FATAL_ERROR "RADIO_NET_CHANNEL ${RADIO_NET_CHANNEL} is within 5 channels (1 MHz) of "
+            "the protected channel 26 (docs/test-bench.md rule 2)")
+    endif()
+    message("Radio: network channel ${RADIO_NET_CHANNEL}")
+endif()
+
+################################################################################
 # Provisioning (#15): the trust anchor for the server certificate and the
 # pairing target. Device values must not enter git (CLAUDE.md), so they
 # come from config/local.cmake, which is gitignored; template:
@@ -300,6 +348,8 @@ target_compile_definitions(${BINARY} PRIVATE
     NET_SERVER_HOST="${NET_SERVER_HOST}"
     NET_SERVER_PORT=${NET_SERVER_PORT}
     RADIO_TX_ALLOWED=${RADIO_TX_ALLOWED_DEF}
+    RADIO_NET_CHANNEL=${RADIO_NET_CHANNEL}
+    RADIO_ALLOW_CH26=${RADIO_ALLOW_CH26_DEF}
     FW_VERSION=${FW_VERSION}u
     MBEDTLS_CONFIG_FILE="tado_mbedtls_config.h"
 )
@@ -356,8 +406,13 @@ target_include_directories(${BOOT} PRIVATE
     ../src
     ${MBEDTLS_DIR}/include
 )
+# src/store.c includes src/txgate.h, which needs the channel; the bootloader
+# links nothing that uses it (the network record is the application's), so
+# its image is the same for every channel.
 target_compile_definitions(${BOOT} PRIVATE
     ${MCU_FAMILY}
+    RADIO_NET_CHANNEL=${RADIO_NET_CHANNEL}
+    RADIO_ALLOW_CH26=${RADIO_ALLOW_CH26_DEF}
     MBEDTLS_CONFIG_FILE="bl_mbedtls_config.h"
 )
 target_compile_options(${BOOT} PRIVATE
