@@ -41,6 +41,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 
 ## Project decisions
 
+- P9, tanoclo pull request as its own last stage (owner, 2026-11-20, #38): the pull request to tanoclo is stage P9 "Pull request to tanoclo" (GitHub milestone, #38), after everything else works. It carries the changes collected in #38 and `open-questions.md` row 28c; the `waitAck` part exists as a local bench patch (`bench/send-raw-waitack` in `../tanoclo`, `design.md`, "Uploader and tanoclo (#24, #38)"). The owner opens or approves the pull request.
 - Local tanoclo patch (owner, 2026-11-20, #38): the bench tanoclo is patched now with the `send-raw` `waitAck` change (local branch `bench/send-raw-waitack` in `../tanoclo`, never pushed). The pull request to upstream tanoclo stays postponed to the very end. Result: `test-bench.md`, "Update with answers (waitAck), 2026-11-20" [V].
 - P8 clean-up rows 21 and 23 (owner, 2026-11-20, #33): row 21 (`cmake/` template leftovers) skipped, left as is; row 23 (`tools/sdr/hs18place.py`) kept as the record of the #18 measurement. With row 22 skipped the same day, #33 is done. Details: `cleanup-p8.md`.
 - Listen-before-transmit delivery measurement (owner, 2026-11-18, #20): skipped for now. Listen-before-transmit stays on, as decided 2026-11-11; the measurement of delivery with it on versus off is not done.

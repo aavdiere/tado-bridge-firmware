@@ -552,7 +552,7 @@ Run on 2026-11-19 (steps 0-5; step 6 run on 2026-11-20, see "Power cut during an
 **Gates:**
 - A `fw-reviewer` "safe to flash" verdict on the #24 application-update commits (rule 4: bootloader-facing code, a new write path, flash work in the radio task, and the default build transmits). The review must look at the write guard's areas and at the update task's stack and RAM. Verdict A with findings was given on `0b62e27`/`07d747f`; the fixes for M1 and L1 (`design.md`, "Review fixes M1 and L1") got a delta review on 2026-11-19: verdict A for `99b3f0f`, for flashing image A and for running this plan unattended **[D]**.
 - Builds from the reviewed commit in a clean worktree with the bench `config/local.cmake`; never the main tree's `src/airtime.h` bench edit.
-- `../tanoclo` stays unchanged (`README.md`, "Project decisions"). So the uploader runs in **`--blind`** mode, and the bridge's RTT log is the feedback: `tools/rtt.sh`, `tools/sdr/rttlog.py`, the `update:` lines.
+- `../tanoclo` stays unchanged in git. Written before the bench tanoclo got the `waitAck` patch (2026-11-20), the uploader then ran in **`--blind`** mode (now non-blind is the bench mode; `--blind` is for an unpatched tanoclo), and the bridge's RTT log is the feedback: `tools/rtt.sh`, `tools/sdr/rttlog.py`, the `update:` lines.
 - With the #38 change (`send-raw` with `waitAck`) the same steps run without `--blind` and see every answer. Putting that change into the bench container without changing the checkout (for example `docker cp` of a patched `lib/command-api.js`) needs the owner's OK first.
 - No option bytes; every SWD write verified, as always.
 
