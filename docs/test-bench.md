@@ -460,7 +460,7 @@ The rerun asked for under "Finding resolved in code" above, after the fix `37b81
 
 ## Bootloader (#24): first flash and checks, plan [I]
 
-Run on 2026-11-19 by Claude over SWD, with no owner hand work, except step 3 (power cycle), which is deferred: see "Bootloader (#24): first flash and checks, result" below. Code and recovery: `design.md`, "Implementation: bootloader and boot state (#24)" and "Recovery over SWD (#24)".
+Run on 2026-11-19 by Claude over SWD, with no owner hand work, except step 3 (power cycle), which was deferred and done on 2026-11-20 ("Power cycle with identity v2" below): see "Bootloader (#24): first flash and checks, result" below. Code and recovery: `design.md`, "Implementation: bootloader and boot state (#24)" and "Recovery over SWD (#24)".
 
 **Gates:**
 - A `fw-reviewer` "safe to flash" verdict on the bootloader commits (`c69ad4b..` HEAD of the #24 branch). Rule 4 applies twice over: the image is bootloader code, and the default build transmits.
@@ -504,7 +504,7 @@ Steps 1, 2, 4, 5 and 6 of the plan above, all by Claude over SWD and the SDR, wi
 | 1. First flash | `tools/flash.sh` with both ELFs in one OpenOCD run: **`Verified OK` twice**. Boot log: `image: 162088 bytes at 08010000, VTOR 08010000`, then the network record from flash (channel 16), session ready and the radio as before |
 | 2. No boot state | No boot-state write in the boot log, as designed; the boot-state sectors were not read (the plan drops that check) |
 | Warm resets | Two OpenOCD `reset run`: each boots cleanly through the bootloader, reset cause `SOFTWARE` (RCC_CSR), frame counter 8299, then 12395 |
-| 3. Power cycle (POR) | **Not done**: needs the owner to unplug USB; deferred |
+| 3. Power cycle (POR) | **Done** 2026-11-20 with identity v2 ("Power cycle with identity v2" below); boot state confirmed on the following warm resets, survival over the power cycle **[I]** |
 | 4. Debugger halt | Plain `halt` for 70 s, then `resume`: no IWDG reset and no new boot banner |
 | 5. Recovery rehearsal | `reset halt`, `flash info 0`: sector 4 = `0x08010000`, 64 KB. `flash erase_address 0x08010000 0x10000`, then `reset run`. `0x08010000` and `0x08010200` read `ffffffff`. PB1 sampled over SWD (ODR and IDR, as for code 3; `hardware.md`, "LED roles"): five flashes of about 150 ms high and 250 ms low, then about 750 ms pause, i.e. **LED code 5**; 1 of 400 samples had ODR and IDR differ (a sample taken across an edge **[I]**). The owner's eye check was replaced by this sampling. Restored with `tools/flash.sh` and both ELFs: `Verified OK` twice, boots again (frame counter 20587) |
 | 6. ACK timing | Below |
@@ -522,7 +522,7 @@ Steps 1, 2, 4, 5 and 6 of the plan above, all by Claude over SWD and the SDR, wi
 | Clipping | 189038 clipped bytes in the file (0.0055 %), **all inside the spare device's frames** (its 29 uplinks and 30 ACKs, -0.4 dBFS), none in the bridge's (-7.9 dBFS). The device is louder than on 2026-11-18 (-8.8 dBFS at the same gain), so it has probably moved **[I]**. The uplink end times come from frequency zero crossings, which clipping of a constant-envelope signal barely moves, and the gaps match earlier unclipped runs **[I]**; use a gain below 12.5 dB next time |
 | Offset (#7) | Bridge +6947 Hz against the dongle (+8.0 ppm), spare device +12410 Hz: the bridge is 6.3 ppm below the device (7.7 ppm on 2026-11-18) |
 
-**What this means for #24 [V]/[I].** The first flash, the boot path without a boot state, warm resets, the debugger halt and recovery step 1 (LED code 5, then a restore over SWD) work on the bench. Running the application from `0x08010000` behind the bootloader leaves the Enhanced ACK timing unchanged (median 225.9 us, worst 234.8 us). Still open: the power cycle (POR, owner), and the update side (not built).
+**What this means for #24 [V]/[I].** The first flash, the boot path without a boot state, warm resets, the debugger halt and recovery step 1 (LED code 5, then a restore over SWD) work on the bench. Running the application from `0x08010000` behind the bootloader leaves the Enhanced ACK timing unchanged (median 225.9 us, worst 234.8 us). The power cycle (step 3) was done 2026-11-20. Still open: the update side (not built).
 
 ## Self-update (#24): first over-the-air update, plan [I]
 
@@ -810,9 +810,21 @@ After the earlier plain power cycle the owner had unplugged all cables, and the 
 | Downlink (22:12:04) | One overlay PUT on zone 1 (MANUAL 21 C, the value read back before it, so the overlay is unchanged): HTTP 200; `tx: datagram 21 ... attempt 1: delivered, 22 wake frames, short train`, the device's ACK, then its reply "to server, acked" |
 | 60 s stats | stale 0, overflow 0, acks too late 0; airtime 1014 ms of 30000 ms in the last hour; heap minimum 8560 after the session; stack words never used (radio/net/hk/update) 524/844/332/261 |
 
-**Not observed:** the boot-state line (`CONFIRMED` etc.). RTT was attached after the start of the boot log had scrolled past, so this run does not show it.
+**Not observed in the power-on boot:** the boot-state line. RTT was attached after the start of the boot log had scrolled past. It was seen in the follow-up below.
 
-**What this means for #39 and #24 [V].** Identity version 2 and the network record survive a real power-on reset, with the Ethernet MAC in use and the counter floor rising. #39 has no outstanding bench step. For #24 the boot-state line is still not seen after a power cycle, so step 3 stays open on that point. Still outstanding (owner, later): the power cut during an update install (#24 step 6).
+**Follow-up: boot state after two warm resets (2026-11-20, 22:16:07 and 22:17:24 CET; owner-approved) [V].** Two warm resets over SWD (OpenOCD `reset run`; `reset: RCC_CSR 14000002: SOFTWARE PIN`). The first boot log again lost lines to RTT overflow because the reader connected late. The second was captured with the RTT reader connected before the reset. Method worth keeping: connect to port 19021 first, then send `reset run` on telnet 4444.
+
+| Item | Result |
+| :--- | :--- |
+| Boot state line | `update: running ba8af1a3e7720e44 (171952 B); boot state confirmed tries 0 cand ba8af1a3e7720e44 prev 68a24dfcd65549c4; no update pending` |
+| Identity | Version 2 seq 2, Ethernet MAC set on both boots |
+| Network record | seq 1, channel 16; counter floor 122987, then 127083 (one 4096 reservation per boot) |
+| Network and session | DHCP `10.42.0.13`; session ready after about 1.09 s on attempt 1; TLS handshake 1068 ms |
+| MAC check | `mac_check.py`: the MAC is absent from the RTT logs |
+
+Split between measured and inferred: the boot state line after the warm resets is **[V]**. That the boot state survived the power cycle is **[I]**: nothing writes boot state between the power-on boot and these warm resets with a confirmed image, so the confirmed state read here must be the one present after the power cycle.
+
+**What this means for #39 and #24 [V].** Identity version 2 and the network record survive a real power-on reset, with the Ethernet MAC in use and the counter floor rising. #39 has no outstanding bench step. For #24 step 3 (power cycle) is done: the boot state read `confirmed` on the next boots, and that it survived the power cycle is **[I]** (see the follow-up above). Still outstanding (owner, later): the power cut during an update install (#24 step 6).
 
 ## Bench network
 
