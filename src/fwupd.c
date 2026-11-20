@@ -576,7 +576,7 @@ const char *fwupd_state_name(uint8_t state) {
     return state < sizeof name / sizeof name[0] ? name[state] : "?";
 }
 
-static void hex(char *out, const uint8_t *p, size_t n) {
+void fwupd_hex(char *out, const uint8_t *p, size_t n) {
     static const char d[] = "0123456789abcdef";
     for (size_t i = 0; i < n; i++) {
         out[2u * i]      = d[p[i] >> 4];
@@ -590,9 +590,9 @@ size_t fwupd_status_text(char *buf, size_t cap) {
     char run[2u * FWIMG_ID_LEN + 1u], cand[2u * FWIMG_ID_LEN + 1u], prev[2u * FWIMG_ID_LEN + 1u],
         xfer[24];
     fwupd_info(&in);
-    hex(run, in.run_id, FWIMG_ID_LEN);
-    hex(cand, in.boot.cand_id, FWIMG_ID_LEN);
-    hex(prev, in.boot.prev_id, FWIMG_ID_LEN);
+    fwupd_hex(run, in.run_id, FWIMG_ID_LEN);
+    fwupd_hex(cand, in.boot.cand_id, FWIMG_ID_LEN);
+    fwupd_hex(prev, in.boot.prev_id, FWIMG_ID_LEN);
     if (in.done) {
         snprintf(xfer, sizeof xfer, "done");
     } else if (in.active) {

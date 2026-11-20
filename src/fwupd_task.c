@@ -132,15 +132,6 @@ static const char *const rc_name[] = {
     [FWUPD_FAILED]     = "5.00",
 };
 
-static void hex8(char *out, const uint8_t *p) {
-    static const char d[] = "0123456789abcdef";
-    for (unsigned i = 0; i < 8u; i++) {
-        out[2u * i]      = d[p[i] >> 4];
-        out[2u * i + 1u] = d[p[i] & 15u];
-    }
-    out[16] = '\0';
-}
-
 static void block(void) {
     BARRIER();
     uint32_t          t0 = ms();
@@ -198,11 +189,12 @@ static void task(void *arg) {
     fwupd_init((const uint8_t *)FWIMG_APP_BASE, image_size(), image_desc.fw_version, t);
     struct fwupd_info in;
     fwupd_info(&in);
+    /* One log line holds 191 characters (src/log.c): ids as 16 hex digits,
+     * their first 8 bytes. */
     char run[17], cand[17], prev[17];
-    hex8(run, in.run_id);
-    hex8(cand, in.boot.cand_id);
-    hex8(prev, in.boot.prev_id);
-    /* One log line holds 191 characters (src/log.c): ids as 16 hex digits. */
+    fwupd_hex(run, in.run_id, 8u);
+    fwupd_hex(cand, in.boot.cand_id, 8u);
+    fwupd_hex(prev, in.boot.prev_id, 8u);
     LOG("update: running %s (%lu B); boot state %s tries %u cand %s prev %s; %s",
         run,
         (unsigned long)image_size(),

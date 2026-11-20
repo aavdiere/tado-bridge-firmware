@@ -190,5 +190,7 @@ void fwupd_info(struct fwupd_info *out);
  * most cap - 1). */
 size_t      fwupd_status_text(char *buf, size_t cap);
 const char *fwupd_state_name(uint8_t state);
+/* n bytes as 2n lower-case hex digits and a NUL: out holds 2n + 1 chars. */
+void fwupd_hex(char *out, const uint8_t *p, size_t n);
 
 #endif
