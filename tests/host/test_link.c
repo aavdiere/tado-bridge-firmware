@@ -135,9 +135,9 @@ static void test_pairing(uint32_t *now_ms) {
 
     /* No key, no window; never for ourselves. */
     link_init(own);
-    CHECK(!link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    CHECK(!link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     link_set_key(v_key.p, 2000, UINT32_MAX);
-    CHECK(!link_pair_open(own, v_key.p, rnd, *now_ms));
+    CHECK(!link_pair_open(own, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     CHECK(!link_pair_active(*now_ms));
 
     /* No window: a Beacon Request gets nothing. */
@@ -148,7 +148,7 @@ static void test_pairing(uint32_t *now_ms) {
 
     /* The window opens; its first advertisement pair goes a second later:
      * 59 e8 under the network key, then 49 e8 under the pairing key. */
-    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     CHECK(link_pair_active(*now_ms));
     n_bcast_log = 0;
     run_ms(now_ms, 3000);
@@ -273,7 +273,7 @@ static void test_pairing(uint32_t *now_ms) {
      * Solicitations under the pairing key send nothing at all: no lone
      * advertisement under the network key, which it cannot read (#19
      * review M2). The window ends on its own. */
-    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     unsigned from      = n_bcast_log;
     uint32_t rs_before = link_stats()->rs_seen;
     for (unsigned i = 0; i < 9; i++) {
@@ -311,7 +311,7 @@ static void test_pairing(uint32_t *now_ms) {
     uint32_t             ras     = link_stats()->ra_queued;
     link_set_key(v_key.p, link_counter(), link_counter());
     CHECK(csl_enqueue_broadcast(other, sizeof other, 7, 0, CSL_KEY_NETWORK));
-    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     from = n_bcast_log;
     run_ms(now_ms, 3000);
     CHECK_EQ(n_bcast_log - from, 0);
@@ -334,7 +334,7 @@ static void test_pairing(uint32_t *now_ms) {
      * a new window's pairing key (#19 review L3). Without the pairing key
      * its next attempt fails and drops it, sending nothing. */
     CHECK(!link_pair_frames_queued());
-    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     run_ms(now_ms, 1500);
     n = mac_build_broadcast(&pk, f, sizeof f, false, 40, joiner, 60, rs, sizeof rs);
     CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_PAIRING);
@@ -344,13 +344,13 @@ static void test_pairing(uint32_t *now_ms) {
     CHECK(link_pair_frames_queued()); /* in its retry gap */
     link_pair_close();
     unsigned nd = n_data;
-    CHECK(!link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    CHECK(!link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     CHECK(!link_pair_active(*now_ms));
     run_ms(now_ms, 3000);
     CHECK(!link_pair_frames_queued());
     CHECK_EQ(n_data, nd);
     CHECK_EQ(pair_stats()->dpair_failed, failed + 1);
-    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     link_pair_close();
 
     /* Between exchanges the 10-minute window keeps its pairs for the
@@ -360,7 +360,7 @@ static void test_pairing(uint32_t *now_ms) {
     n = mac_build_broadcast(&key, f, sizeof f, false, 0x51, dev, 0x5001, rs, sizeof rs);
     CHECK_EQ(link_on_frame(f, n, true, now_us, *now_ms), LINK_RX_BROADCAST); /* a device heard */
     run_ms(now_ms, 12000);
-    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     run_ms(now_ms, 3000); /* the window's first pair */
     pairs           = link_stats()->ra_pairs_queued;
     ras             = link_stats()->ra_queued;
@@ -384,11 +384,11 @@ static void test_pairing(uint32_t *now_ms) {
     run_ms(now_ms, 12000);
 
     /* A new key (a new network) closes a window. */
-    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms));
+    CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     link_set_key(v_key2.p, 1, UINT32_MAX);
     CHECK(!link_pair_active(*now_ms));
     CHECK(!pair_key()->set);
-    CHECK(link_pair_open(joiner, v_key2.p, rnd, *now_ms));
+    CHECK(link_pair_open(joiner, v_key2.p, rnd, *now_ms, PAIR_WINDOW_MS));
     link_clear_key();
     CHECK(!link_pair_active(*now_ms));
 }

@@ -86,7 +86,8 @@ void link_on_report(const struct csl_report *r);
 
 /* --- Pairing (#19, src/pair.h) ------------------------------------------------- */
 /* Radio task. Opens a pairing window for the device whose wire EUI-64 is
- * target, to hand it net_key, which must be the key in use (link_set_key()).
+ * target, to hand it net_key, which must be the key in use (link_set_key()),
+ * for window_ms (pair_open(): 1 ms to PAIR_WINDOW_MS).
  * The window's first Router Advertisement pair is due a second later.
  * False if the link has no identity or key, target is ours or not a node
  * address, or frames of the last window are still queued
@@ -95,9 +96,12 @@ void link_on_report(const struct csl_report *r);
 bool link_pair_open(const uint8_t target[MAC_EUI_LEN],
                     const uint8_t net_key[CCM_KEY_LEN],
                     const uint8_t rnd[PAIR_RAND_LEN],
-                    uint32_t      now_ms);
+                    uint32_t      now_ms,
+                    uint32_t      window_ms);
 void link_pair_close(void);
 bool link_pair_active(uint32_t now_ms);
+/* Milliseconds until the open window closes by itself; 0 if closed. */
+uint32_t link_pair_left_ms(uint32_t now_ms);
 /* The window is open and an exchange with its target is going on: from a
  * beacon sent to it until its 2.04, a failure or no progress for
  * PAIR_EXCHANGE_IDLE_MS (src/pair.h). */

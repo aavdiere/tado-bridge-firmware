@@ -54,7 +54,7 @@ const uint8_t pair_static_key[CCM_KEY_LEN] = {
 
 static struct {
     bool           open, have_target;
-    uint32_t       opened_ms;
+    uint32_t       opened_ms, window_ms;
     uint8_t        target[MAC_EUI_LEN];
     uint8_t        net_key[CCM_KEY_LEN];
     struct ccm_key key; /* the pairing key's schedule */
@@ -99,10 +99,12 @@ void pair_init(void) {
 bool pair_open(const uint8_t target[MAC_EUI_LEN],
                const uint8_t net_key[CCM_KEY_LEN],
                const uint8_t rnd[PAIR_RAND_LEN],
-               uint32_t      now_ms) {
+               uint32_t      now_ms,
+               uint32_t      window_ms) {
     pair_init();
     static const uint8_t zero[MAC_EUI_LEN];
-    if (memcmp(target + 5, mac_eui_suffix, 3) != 0 || memcmp(target, zero, 5) == 0) {
+    if (memcmp(target + 5, mac_eui_suffix, 3) != 0 || memcmp(target, zero, 5) == 0
+        || window_ms == 0) {
         return false;
     }
     ccm_set_key(&w.key, pair_static_key);
@@ -119,6 +121,7 @@ bool pair_open(const uint8_t target[MAC_EUI_LEN],
     w.have_target = true;
     w.open        = true;
     w.opened_ms   = now_ms;
+    w.window_ms   = window_ms < PAIR_WINDOW_MS ? window_ms : PAIR_WINDOW_MS;
     stats.windows++;
     return true;
 }
@@ -154,7 +157,7 @@ static void progress(uint32_t now_ms) {
 }
 
 bool pair_active(uint32_t now_ms) {
-    if (w.open && (uint32_t)(now_ms - w.opened_ms) >= PAIR_WINDOW_MS) {
+    if (w.open && (uint32_t)(now_ms - w.opened_ms) >= w.window_ms) {
         pair_close();
     }
     /* Signed: a caller's clock read a little before the last progress (the
@@ -168,6 +171,10 @@ bool pair_active(uint32_t now_ms) {
         end_exchange();
     }
     return w.open;
+}
+
+uint32_t pair_left_ms(uint32_t now_ms) {
+    return pair_active(now_ms) ? w.window_ms - (uint32_t)(now_ms - w.opened_ms) : 0u;
 }
 
 bool pair_engaged(uint32_t now_ms) {

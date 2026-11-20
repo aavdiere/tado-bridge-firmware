@@ -44,7 +44,7 @@ static void test_key_and_vectors(void) {
     uint8_t out[PAIR_BEACON_LEN];
     CHECK_EQ(pair_build_beacon(out, 0x59, joiner, bridge, 13537), 0); /* closed */
 
-    CHECK(pair_open(joiner, net_key, rnd, 1000));
+    CHECK(pair_open(joiner, net_key, rnd, 1000, PAIR_WINDOW_MS));
     CHECK(pair_active(1000));
     CHECK(pair_key()->set);
     CHECK(pair_is_target(joiner));
@@ -58,11 +58,11 @@ static void test_key_and_vectors(void) {
 static void test_requests_refused(void) {
     uint8_t r[27];
     pair_init();
-    CHECK(pair_open(other, net_key, rnd, 0));
+    CHECK(pair_open(other, net_key, rnd, 0, PAIR_WINDOW_MS));
     /* The vector comes from joiner: not the named device. */
     CHECK_EQ(pair_check_request(request, sizeof request, 10), PAIR_REQ_NOT_TARGET);
 
-    CHECK(pair_open(joiner, net_key, rnd, 0));
+    CHECK(pair_open(joiner, net_key, rnd, 0, PAIR_WINDOW_MS));
     CHECK_EQ(pair_check_request(request, 26, 10), PAIR_REQ_MALFORMED);
     memcpy(r, request, 27);
     r[3] = 0xCD; /* PAN */
@@ -104,24 +104,47 @@ static void test_window(void) {
     uint8_t bad[8];
     memcpy(bad, joiner, 8);
     bad[7] = 0x01;
-    CHECK(!pair_open(bad, net_key, rnd, 0));
+    CHECK(!pair_open(bad, net_key, rnd, 0, PAIR_WINDOW_MS));
     CHECK(!pair_active(0));
     static const uint8_t zero_head[8] = {0, 0, 0, 0, 0, 0xc5, 0x1b, 0x00};
-    CHECK(!pair_open(zero_head, net_key, rnd, 0));
+    CHECK(!pair_open(zero_head, net_key, rnd, 0, PAIR_WINDOW_MS));
 
     /* Expiry wipes the pairing key; the clock may wrap. */
     uint32_t t0 = 0xFFFFF000u;
-    CHECK(pair_open(joiner, net_key, rnd, t0));
+    CHECK(pair_open(joiner, net_key, rnd, t0, PAIR_WINDOW_MS));
     CHECK(pair_active(t0 + PAIR_WINDOW_MS - 1u));
     CHECK(pair_is_target(joiner));
     CHECK(!pair_active(t0 + PAIR_WINDOW_MS));
     CHECK(!pair_key()->set);
     CHECK(!pair_is_target(joiner));
     CHECK_EQ(pair_check_request(request, 27, t0 + PAIR_WINDOW_MS + 1u), PAIR_REQ_CLOSED);
+    CHECK_EQ(pair_left_ms(t0 + PAIR_WINDOW_MS), 0);
+
+    /* Window length (#40): the server's duration, capped at PAIR_WINDOW_MS;
+     * 0 opens nothing. */
+    CHECK(!pair_open(joiner, net_key, rnd, t0, 0));
+    CHECK(!pair_active(t0));
+    CHECK_EQ(pair_left_ms(t0), 0);
+    CHECK(pair_open(joiner, net_key, rnd, t0, 300000u));
+    CHECK_EQ(pair_left_ms(t0), 300000);
+    CHECK_EQ(pair_left_ms(t0 + 0x2000u), 300000 - 0x2000); /* across the wrap */
+    CHECK(pair_active(t0 + 299999u));
+    CHECK_EQ(pair_left_ms(t0 + 299999u), 1);
+    CHECK(!pair_active(t0 + 300000u));
+    CHECK(!pair_key()->set);
+    CHECK(pair_open(joiner, net_key, rnd, t0, 1u));
+    CHECK(pair_active(t0));
+    CHECK(!pair_active(t0 + 1u));
+    CHECK(pair_open(joiner, net_key, rnd, t0, PAIR_WINDOW_MS + 1u));
+    CHECK_EQ(pair_left_ms(t0), PAIR_WINDOW_MS);
+    CHECK(pair_open(joiner, net_key, rnd, t0, UINT32_MAX));
+    CHECK_EQ(pair_left_ms(t0), PAIR_WINDOW_MS);
+    CHECK(pair_active(t0 + PAIR_WINDOW_MS - 1u));
+    CHECK(!pair_active(t0 + PAIR_WINDOW_MS));
 
     /* Advertisement pairs: at most PAIR_RA_PAIRS_MAX, none when closed. */
     CHECK(!pair_take_ra_pair(0));
-    CHECK(pair_open(joiner, net_key, rnd, 0));
+    CHECK(pair_open(joiner, net_key, rnd, 0, PAIR_WINDOW_MS));
     for (unsigned i = 0; i < PAIR_RA_PAIRS_MAX; i++) {
         CHECK(pair_take_ra_pair(1));
     }
@@ -161,7 +184,7 @@ static void test_dpair(void) {
     for (unsigned i = 0; i < PAIR_RAND_LEN; i++) {
         rnd[i] = (uint8_t)(0x30 + i);
     }
-    CHECK(pair_open(joiner, net_key, rnd, 0));
+    CHECK(pair_open(joiner, net_key, rnd, 0, PAIR_WINDOW_MS));
     CHECK_EQ(pair_dpair_due(c, sizeof c, 100000), 0); /* nothing heard from the target */
 
     /* A request answered but its beacon not sent: nothing. */
@@ -229,7 +252,7 @@ static void test_dpair(void) {
     CHECK_EQ(pair_stats()->paired, paired + 1u);
 
     /* A new window forgets the old MIDs. */
-    CHECK(pair_open(joiner, net_key, rnd, 70000));
+    CHECK(pair_open(joiner, net_key, rnd, 70000, PAIR_WINDOW_MS));
     CHECK_EQ(pair_reply(joiner, m, ack(m, mid0, 0x44)), PAIR_REPLY_NONE);
     /* Closing the window stops d/pair. */
     pair_note_joiner(70000);
@@ -245,7 +268,7 @@ static void test_exchange(void) {
     CHECK_EQ(PAIR_WINDOW_MS, 600000u);
     pair_init();
     uint32_t t0 = 0xFFFC0000u; /* the millisecond clock wraps inside the window */
-    CHECK(pair_open(joiner, net_key, rnd, t0));
+    CHECK(pair_open(joiner, net_key, rnd, t0, PAIR_WINDOW_MS));
     CHECK(!pair_engaged(t0));
 
     /* The window's first advertisement goes as a pair; later ones only
@@ -347,7 +370,7 @@ static void test_exchange(void) {
     CHECK(!pair_engaged(t0 + PAIR_WINDOW_MS));
 
     /* Closed during an exchange: the exchange ends with it. */
-    CHECK(pair_open(joiner, net_key, rnd, 0));
+    CHECK(pair_open(joiner, net_key, rnd, 0, PAIR_WINDOW_MS));
     pair_note_joiner(10);
     CHECK(pair_engaged(10));
     pair_close();

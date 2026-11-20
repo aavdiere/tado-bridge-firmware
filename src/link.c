@@ -442,9 +442,10 @@ void link_on_report(const struct csl_report *r) {
 bool link_pair_open(const uint8_t target[MAC_EUI_LEN],
                     const uint8_t key[CCM_KEY_LEN],
                     const uint8_t rnd[PAIR_RAND_LEN],
-                    uint32_t      now_ms) {
+                    uint32_t      now_ms,
+                    uint32_t      window_ms) {
     if (!link_ready() || memcmp(target, own, MAC_EUI_LEN) == 0 || link_pair_frames_queued()
-        || !pair_open(target, key, rnd, now_ms)) {
+        || !pair_open(target, key, rnd, now_ms, window_ms)) {
         return false;
     }
     /* The window's first advertisement pair goes a second from now, before
@@ -460,6 +461,10 @@ void link_pair_close(void) {
 
 bool link_pair_active(uint32_t now_ms) {
     return pair_active(now_ms);
+}
+
+uint32_t link_pair_left_ms(uint32_t now_ms) {
+    return pair_left_ms(now_ms);
 }
 
 bool link_pair_engaged(uint32_t now_ms) {

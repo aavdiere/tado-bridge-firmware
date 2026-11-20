@@ -1822,7 +1822,7 @@ static void pairing_trigger(uint32_t now_ms) {
         return;
     }
     ok = ok && rng_random(NULL, rnd, sizeof rnd) == 0
-         && link_pair_open(target, key, rnd, (uint32_t)xTaskGetTickCount());
+         && link_pair_open(target, key, rnd, (uint32_t)xTaskGetTickCount(), PAIR_WINDOW_MS);
     mbedtls_platform_zeroize(key, sizeof key);
     mbedtls_platform_zeroize(rnd, sizeof rnd);
     if (ok) {

@@ -20,8 +20,9 @@
  *      token, Content-Format 42, an 8-byte single-use option 2048, and one
  *      TLV, tag 0x12, length 16, the network key (pair_dpair_due()).
  *   5. The device answers 2.04 under the network key (pair_reply()). That
- *      exchange is over; the window stays open until PAIR_WINDOW_MS have
- *      passed, and the same device may pair again in it.
+ *      exchange is over; the window stays open until its length
+ *      (PAIR_WINDOW_MS at most) has passed, and the same device may pair
+ *      again in it.
  *
  * The exchange (pair_engaged()): from the first beacon sent to the target
  * (pair_beacon_sent()) or its first pairing-key frame, until its 2.04, a
@@ -35,7 +36,7 @@
  *   - Only the device named when the window opened is answered or sent
  *     the key. A request or frame from any other address is ignored before
  *     anything is decrypted.
- *   - The window is bounded in time (PAIR_WINDOW_MS) and in what it sends
+ *   - The window is bounded in time (PAIR_WINDOW_MS at most) and in what it sends
  *     (PAIR_BEACONS_MAX, PAIR_RA_PAIRS_MAX, PAIR_DPAIR_MAX, all per window,
  *     however many exchanges it holds).
  *   - The network key is held here only while the window is open and is
@@ -54,7 +55,9 @@
 #include <stdint.h>
 
 /* Owner spec 2026-11-17: the window lasts 10 minutes, then closes by
- * itself; a pairing does not close it. freedo caps a bridge window at 10
+ * itself; a pairing does not close it. It is also the longest window: a
+ * window the server opens (#40, src/pair_remote.h) lasts the duration it
+ * asks for, at most this. freedo caps a bridge window at 10
  * minutes too; the valve's own commissioning window lasts two (freedo
  * tado/pair_window.go:31-33), so the device has to be put into pairing
  * mode while the bridge's window is open. */
@@ -132,22 +135,29 @@ extern const uint8_t pair_static_key[CCM_KEY_LEN];
 void pair_init(void);
 
 /* Opens a window for the device whose wire EUI-64 is target, to hand over
- * net_key. rnd: PAIR_RAND_LEN random bytes. Replaces any earlier window.
- * False (and closed) if target is not a node address (tado suffix
- * c5 1b 00) or the key cannot be set. */
+ * net_key, for window_ms (capped at PAIR_WINDOW_MS; the pair button asks
+ * for PAIR_WINDOW_MS, the server's remote trigger for its duration, #40).
+ * rnd: PAIR_RAND_LEN random bytes. Replaces any earlier window. False (and
+ * closed) if target is not a node address (tado suffix c5 1b 00),
+ * window_ms is 0, or the key cannot be set. */
 bool pair_open(const uint8_t target[MAC_EUI_LEN],
                const uint8_t net_key[CCM_KEY_LEN],
                const uint8_t rnd[PAIR_RAND_LEN],
-               uint32_t      now_ms);
+               uint32_t      now_ms,
+               uint32_t      window_ms);
 
 /* Closes the window: the pairing key schedule and the copy of the network
  * key are wiped. The target and the d/pair message IDs are remembered
  * until the next pair_open(), so a late answer is still recognised. */
 void pair_close(void);
 
-/* The window is open; closes it once PAIR_WINDOW_MS have passed, and ends
- * an exchange that had no progress for PAIR_EXCHANGE_IDLE_MS. */
+/* The window is open; closes it once its length (pair_open()) has passed,
+ * and ends an exchange that had no progress for PAIR_EXCHANGE_IDLE_MS. */
 bool pair_active(uint32_t now_ms);
+
+/* Milliseconds until the open window closes by itself; 0 if it is closed
+ * (pair_active() runs first). */
+uint32_t pair_left_ms(uint32_t now_ms);
 
 /* The window is open and an exchange with the target is going on. */
 bool pair_engaged(uint32_t now_ms);
