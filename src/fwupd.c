@@ -18,6 +18,14 @@ _Static_assert(FWIMG_HDR_LEN <= FWUPD_BLOCK, "the header fits block 0");
 _Static_assert(FWIMG_HEAD_LEN <= FWUPD_BLOCK, "the image head is in block 1");
 _Static_assert(FWUPD_BLOCKS < (1u << 20), "block numbers fit Block1");
 
+/* The why strings below write these values out. */
+_Static_assert(FWUPD_BLOCK == 1024u, "a why string says 1024 bytes");
+_Static_assert(FWIMG_APP_MAX == 448u * 1024u, "a why string says 448 KB");
+_Static_assert(FWIMG_APP_BASE == 0x08010000u, "a why string says 0x08010000");
+_Static_assert(FWUPD_RETRY_MS == 10000u, "two why strings say 10 s");
+_Static_assert(FWUPD_IDLE_MS == 120000u, "a why string says 120 s");
+_Static_assert(FWUPD_TEST_MAX_MS == 600000u, "two why strings say 10 min");
+
 /* --- Flash operations --------------------------------------------------------- */
 /* [addr, addr + len) inside one of the two slots. */
 static bool in_slot(uint32_t addr, uint32_t len) {
@@ -474,6 +482,9 @@ const char *fwupd_why(void) {
 }
 
 /* --- Confirmation and timeouts ---------------------------------------------- */
+/* A tick that comes late (the task was held off) counts at most this much
+ * healthy time. */
+#define TICK_DT_MAX_MS 5000u
 
 enum fwupd_event fwupd_tick(uint32_t now_ms, bool healthy) {
     uint32_t dt    = now_ms - u.last_tick_ms;
@@ -511,8 +522,7 @@ enum fwupd_event fwupd_tick(uint32_t now_ms, bool healthy) {
     if (!u.testing) {
         return FWUPD_EV_NONE;
     }
-    /* A tick that comes late (the task was held off) counts at most 5 s. */
-    uint32_t h = healthy ? u.healthy_ms + (dt < 5000u ? dt : 5000u) : 0;
+    uint32_t h = healthy ? u.healthy_ms + (dt < TICK_DT_MAX_MS ? dt : TICK_DT_MAX_MS) : 0;
     LOCKED(u.healthy_ms = h);
     if (u.healthy_ms >= FWUPD_CONFIRM_MS
         && (!u.confirm_wait || (int32_t)(now_ms - u.confirm_at) >= 0)) {
