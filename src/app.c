@@ -21,7 +21,7 @@
 #define PRIO_NET          (tskIDLE_PRIORITY + 2)
 #define PRIO_RADIO        (tskIDLE_PRIORITY + 3)
 
-#define STACK_WORDS 512 /* 2 KB each; LOG() needs about 1 KB of it */
+#define STACK_WORDS 512 /* housekeeping: 2 KB; LOG() needs about 1 KB of it */
 /* 3.5 KB. Deepest path (#19): the pair button creates a network, whose key
  * draw may reseed the DRBG: radio_task_run 232 + network_create 88 +
  * rng_random 24 + mbedtls_ctr_drbg_random(_with_add) 104 + reseed 416 +
@@ -50,7 +50,7 @@ static void net_task(void *arg) {
 #define PAIR_HOLD_MS    1000  /* the pair button opens a pairing window (#19) */
 #define FACTORY_HOLD_MS 10000 /* the factory reset button erases the network (P6) */
 
-/* Debounced press and release lines, as before the button module. */
+/* Debounced press and release lines. */
 static void button_log(const char *name, unsigned ev) {
     if (ev & BUTTON_PRESS) {
         LOG("button: %s pressed", name);

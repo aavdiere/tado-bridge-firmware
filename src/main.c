@@ -98,8 +98,8 @@ int main(void) {
     spi1_init();
     app_create_tasks();
 
-    /* Watchdog last, right before the scheduler: ~2-6 s timeout, kicked only by
-     * the housekeeping task. */
+    /* Watchdog last, right before the scheduler: 2.0-5.6 s timeout
+     * (src/watchdog.h), kicked only by the housekeeping task. */
     watchdog_start();
     LOG("watchdog: IWDG started, /%d reload %d (2.0-5.6 s), frozen while halted",
         WDG_PRESCALER_DIV,
