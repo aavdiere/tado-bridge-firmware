@@ -394,13 +394,13 @@ void radio_request_factory_reset(void) {
  * by the update task through src/handoff.c, run by this task's loop as
  * flash work (update_op_run() below). The hand-over has a time limit
  * (#24 review M1): an operation this task has not claimed after
- * UPDATE_OP_WAIT_MS is withdrawn and never runs, so the update task never
- * waits for ever on a loop that does not run (radio_configure() failing,
- * below). The limit is well above the longest wait in normal operation:
- * the transaction in flight (at most a 1 s wait for its sample, a 1 s
- * train and the ACK window, docs/design.md "Flash work and the
- * coordinator") plus one store write before the operation. */
-#define UPDATE_OP_WAIT_MS 10000u
+ * RADIO_UPDATE_OP_WAIT_MS (src/radio.h, 10 s) is withdrawn and never runs,
+ * so the update task never waits for ever on a loop that does not run
+ * (radio_configure() failing, below). The limit is well above the longest
+ * wait in normal operation: the transaction in flight (at most a 1 s wait
+ * for its sample, a 1 s train and the ACK window, docs/design.md "Flash
+ * work and the coordinator") plus one store write before the operation.
+ * src/fwupd_task.c writes the 10 s out in a log line. */
 
 static TaskHandle_t volatile upd_task;
 
@@ -422,7 +422,7 @@ bool radio_update_op(struct fwupd_op *op) {
     TickType_t t0 = xTaskGetTickCount();
     while (self == NULL) {
         /* The radio task has not started yet: it sets self first thing. */
-        if (xTaskGetTickCount() - t0 >= pdMS_TO_TICKS(UPDATE_OP_WAIT_MS)) {
+        if (xTaskGetTickCount() - t0 >= pdMS_TO_TICKS(RADIO_UPDATE_OP_WAIT_MS)) {
             op->ok   = false;
             op->done = false;
             return false;
@@ -430,7 +430,7 @@ bool radio_update_op(struct fwupd_op *op) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     upd_task = xTaskGetCurrentTaskHandle();
-    return handoff_run(op, UPDATE_OP_WAIT_MS);
+    return handoff_run(op, RADIO_UPDATE_OP_WAIT_MS);
 }
 
 /* Microseconds since boot that do not wrap: TIM2's 32 bits extended. Radio

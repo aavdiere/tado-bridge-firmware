@@ -54,12 +54,14 @@ void radio_request_factory_reset(void);
  * moment for flash work (no frame arriving, the coordinator idle, and held
  * while the operation waits), and wait for it. Returns op->ok; op->network
  * tells whether a network is active. If the radio task has not taken the
- * operation within 10 s (its loop does not run: the radio did not come
- * up), it is withdrawn and never runs, and this returns false with
- * op->done false (src/handoff.h). FWUPD_OP_RESTART restarts the MCU and
- * does not return when taken; when it returns, the restart is the
+ * operation within RADIO_UPDATE_OP_WAIT_MS (its loop does not run: the
+ * radio did not come up), it is withdrawn and never runs, and this returns
+ * false with op->done false (src/handoff.h). FWUPD_OP_RESTART restarts the
+ * MCU and does not return when taken; when it returns, the restart is the
  * caller's. One caller at a time. */
 bool radio_update_op(struct fwupd_op *op);
+/* The limit, with why it is 10 s: src/radio.c. */
+#define RADIO_UPDATE_OP_WAIT_MS 10000u
 
 /* The radio is up: configured, its interrupts on, the PLL calibrated (for
  * the update's confirmation, #24). Any task; a snapshot. */
