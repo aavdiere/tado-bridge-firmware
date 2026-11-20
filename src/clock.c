@@ -6,6 +6,7 @@
 #include "log.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #include <libopencm3/cm3/systick.h>
 #include <libopencm3/stm32/flash.h>
@@ -90,6 +91,15 @@ struct clock_status clock_status  = {
     .hsi_fault = CLOCK_FAULT_NOT_TRIED,
 };
 
+/* SysTick counting milliseconds of HCLK, polled by its COUNTFLAG; the
+ * reload is 95999 at 96 MHz, which fits its 24 bits. */
+static void systick_ms_start(void) {
+    systick_set_clocksource(STK_CSR_CLKSOURCE_AHB);
+    systick_set_reload(clock_hz / 1000 - 1);
+    systick_clear();
+    systick_counter_enable();
+}
+
 /* Poll until (*reg & mask) == want, at most timeout_ms. SysTick counts HCLK,
  * so the timeout is right while clock_hz matches the running clock. */
 static bool wait_bits(volatile uint32_t *reg,
@@ -100,10 +110,7 @@ static bool wait_bits(volatile uint32_t *reg,
     uint32_t ms = 0;
     bool     ok = false;
 
-    systick_set_clocksource(STK_CSR_CLKSOURCE_AHB);
-    systick_set_reload(clock_hz / 1000 - 1);
-    systick_clear();
-    systick_counter_enable();
+    systick_ms_start();
     for (;;) {
         if ((*reg & mask) == want) {
             ok = true;
@@ -123,7 +130,17 @@ static bool wait_bits(volatile uint32_t *reg,
 
 static void pll_off(void) {
     RCC_CR &= ~RCC_CR_PLLON;
-    (void)wait_bits(&RCC_CR, RCC_CR_PLLRDY, 0, PLL_TIMEOUT_MS, 0);
+    (void)wait_bits(&RCC_CR, RCC_CR_PLLRDY, 0, PLL_TIMEOUT_MS, NULL);
+}
+
+/* SYSCLK back to HSI; waits at most SWITCH_TIMEOUT_MS for SWS to show it. */
+static void sysclk_to_hsi(void) {
+    rcc_set_sysclk_source(RCC_CFGR_SW_HSI);
+    (void)wait_bits(&RCC_CFGR,
+                    RCC_CFGR_SWS_MASK << RCC_CFGR_SWS_SHIFT,
+                    RCC_CFGR_SWS_HSI << RCC_CFGR_SWS_SHIFT,
+                    SWITCH_TIMEOUT_MS,
+                    NULL);
 }
 
 static void set_prescalers(uint32_t ppre1) {
@@ -149,14 +166,14 @@ static enum clock_fault pll_start(bool from_hse) {
     RCC_PLLCFGR = cfg; /* word write: PLLN needs half-word or word (rm0383.txt:5288-5289) */
 
     RCC_CR |= RCC_CR_PLLON;
-    if (!wait_bits(&RCC_CR, RCC_CR_PLLRDY, RCC_CR_PLLRDY, PLL_TIMEOUT_MS, 0)) {
+    if (!wait_bits(&RCC_CR, RCC_CR_PLLRDY, RCC_CR_PLLRDY, PLL_TIMEOUT_MS, NULL)) {
         pll_off();
         return CLOCK_FAULT_PLL_LOCK;
     }
 
     /* VOS takes effect once the PLL is on (rm0383.txt:3561-3562). Do not run
      * above 84 MHz until the regulator reports scale 1 ready (rm0383.txt:4363). */
-    if (!wait_bits(&PWR_CSR, PWR_CSR_VOSRDY, PWR_CSR_VOSRDY, VOS_TIMEOUT_MS, 0)) {
+    if (!wait_bits(&PWR_CSR, PWR_CSR_VOSRDY, PWR_CSR_VOSRDY, VOS_TIMEOUT_MS, NULL)) {
         pll_off();
         return CLOCK_FAULT_VOS;
     }
@@ -179,13 +196,8 @@ static enum clock_fault pll_start(bool from_hse) {
                    RCC_CFGR_SWS_MASK << RCC_CFGR_SWS_SHIFT,
                    RCC_CFGR_SWS_PLL << RCC_CFGR_SWS_SHIFT,
                    SWITCH_TIMEOUT_MS,
-                   0)) {
-        rcc_set_sysclk_source(RCC_CFGR_SW_HSI);
-        (void)wait_bits(&RCC_CFGR,
-                        RCC_CFGR_SWS_MASK << RCC_CFGR_SWS_SHIFT,
-                        RCC_CFGR_SWS_HSI << RCC_CFGR_SWS_SHIFT,
-                        SWITCH_TIMEOUT_MS,
-                        0);
+                   NULL)) {
+        sysclk_to_hsi();
         set_prescalers(RCC_CFGR_PPRE_DIV_NONE);
         pll_off();
         return CLOCK_FAULT_SWITCH;
@@ -198,14 +210,9 @@ void clock_init(void) {
      * it anyway, so the PLL and VOS can be written (rm0383.txt:4258). HSI
      * starts in at most 4 us (stm32f411ce.txt:4979). */
     RCC_CR |= RCC_CR_HSION;
-    (void)wait_bits(&RCC_CR, RCC_CR_HSIRDY, RCC_CR_HSIRDY, 1, 0);
+    (void)wait_bits(&RCC_CR, RCC_CR_HSIRDY, RCC_CR_HSIRDY, 1, NULL);
     if (CFGR_SWS(RCC_CFGR) != RCC_CFGR_SWS_HSI) {
-        rcc_set_sysclk_source(RCC_CFGR_SW_HSI);
-        (void)wait_bits(&RCC_CFGR,
-                        RCC_CFGR_SWS_MASK << RCC_CFGR_SWS_SHIFT,
-                        RCC_CFGR_SWS_HSI << RCC_CFGR_SWS_SHIFT,
-                        SWITCH_TIMEOUT_MS,
-                        0);
+        sysclk_to_hsi();
     }
     set_prescalers(RCC_CFGR_PPRE_DIV_NONE);
     pll_off();
@@ -296,10 +303,7 @@ void delay_ms(uint32_t ms) {
     if ((STK_CSR & STK_CSR_TICKINT)) {
         fw_panic("delay_ms after the scheduler started", __FILE__, __LINE__);
     }
-    systick_set_clocksource(STK_CSR_CLKSOURCE_AHB);
-    systick_set_reload(clock_hz / 1000 - 1); /* 95999 at 96 MHz, fits 24 bits */
-    systick_clear();
-    systick_counter_enable();
+    systick_ms_start();
     while (ms--) {
         while (!systick_get_countflag()) {
         }
