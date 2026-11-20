@@ -273,6 +273,7 @@ add_executable(${BINARY}
     ../src/fwupd.c
     ../src/fwupd_task.c
     ../src/handoff.c
+    ../src/freqoff.c
     ${FREERTOS_DIR}/tasks.c
     ${FREERTOS_DIR}/queue.c
     ${FREERTOS_DIR}/list.c

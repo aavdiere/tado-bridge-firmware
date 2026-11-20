@@ -75,6 +75,7 @@
 #include "airtime.h"
 #include "cc110l.h"
 #include "csl.h"
+#include "freqoff.h"
 #include "fwupd.h"
 #include "handoff.h"
 #include "identity.h"
@@ -874,6 +875,11 @@ _Static_assert(LINK_RX_OTHER + 1 == LINK_RX_COUNT, "a name for every link_rx");
 
 static void beacon_answer(uint32_t fall_us, bool own_end);
 
+/* FREQEST of our own network's frames and the drift warning (#11,
+ * src/freqoff.h): fed by frame_done() after the frame is handled, reported
+ * by log_minute(). Radio task only. */
+static struct freqoff fo;
+
 /* A complete frame is in rx.buf. By now the GDO2 interrupt has sent the
  * Enhanced ACK if one was prepared, so this may take its time and log. */
 static void frame_done(void) {
@@ -934,6 +940,11 @@ static void frame_done(void) {
         link_on_frame(mac, len, crc_ok, stamp64(fall_us), (uint32_t)xTaskGetTickCount());
     if (what == LINK_RX_BEACON_ANSWER) {
         beacon_answer(fall_us, own_end); /* before anything logs: it has a deadline */
+    }
+    /* After the ACK (sent from the CRC-OK interrupt before this runs) and the
+     * beacon (answered just above): no deadline left for this frame (#11). */
+    if (fe != FE_NONE && crc_ok && link_rx_from_network(what)) {
+        freqoff_add(&fo, fe);
     }
 
     if ((mac[0] & 0x07) == 5 && len >= 2) { /* wake-up: 25 <seq> CD AB ... */
@@ -1402,12 +1413,32 @@ static void log_minute(void) {
         (unsigned long)fs->held,
         (unsigned long)fs->held_max,
         (unsigned long)fs->gave_up);
+    struct freqoff_report fr;
+    freqoff_report(&fo, &fr);
     LOG("radio: 60 s: freqest in packet %lu, none %lu (stale sample dropped %lu), sync rssi "
-        "differs %lu",
+        "differs %lu; our network %lu frames, mean %+ld Hz (%d..%d)",
         (unsigned long)minute.fe_pkt,
         (unsigned long)minute.fe_none,
         (unsigned long)minute.fe_stale,
-        (unsigned long)minute.fe_rssi_diff);
+        (unsigned long)minute.fe_rssi_diff,
+        (unsigned long)fr.minute_n,
+        (long)fr.minute_mean_hz,
+        fr.minute_min,
+        fr.minute_max);
+    if (fr.verdict == FREQOFF_WARN || fr.verdict == FREQOFF_BACK) {
+        char k[12];
+        /* kHz in tenths, rounded half away from zero; |mean| <= 203125 Hz. */
+        int32_t x10 = (fr.window_mean_hz + (fr.window_mean_hz < 0 ? -50 : 50)) / 100;
+        LOG("radio: frequency offset %s: devices average %s%s kHz from us over %lu frames "
+            "(limit %u.%u kHz)%s",
+            fr.verdict == FREQOFF_WARN ? "warning" : "back within limit",
+            x10 > 0 ? "+" : "",
+            tenths(k, sizeof k, x10),
+            (unsigned long)fr.window_n,
+            FREQOFF_LIMIT_HZ / 1000u,
+            FREQOFF_LIMIT_HZ % 1000u / 100u,
+            fr.verdict == FREQOFF_WARN ? "; check the crystal (#11)" : "");
+    }
     const struct link_stats *ls = link_stats();
     /* Two lines: one log line holds 191 characters (src/log.c). */
     LOG("link: 60 s: acks prepared %lu sent %lu too late %lu, tx frames %lu fail %lu refused %lu "
@@ -2122,6 +2153,7 @@ void radio_task_run(void) {
      * the net task sets the Ethernet MAC (#39, src/net.c mac_choose()). */
     identity_boot(flash_ok);
     link_start();
+    freqoff_init(&fo);
     if (flash_ok) {
         network_boot(); /* key and counter reservation from flash, before the radio (#37) */
     } else {
