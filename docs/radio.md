@@ -109,7 +109,7 @@ Follow freedo and tanoclo (project decision).
 - **Factory key:** per device, held only by the cloud. Not available and not needed.
 
 **Pairing flow** (`tanoclo/docs/pairing.md:9-17`, `freedo/docs/PROTOCOL.md:623-739`)
-1. Server opens the window with `POST .../pair`. Freedo caps windows at 10 minutes (`:700`).
+1. Server opens the window with `POST .../pair` (ours since #40, `server-api.md`, "Remote pairing trigger"; or the bridge's pair button, #19). Freedo caps windows at 10 minutes (`:700`); so do we (`PAIR_WINDOW_MS`).
 2. Joiner broadcasts Enhanced Beacon Requests and Router Solicitations under the pairing key (`:641-643`).
 3. During the window, a frame failing the network key is retried under the pairing key, and that sender is tagged to use it (`:692-705`).
 4. **Beacon answer must come from the bridge firmware**, 2.4-7.4 ms after the request, with no wake-up train (`:657-658`, `:721-724`). Layout `:651-656`.
@@ -118,7 +118,7 @@ Follow freedo and tanoclo (project decision).
 7. Use tag `0x12` (network key, length 16). Tag `0x07` needs the cloud-only per-device key (`:630-633`).
 8. Device answers 2.04 under the new network key within 30 ms, then `auth/token`, RS, `time`, config, and starts reporting (`:635-637`, `tanoclo/docs/pairing.md:102-112`).
 
-**Implemented (#19, 2026-11-17), host-tested only, not on air:** `src/pair.c` and its use in `src/link.c` and `src/radio.c`; the window is opened by the pair button for one device named at build time, never by the server yet. Beacon answer timing (preamble about 3.9-4.0 ms after the request, designed) and the guards: `radio-runtime.md`, "Pairing (#19)".
+**Implemented (#19, 2026-11-17), on air 2026-11-17 (`test-bench.md`, "Pairing test (#19) result"):** `src/pair.c` and its use in `src/link.c` and `src/radio.c`; the window is opened by the pair button for one device named at build time. **Since #40 (2026-11-20, host-tested, not on air yet) the server can open it too**, for the same device and with the same guards, for its duration up to 10 minutes, and close it (`radio-runtime.md`, "Remote trigger (#40)"). Beacon answer timing (preamble about 3.9-4.0 ms after the request, designed) and the guards: `radio-runtime.md`, "Pairing (#19)".
 
 **Exposure:** the network key crosses the air under a key every valve shares, so keep windows short and the band quiet (`freedo/docs/PROTOCOL.md:737-738`).
 
