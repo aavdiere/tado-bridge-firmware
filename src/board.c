@@ -6,10 +6,11 @@
 #include <stdint.h>
 
 static const uint16_t led_pin[LED_COUNT] = {
-    [LED_ROUTER] = GPIO0, [LED_POWER] = GPIO1, [LED_CLOUD] = GPIO5, [LED_PAIRING] = GPIO8};
-
-#define RESET_BTN_PIN GPIO10 /* PB10, active low */
-#define PAIR_BTN_PIN  GPIO15 /* PC15, active high */
+    [LED_ROUTER]  = BOARD_LED_ROUTER_PIN,
+    [LED_POWER]   = BOARD_LED_POWER_PIN,
+    [LED_CLOUD]   = BOARD_LED_CLOUD_PIN,
+    [LED_PAIRING] = BOARD_LED_PAIRING_PIN,
+};
 
 /* GPIOA pins this firmware may configure. PA13/PA14 (SWD) must never appear in
  * any GPIOA mask (CLAUDE.md, docs/test-bench.md rule 5). libopencm3's
@@ -23,19 +24,32 @@ _Static_assert(((BOARD_RADIO_CS_PIN | BOARD_GDO0_PIN | BOARD_GDO2_PIN | BOARD_SP
                    == 0,
                "GPIOA pin outside the allowed set");
 
-/* Pin numbers of the two chip selects, for the 2-bit MODER fields. */
-#define RADIO_CS_PIN_NO 4u /* PA4 */
-#define FLASH_CS_PIN_NO 9u /* PB9 */
+/* Pin numbers of the pins set up by register writes, for the 2-bit MODER
+ * fields. */
+#define RADIO_CS_PIN_NO  4u /* PA4 */
+#define FLASH_CS_PIN_NO  9u /* PB9 */
+#define POWER_LED_PIN_NO 1u /* PB1 */
 _Static_assert(BOARD_RADIO_CS_PIN == (1u << RADIO_CS_PIN_NO), "PA4 radio CSn");
 _Static_assert(BOARD_FLASH_CS_PIN == (1u << FLASH_CS_PIN_NO), "PB9 flash CS#");
+_Static_assert(BOARD_LED_POWER_PIN == (1u << POWER_LED_PIN_NO), "PB1 power LED");
 _Static_assert(RADIO_CS_PIN_NO != 13u && RADIO_CS_PIN_NO != 14u, "never touch PA13/PA14 (SWD)");
-_Static_assert(FLASH_CS_PIN_NO != 6u && FLASH_CS_PIN_NO != 7u, "never touch PB6/PB7 (HomeKit I2C)");
+_Static_assert(FLASH_CS_PIN_NO != 6u && FLASH_CS_PIN_NO != 7u && POWER_LED_PIN_NO != 6u
+                   && POWER_LED_PIN_NO != 7u,
+               "never touch PB6/PB7 (HomeKit I2C)");
 
 /* GPIOB pins this firmware configures; PB6/PB7 (HomeKit I2C) never. */
-#define GPIOB_USED                                                                    \
-    (BOARD_FLASH_CS_PIN | BOARD_ENC_CS_PIN | BOARD_SPI2_SCK_PIN | BOARD_SPI2_MISO_PIN \
-     | BOARD_SPI2_MOSI_PIN | BOARD_ENC_INT_PIN | GPIO0 | GPIO1 | GPIO5 | GPIO8 | RESET_BTN_PIN)
+#define GPIOB_USED                                                                          \
+    (BOARD_FLASH_CS_PIN | BOARD_ENC_CS_PIN | BOARD_SPI2_SCK_PIN | BOARD_SPI2_MISO_PIN       \
+     | BOARD_SPI2_MOSI_PIN | BOARD_ENC_INT_PIN | BOARD_LED_ROUTER_PIN | BOARD_LED_POWER_PIN \
+     | BOARD_LED_CLOUD_PIN | BOARD_LED_PAIRING_PIN | BOARD_RESET_BTN_PIN)
 _Static_assert((GPIOB_USED & (GPIO6 | GPIO7)) == 0, "never touch PB6/PB7 (HomeKit I2C)");
+
+/* MODERy = 01 general purpose output (rm0383.txt:8064-8090): a
+ * read-modify-write of that one 2-bit field, so every other pin of the port
+ * keeps its mode. */
+static void moder_output(uint32_t port, unsigned pin_no) {
+    GPIO_MODER(port) = (GPIO_MODER(port) & ~(3u << (2u * pin_no))) | (1u << (2u * pin_no));
+}
 
 void board_cs_early(void) {
     /* GPIOAEN = bit 0, GPIOBEN = bit 1 of RCC_AHB1ENR (rm0383.txt:5900-5960).
@@ -54,14 +68,10 @@ void board_cs_early(void) {
     GPIO_OTYPER(GPIOA) &= ~(uint32_t)BOARD_RADIO_CS_PIN;
     GPIO_OTYPER(GPIOB) &= ~(uint32_t)BOARD_FLASH_CS_PIN;
 
-    /* MODERy = 01 general purpose output (rm0383.txt:8064-8090). Read-modify-
-     * write of the one 2-bit field: GPIOA's reset value 0xA8000000 (PA13,
-     * PA14, PA15 in AF for SWD/JTAG) and GPIOB's 0x00000280 (PB3, PB4) are
-     * kept. */
-    GPIO_MODER(GPIOA) =
-        (GPIO_MODER(GPIOA) & ~(3u << (2u * RADIO_CS_PIN_NO))) | (1u << (2u * RADIO_CS_PIN_NO));
-    GPIO_MODER(GPIOB) =
-        (GPIO_MODER(GPIOB) & ~(3u << (2u * FLASH_CS_PIN_NO))) | (1u << (2u * FLASH_CS_PIN_NO));
+    /* Outputs: GPIOA's reset value 0xA8000000 (PA13, PA14, PA15 in AF for
+     * SWD/JTAG) and GPIOB's 0x00000280 (PB3, PB4) are kept. */
+    moder_output(GPIOA, RADIO_CS_PIN_NO);
+    moder_output(GPIOB, FLASH_CS_PIN_NO);
 }
 
 void board_init(void) {
@@ -93,8 +103,8 @@ void board_init(void) {
     /* Power LED: steady on while the bridge runs normally; it only changes on
      * a fault (docs/hardware.md, "LED roles"). */
     board_led(LED_POWER, true);
-    gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, RESET_BTN_PIN);
-    gpio_mode_setup(GPIOC, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, PAIR_BTN_PIN);
+    gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, BOARD_RESET_BTN_PIN);
+    gpio_mode_setup(GPIOC, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, BOARD_PAIR_BTN_PIN);
 
     /* ENC28J60 (#12). CS and RESET have weak pull-ups inside the chip
      * (enc28j60.txt:262-263,288; 74-173 kOhm, :4008), so both idle high while
@@ -127,7 +137,7 @@ void board_power_led_force(void) {
     (void)RCC_AHB1ENR;
     GPIO_BSRR(GPIOB) = (uint32_t)led_pin[LED_POWER] << 16; /* off */
     GPIO_OTYPER(GPIOB) &= ~(uint32_t)led_pin[LED_POWER];
-    GPIO_MODER(GPIOB) = (GPIO_MODER(GPIOB) & ~(3u << 2u)) | (1u << 2u); /* PB1 output */
+    moder_output(GPIOB, POWER_LED_PIN_NO);
 }
 
 static bool led_overridden(enum led led) {
@@ -160,9 +170,9 @@ void board_led_override(bool active, bool on) {
 }
 
 bool board_reset_button_raw(void) {
-    return gpio_get(GPIOB, RESET_BTN_PIN) == 0;
+    return gpio_get(GPIOB, BOARD_RESET_BTN_PIN) == 0;
 }
 
 bool board_pair_button_raw(void) {
-    return gpio_get(GPIOC, PAIR_BTN_PIN) != 0;
+    return gpio_get(GPIOC, BOARD_PAIR_BTN_PIN) != 0;
 }

@@ -21,7 +21,15 @@
 #define BOARD_ENC_RESET_PIN (1u << 14) /* PC14, ENC28J60 RESET, active low */
 
 /* LEDs: push-pull, high = on (docs/hardware.md). */
+#define BOARD_LED_ROUTER_PIN  (1u << 0) /* PB0 */
+#define BOARD_LED_POWER_PIN   (1u << 1) /* PB1 */
+#define BOARD_LED_CLOUD_PIN   (1u << 5) /* PB5 */
+#define BOARD_LED_PAIRING_PIN (1u << 8) /* PB8, also the beacon's scope marker */
 enum led { LED_ROUTER, LED_POWER, LED_CLOUD, LED_PAIRING, LED_COUNT };
+
+/* Buttons (docs/hardware.md). */
+#define BOARD_RESET_BTN_PIN (1u << 10) /* PB10, factory reset, active low */
+#define BOARD_PAIR_BTN_PIN  (1u << 15) /* PC15, pair, active high */
 
 /* Called first in main(), before the 2 s debugger-attach delay (#28): drives
  * PA4 (radio CSn) and PB9 (flash CS#) high as push-pull outputs, so neither
