@@ -226,7 +226,7 @@ static void reinit(void) {
  * Ethernet header in the first pbuf (struct eth_hdr, lwip/prot/ethernet.h);
  * they are skipped here, not sent. Called only from the net task, never
  * between enc28j60_rx_begin() and enc28j60_rx_end() (rx_frames() hands a
- * frame to lwIP only after rx_end()). */
+ * frame to lwIP only after enc28j60_rx_end()). */
 static err_t eth_output(struct netif *nif, struct pbuf *p) {
     (void)nif;
     if (!link_up) {

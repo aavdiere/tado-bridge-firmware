@@ -237,7 +237,7 @@ static uint16_t rx_next;  /* next-packet pointer of the open frame */
 static uint16_t rx_left;  /* bytes of the open frame still readable */
 static bool     rx_open;
 
-static uint16_t tx_len;  /* bytes written since tx_begin() */
+static uint16_t tx_len;  /* bytes written since enc28j60_tx_begin() */
 static uint16_t tx_sent; /* length of the frame in flight */
 static bool     tx_open, tx_overflow, tx_in_flight;
 static uint8_t  tx_retries; /* late-collision retransmissions of the frame in flight */

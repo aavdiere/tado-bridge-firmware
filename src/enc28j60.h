@@ -66,13 +66,14 @@ void enc28j60_poll(struct enc28j60_events *ev);
 void enc28j60_rearm(void);
 
 /* Receive, in three steps so that #13 can read a frame into a pbuf chain:
- * rx_begin() opens the next frame and returns its length without the CRC
- * (0 if none is pending) and the 32-bit receive status vector (Table 7-3,
- * enc28j60.txt:2295-2325); rx_read() copies the next n bytes, any number of
- * times; rx_end() frees the frame in the chip, whether all of it was read or
- * not. Nothing else may move ERDPT between rx_begin() and rx_end().
- * rx_begin() returns ENC_RX_CORRUPT if the frame header is inconsistent; the
- * caller must then re-initialise the chip. */
+ * enc28j60_rx_begin() opens the next frame and returns its length without
+ * the CRC (0 if none is pending) and the 32-bit receive status vector
+ * (Table 7-3, enc28j60.txt:2295-2325); enc28j60_rx_read() copies the next n
+ * bytes, any number of times; enc28j60_rx_end() frees the frame in the
+ * chip, whether all of it was read or not. Nothing else may move ERDPT
+ * between enc28j60_rx_begin() and enc28j60_rx_end(). enc28j60_rx_begin()
+ * returns ENC_RX_CORRUPT if the frame header is inconsistent; the caller
+ * must then re-initialise the chip. */
 #define ENC_RX_CORRUPT 0xFFFFu
 #define ENC_RSV_RX_OK  (1u << 23) /* valid CRC, no symbol error */
 #define ENC_RSV_CRC    (1u << 20)
@@ -82,15 +83,16 @@ uint16_t enc28j60_rx_begin(uint32_t *rsv);
 void     enc28j60_rx_read(void *buf, size_t n);
 void     enc28j60_rx_end(void);
 
-/* Transmit one frame, in three steps for pbuf chains: tx_begin() waits
- * (bounded, at most ENC_TX_WAIT_MS) for the previous frame to leave the
- * single transmit buffer and returns false if it did not; tx_write() appends
- * bytes (destination MAC first; no preamble, no CRC); tx_end() starts the
- * transmission and returns at once. A frame longer than ENC_TX_MAX is
- * refused by tx_end(). The result arrives through enc28j60_poll(); a late
- * collision is retransmitted by the driver (errata #13). Do not call
- * tx_begin() or enc28j60_poll() between rx_begin() and rx_end(): both may
- * read the transmit status vector through ERDPT. */
+/* Transmit one frame, in three steps for pbuf chains: enc28j60_tx_begin()
+ * waits (bounded, at most ENC_TX_WAIT_MS) for the previous frame to leave
+ * the single transmit buffer and returns false if it did not;
+ * enc28j60_tx_write() appends bytes (destination MAC first; no preamble, no
+ * CRC); enc28j60_tx_end() starts the transmission and returns at once. A
+ * frame longer than ENC_TX_MAX is refused by enc28j60_tx_end(). The result
+ * arrives through enc28j60_poll(); a late collision is retransmitted by the
+ * driver (errata #13). Do not call enc28j60_tx_begin() or enc28j60_poll()
+ * between enc28j60_rx_begin() and enc28j60_rx_end(): both may read the
+ * transmit status vector through ERDPT. */
 #define ENC_TX_WAIT_MS 50u
 bool enc28j60_tx_begin(void);
 void enc28j60_tx_write(const void *buf, size_t n);
