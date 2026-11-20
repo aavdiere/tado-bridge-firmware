@@ -19,9 +19,9 @@
 #define ADCPRE_MASK (3u << 16)
 
 #define TSTAB_US 10u /* power-up time tSTAB max 3 µs (DS:6541) */
-#define EOC_WAIT_US                                                                \
-    1000u /* 480 + 12 cycles take 20.5 µs at 24 MHz (RM:11872-11878); the rest is \
-           * room for preemption by the radio task and interrupts */
+/* 480 + 12 cycles take 20.5 µs at 24 MHz (RM:11872-11878); the rest is room
+ * for preemption by the radio task and interrupts. */
+#define EOC_WAIT_US 1000u
 
 void pa3_adc_on(enum pa3_smp smp) {
     /* PA3 analog (MODER = 11, RM:8089), no pull (PUPDR = 00): high impedance,
