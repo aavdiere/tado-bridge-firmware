@@ -114,8 +114,10 @@ void board_init(void) {
     gpio_mode_setup(GPIOC, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, BOARD_ENC_RESET_PIN);
 }
 
-/* The states the tasks asked for, one byte each, and the factory reset warning
- * override (see board_led()), declared here because the panic path clears it. */
+/* led_req: the states the tasks asked for, one byte each (atomic byte
+ * stores, no read-modify-write shared between tasks). led_ovr: the factory
+ * reset warning override (see board_led()): 0 off (no override), 1 forced
+ * off, 2 forced on; declared here because the panic path clears it. */
 static volatile uint8_t led_req[LED_COUNT];
 static volatile uint8_t led_ovr;
 
@@ -127,10 +129,6 @@ void board_power_led_force(void) {
     GPIO_OTYPER(GPIOB) &= ~(uint32_t)led_pin[LED_POWER];
     GPIO_MODER(GPIOB) = (GPIO_MODER(GPIOB) & ~(3u << 2u)) | (1u << 2u); /* PB1 output */
 }
-
-/* led_req: the states the tasks asked for (atomic byte stores, no
- * read-modify-write shared between tasks). led_ovr: the factory reset warning
- * override: 0 off (no override), 1 forced off, 2 forced on. */
 
 static bool led_overridden(enum led led) {
     return led_ovr != 0 && led != LED_PAIRING;
