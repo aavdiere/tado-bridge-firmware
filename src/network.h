@@ -32,20 +32,21 @@ void network_boot(void);
  * False if refused or if any step failed; once the write has started, a
  * failure also leaves no key set until the next boot, which loads the
  * newest valid record. May wait for a DRBG reseed (about 45 ms) and for a
- * sector erase (up to 240 ms). */
-bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]);
-/* Refused unless network_absent(); after any failure, refused until the
+ * sector erase (up to 240 ms).
+ * Refused unless network_absent(); after any failure, refused until the
  * next boot. Holds the radio task's loop for up to about 0.8 s (DRBG
  * reseed, sector erases); frames are received and acknowledged meanwhile
  * (#22, src/mx25r.h), but the coordinator waits: never while a pairing
  * window is open, and only with the coordinator idle (csl_idle()). */
+bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]);
 
 /* Radio task, with no frame arriving and the coordinator idle
- * (csl_idle(), #22): moves the counter reservation up once less than 2048
- * remains (one counter-log append; a sector erase every 512 appends). */
+ * (csl_idle(), #22): moves the counter reservation up once less than
+ * STORE_CTR_LOW counters remain (one counter-log append; a sector erase
+ * every STORE_CTR_ENTRIES appends; src/store.h). */
 void network_service(uint32_t now_ms);
-/* network_service() would write now: a network is active, less than 2048
- * counters remain reserved, and no retry wait after a failed write runs.
+/* network_service() would write now: a network is active, less than
+ * STORE_CTR_LOW counters remain reserved, and no retry wait after a failed write runs.
  * No flash access. */
 bool network_service_due(uint32_t now_ms);
 
