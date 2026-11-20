@@ -15,6 +15,7 @@
 #include "spi1.h"
 
 #include "board.h"
+#include "clock.h"
 #include "log.h"
 
 #include "FreeRTOS.h"
@@ -25,10 +26,11 @@
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/spi.h>
 
-#include "clock.h"
-
 #define SCK_MAX_HZ   6500000u /* CC110L burst access limit, cc110l.txt:1330-1332 */
 #define SPI_SPIN_MAX 100000u  /* a byte takes ~1.3 us at 6 MHz; this is >1 ms */
+#define CR1_BR_SHIFT 3u       /* SPI_CR1 BR[2:0] in bits 5:3, rm0383.txt:33096 */
+_Static_assert((SPI_CR1_BR_FPCLK_DIV_256 << CR1_BR_SHIFT) == SPI_CR1_BAUDRATE_FPCLK_DIV_256,
+               "BR field position as libopencm3 encodes it");
 
 static SemaphoreHandle_t bus_lock;
 static uint32_t          sck_hz;
@@ -61,7 +63,7 @@ void spi1_init(void) {
      * full duplex, CPOL = CPHA = 0 (rm0383.txt:33022-33130). */
     SPI_CR1(SPI1) = 0;
     SPI_CR2(SPI1) = 0;
-    SPI_CR1(SPI1) = SPI_CR1_MSTR | SPI_CR1_SSM | SPI_CR1_SSI | (br << 3);
+    SPI_CR1(SPI1) = SPI_CR1_MSTR | SPI_CR1_SSM | SPI_CR1_SSI | (br << CR1_BR_SHIFT);
     SPI_CR1(SPI1) |= SPI_CR1_SPE;
 
     bus_lock = xSemaphoreCreateMutex();
