@@ -36,7 +36,8 @@
 #define APB1_HZ   (SYSCLK_HZ / 2)    /* 48 MHz, PPRE1 = /2 */
 #define APB2_HZ   SYSCLK_HZ          /* 96 MHz, PPRE2 = /1 */
 /* 90 < HCLK <= 100 MHz at 2.7-3.6 V, and 72 < HCLK <= 96 MHz at 2.4-2.7 V:
- * both need 3 WS (rm0383.txt:2067). Bench VDD is 3.20 V (hardware.md P0). */
+ * both need 3 WS (rm0383.txt:2067). On USB power the bench bridge's VDDA
+ * reads 3.28-3.29 V (docs/hardware.md:173). */
 #define FLASH_WS 3u
 
 /* PLLM: 2..63, VCO input 1..2 MHz, 2 MHz recommended (rm0383.txt:5313-5316);

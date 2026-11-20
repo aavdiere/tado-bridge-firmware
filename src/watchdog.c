@@ -27,7 +27,7 @@ void watchdog_log_reset_cause(void) {
 }
 
 /* Bounded wait for IWDG_SR bits to clear (the LSI domain needs a few LSI
- * cycles per update). ~50 ms worst case at 100 MHz; scheduler not running yet. */
+ * cycles per update). ~50 ms worst case at 96 MHz; scheduler not running yet. */
 #define IWDG_SR_WAIT_LOOPS 1500000u
 
 static bool iwdg_sr_wait(uint32_t mask) {
