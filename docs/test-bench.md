@@ -526,7 +526,7 @@ Steps 1, 2, 4, 5 and 6 of the plan above, all by Claude over SWD and the SDR, wi
 
 ## Self-update (#24): first over-the-air update, plan [I]
 
-Run on 2026-11-19 (steps 0-5; step 6 skipped): "Self-update (#24): first over-the-air update, result" below. The application's update side: `design.md`, "Implementation: self-update, application side (#24)" and "Uploader and tanoclo (#24, #38)". Planned so that Claude can run it over SWD, RTT, the SDR and the local tanoclo with **no owner hand work**. The power cut during an install (the last step) is the owner's and optional.
+Run on 2026-11-19 (steps 0-5; step 6 run on 2026-11-20, see "Power cut during an install (#24 step 6), 2026-11-20" below): "Self-update (#24): first over-the-air update, result" below. The application's update side: `design.md`, "Implementation: self-update, application side (#24)" and "Uploader and tanoclo (#24, #38)". Planned so that Claude can run it over SWD, RTT, the SDR and the local tanoclo with **no owner hand work**. The power cut during an install (the last step) is the owner's; run 2026-11-20.
 
 **Gates:**
 - A `fw-reviewer` "safe to flash" verdict on the #24 application-update commits (rule 4: bootloader-facing code, a new write path, flash work in the radio task, and the default build transmits). The review must look at the write guard's areas and at the update task's stack and RAM. Verdict A with findings was given on `0b62e27`/`07d747f`; the fixes for M1 and L1 (`design.md`, "Review fixes M1 and L1") got a delta review on 2026-11-19: verdict A for `99b3f0f`, for flashing image A and for running this plan unattended **[D]**.
@@ -578,13 +578,13 @@ Run on 2026-11-19 (steps 0-5; step 6 skipped): "Self-update (#24): first over-th
 
    **Measure:** block 0's time (the save) and the time per block from the RTT `(<n> ms)` figures; the whole transfer; the install time (restart to B's first RTT line). During the transfer: the ACK gap (expected 225-240 us as before, too late 0, overflow 0), every downlink delivered at attempt 1 with a short train, the airtime line, and the `alive:` line (radio and update stack words never used, heap minimum, which should be about 0.6 KB above the 7960 bytes of 2026-11-19). Apply the stack stop rule above. The SDR also confirms nothing on any channel but 16 in its view.
 5. **Rollback.** Upload C to B. C installs and starts (`tries 1`), never gets a session, and restarts after 10 min (`candidate not confirmed within 10 min`). After the 3rd start the bootloader puts B back, about 32 min in all. B's boot log: `boot state rolled_back`. The uploader's reconnect wait (180 s) will time out at the start of this step, as expected; watch the RTT and `GET /api/clients` instead. Then upload B: refused (it runs). Upload A, and it installs and confirms, as step 4; that is the end state, or flash the reviewed image over SWD.
-6. **Optional, owner: a power cut during an install.** During step 4's install (power LED flickering), unplug USB, wait 5 s, plug it back in. The bootloader installs again (`PENDING`, tries counted) and B confirms. Host-tested at every step (`design.md`, power cuts); not needed for the rest.
+6. **Owner (done 2026-11-20, see "Power cut during an install (#24 step 6), 2026-11-20"): a power cut during an install.** During step 4's install (power LED flickering), unplug USB, wait 5 s, plug it back in. The bootloader installs again (`PENDING`, tries counted) and B confirms. Host-tested at every step (`design.md`, power cuts); not needed for the rest.
 
 **Afterwards:** record the figures here and in `design.md` (tags **[V]**), and remove the scratch script. The bench ends on a confirmed image of the reviewed source.
 
 ## Self-update (#24): first over-the-air update, result (2026-11-19) [V]
 
-Steps 0-4 of the plan above, by Claude over SWD, RTT, the SDR and the local tanoclo, with no owner hand work; step 5 below as an amendment; step 6 (owner) skipped. Captures and logs: `~/ib01-captures/upd24/` (outside git).
+Steps 0-4 of the plan above, by Claude over SWD, RTT, the SDR and the local tanoclo, with no owner hand work; step 5 below as an amendment; step 6 (owner) skipped here, run later on 2026-11-20. Captures and logs: `~/ib01-captures/upd24/` (outside git).
 
 **Images and build check [V].** Built from a clean `git archive 99b3f0f` export with the bench `config/local.cmake` (the main tree's `src/airtime.h` bench edit not included; the minute log shows `of 30000 ms`). All three: application `LOAD` at `0x08010000` (`arm-none-eabi-readelf -l`), bootloader at `0x08000000`, bootloader `.bin` 6124 bytes, SHA-256 `eb2f44fb…bb9fa5290` (the bench's). `tools/update/upload.py info`: 171268 bytes, 168 image blocks plus the header block each.
 
@@ -658,7 +658,7 @@ Steps 0-4 of the plan above, by Claude over SWD, RTT, the SDR and the local tano
 | Clipping | No clipped bytes at 8.7 dB |
 | Offset (#7) | Bridge +7570 Hz against the dongle at 866.3242 MHz (median of 538 wake-ups, 5-95 % +7546 to +7942 Hz), spare device +12497 Hz: the bridge is 5.7 ppm below the device (6.3-8.1 ppm in earlier runs) |
 
-**What this means for #24 [V]/[I].** Step 5 is complete. After a rollback, re-sending the running image is refused before anything is written, and an update from the `ROLLED_BACK` state installs and confirms like the update A → B in step 4 (A in 12.4 s, confirmed 60.1 s after session ready). With steps 0-4 and the rollback, every bench step of the plan has now passed, except step 6 (the owner's power cut during an install). The power-on boot after re-cabling went through the bootloader to the application (reset cause `POR/PDR`), but its log was cut before the `update:` line. So it does not yet count as the bootloader's power-cycle check ("Bootloader (#24): first flash and checks, result", step 3) **[I]**.
+**What this means for #24 [V]/[I].** Step 5 is complete. After a rollback, re-sending the running image is refused before anything is written, and an update from the `ROLLED_BACK` state installs and confirms like the update A → B in step 4 (A in 12.4 s, confirmed 60.1 s after session ready). With steps 0-4 and the rollback, every bench step of the plan has now passed, except step 6 (the owner's power cut during an install), which was run on 2026-11-20 (see "Power cut during an install (#24 step 6), 2026-11-20"). The power-on boot after re-cabling went through the bootloader to the application (reset cause `POR/PDR`), but its log was cut before the `update:` line. So it does not yet count as the bootloader's power-cycle check ("Bootloader (#24): first flash and checks, result", step 3) **[I]**.
 
 **State the bench was left in (2026-11-19, 23:53 UTC) [V]:** image A (`7a3ce39741d809f6`, the reviewed source at `99b3f0f` with `FW_VERSION=1`) running from internal flash; boot state `CONFIRMED`, tries 0, cand A, prev B. The previous slot holds B, the candidate slot holds A. Bootloader `eb2f44fb…` unchanged. Overlay on zone 1 not touched (MANUAL 21 °C since 2026-11-19). SDR capture finished; RTT logger and OpenOCD stopped after the last line. Cables still connected.
 
@@ -824,7 +824,36 @@ After the earlier plain power cycle the owner had unplugged all cables, and the 
 
 Split between measured and inferred: the boot state line after the warm resets is **[V]**. That the boot state survived the power cycle is **[I]**: nothing writes boot state between the power-on boot and these warm resets with a confirmed image, so the confirmed state read here must be the one present after the power cycle.
 
-**What this means for #39 and #24 [V].** Identity version 2 and the network record survive a real power-on reset, with the Ethernet MAC in use and the counter floor rising. #39 has no outstanding bench step. For #24 step 3 (power cycle) is done: the boot state read `confirmed` on the next boots, and that it survived the power cycle is **[I]** (see the follow-up above). Still outstanding (owner, later): the power cut during an update install (#24 step 6).
+**What this means for #39 and #24 [V].** Identity version 2 and the network record survive a real power-on reset, with the Ethernet MAC in use and the counter floor rising. #39 has no outstanding bench step. For #24 step 3 (power cycle) is done: the boot state read `confirmed` on the next boots, and that it survived the power cycle is **[I]** (see the follow-up above). The power cut during an update install (#24 step 6) was run later the same day, see "Power cut during an install (#24 step 6), 2026-11-20".
+
+## Power cut during an install (#24 step 6), 2026-11-20
+
+Owner hand work on the bench bridge, after "Power cycle with identity v2 (2026-11-20)". Sources: RTT log, uploader output, the owner's report (by eye).
+
+**Image [V].** A clean `git archive HEAD` export (HEAD was then `2c09377`; only docs and README changed since the reviewed `dabd7d1`) with the four submodules and the bench `config/local.cmake`; the main tree's uncommitted `airtime.h` edit was not included (30 s budget). Built with FW_VERSION=5 first: SHA-256 starts `ba8af1a3e7720e44`, byte for byte the running image, so the export is the reviewed source. Then FW_VERSION=6: id `9e92ac7de0709ab0`, 171952 bytes, 168 image blocks plus header.
+
+**Upload [V].** `tools/update/upload.py --docker tanoclo-ws upload <v6.bin> --bridge <bench serial> --blind`, started about 22:21:35 CET, 372.4 s.
+
+| Time (CET) | RTT |
+| :--- | :--- |
+| 22:21:45 | block 0: `2.31, transfer started; running image saved to the previous slot (9798 ms)` |
+| 22:25:10 | block 64 stored (33 ms) |
+| 22:27:47 | block 168: `2.04, image verified, previous image saved, PENDING written: restarting (1386 ms)` |
+| 22:27:49 | `update: restarting into the bootloader` |
+
+**The cut (owner, by eye) [V].** The owner unplugged USB while the power LED was flickering (bootloader install in progress). The LED was off while unplugged, about 5 s. After the replug the LED flickered hard again (install run again), and then the bridge booted normally. The ST-Link (no 3V3) and Ethernet stayed connected.
+
+**Not observed [V].** OpenOCD lost the target at the cut. RTT was restarted and the logger reconnected at 22:28:16, so nothing from the bootloader window was logged. The application's start-up `update: running ...; boot state ... tries ...` line was also lost to RTT overflow (reader attached late). So the tries counts were not observed.
+
+**After [V].** `reset: RCC_CSR 0e000002: POR/PDR PIN BOR`; image 171952 bytes at `08010000`; identity v2 seq 2, MAC set; network record seq 1, channel 16, counter 131179 reserved below 135275 (127083 before); DHCP `10.42.0.13`; TLS 1067 ms; session ready 22:28:21 on attempt 1 (the uploader saw the reconnect at 21:28:21Z). At 22:29:21: `update: running image 9e92ac7de0709ab0... confirmed (boot state CONFIRMED) after 60 s with the server session ready and the radio up`.
+
+**Interpretation [I].** That the bootloader ran the install again from `PENDING` is inferred from the LED pattern and the outcome (a new, confirmed image 6 after the cut). It is consistent with the host power-cut tests (`design.md`, power cuts). The tries counts and the exact cut point are unknown.
+
+**Lessons.** Attach the RTT reader before the expected restart and restart OpenOCD right after the replug; the start-up `update:` line is lost when the reader attaches late.
+
+**State left [V].** Image 6 (`9e92ac7de0709ab0`) confirmed; the previous slot holds `ba8af1a3e7720e44` (image 5); bootloader unchanged.
+
+**What this means for #24 [V]/[I].** Step 6 is done: a power cut during a real install recovered, and the new image confirmed. With steps 0-5, every bench step of the plan has passed.
 
 ## Bench network
 
