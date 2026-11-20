@@ -75,6 +75,21 @@ enum txgate_verdict txgate_check_channel(const struct txgate_radio *r) {
     return TXGATE_OK;
 }
 
+/* Byte offsets in the frames checked below, after FCF(2) and seq (layouts:
+ * src/mac.h; the beacon and its request at MAC_BEACON below). */
+#define OFF_DST          3   /* Data, broadcast: destination (8; ff ff for a broadcast) */
+#define DATA_OFF_SRC     11  /* Data: source, its first DATA_SRC_LEN bytes */
+#define DATA_SRC_LEN     5   /* the rest is mac_eui_suffix */
+#define BCAST_OFF_SRC    5   /* broadcast: source (8) */
+#define ACK_OFF_PHASE    21  /* Enhanced ACK: CSL phase (2 LE) */
+#define BEACON_LEN       32u /* PAIR_BEACON_LEN (src/pair.h) */
+#define BEACON_OFF_PAN   3
+#define BEACON_OFF_DST   5
+#define BEACON_OFF_SRC   13 /* source, its first BEACON_SRC_CLEAR bytes */
+#define BEACON_SRC_CLEAR 3
+#define BREQ_OFF_DST     3 /* Beacon Request: destination PAN and address, ff ff ff ff */
+#define BREQ_OFF_SRC     7 /* Beacon Request: source (8) */
+
 static bool eui_set(const uint8_t own[8]) {
     static const uint8_t zero[8];
     return own && memcmp(own, zero, 8) != 0 && memcmp(own + 5, mac_eui_suffix, 3) == 0;
@@ -119,10 +134,10 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
             if (len < MAC_HDR_LEN + MAC_SHIM_LEN + MAC_FCS_LEN + MAC_MIC_LEN) {
                 return TXGATE_BAD_LENGTH;
             }
-            if (memcmp(f + 11, own, 5) != 0) {
+            if (memcmp(f + DATA_OFF_SRC, own, DATA_SRC_LEN) != 0) {
                 return TXGATE_NOT_OUR_SRC;
             }
-            if (memcmp(f + 3, own, 8) == 0) {
+            if (memcmp(f + OFF_DST, own, MAC_EUI_LEN) == 0) {
                 return TXGATE_MALFORMED; /* a frame to ourselves */
             }
             return TXGATE_OK;
@@ -131,10 +146,11 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
             if (len < MAC_HDR_LEN + 2u + MAC_FCS_LEN + MAC_MIC_LEN) {
                 return TXGATE_BAD_LENGTH;
             }
-            if (f[3] != 0xFF || f[4] != 0xFF) {
+            if (f[OFF_DST] != 0xFF || f[OFF_DST + 1] != 0xFF) {
                 return TXGATE_MALFORMED;
             }
-            return memcmp(f + 5, own, 8) == 0 ? TXGATE_OK : TXGATE_NOT_OUR_SRC;
+            return memcmp(f + BCAST_OFF_SRC, own, MAC_EUI_LEN) == 0 ? TXGATE_OK
+                                                                    : TXGATE_NOT_OUR_SRC;
 
         case MAC_ENH_ACK: {
             uint8_t want[MAC_ACK_LEN];
@@ -147,7 +163,10 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
             /* Rebuilt from the answered frame: refused unless that frame is
              * a unicast Data frame addressed to us, and the ACK is its
              * answer byte for byte (only the CSL phase is the caller's). */
-            if (!mac_ack_for_data(want, answered, own, (uint16_t)(f[21] | f[22] << 8))) {
+            if (!mac_ack_for_data(want,
+                                  answered,
+                                  own,
+                                  (uint16_t)(f[ACK_OFF_PHASE] | f[ACK_OFF_PHASE + 1] << 8))) {
                 return TXGATE_NOT_FOR_US;
             }
             return memcmp(want, f, MAC_ACK_LEN) == 0 ? TXGATE_OK : TXGATE_WRONG_ANSWER;
@@ -163,7 +182,7 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
              * window (src/pair.c). */
             static const uint8_t pan[2]   = {(uint8_t)MAC_PAN_ID, (uint8_t)(MAC_PAN_ID >> 8)};
             static const uint8_t bcast[4] = {0xFF, 0xFF, 0xFF, 0xFF};
-            if (len != 32u) {
+            if (len != BEACON_LEN) {
                 return TXGATE_BAD_LENGTH;
             }
             if (!(flags & TXGATE_PAIRING) || !on_test) {
@@ -173,16 +192,17 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
                 return TXGATE_NO_ANSWER;
             }
             if (mac_classify(answered, MAC_HDR_LEN) != MAC_BEACON_REQUEST
-                || memcmp(answered + 3, bcast, sizeof bcast) != 0) {
+                || memcmp(answered + BREQ_OFF_DST, bcast, sizeof bcast) != 0) {
                 return TXGATE_WRONG_ANSWER;
             }
-            if (memcmp(f + 3, pan, sizeof pan) != 0) {
+            if (memcmp(f + BEACON_OFF_PAN, pan, sizeof pan) != 0) {
                 return TXGATE_MALFORMED;
             }
-            if (memcmp(f + 13, own, 3) != 0) {
+            if (memcmp(f + BEACON_OFF_SRC, own, BEACON_SRC_CLEAR) != 0) {
                 return TXGATE_NOT_OUR_SRC;
             }
-            if (memcmp(f + 5, answered + 7, 8) != 0 || memcmp(answered + 7, own, 8) == 0) {
+            if (memcmp(f + BEACON_OFF_DST, answered + BREQ_OFF_SRC, MAC_EUI_LEN) != 0
+                || memcmp(answered + BREQ_OFF_SRC, own, MAC_EUI_LEN) == 0) {
                 return TXGATE_WRONG_ANSWER;
             }
             return TXGATE_OK;
