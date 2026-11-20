@@ -20,7 +20,8 @@ AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o $(OUT)/sha256.o
 
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
          test_airtime test_cc110l test_cc110l_off test_store test_identity test_pair test_coap \
-         test_mx25r test_button test_pair_led test_boot test_fwupd test_handoff test_pair_remote
+         test_mx25r test_button test_pair_led test_boot test_fwupd test_handoff test_pair_remote \
+         test_freqoff
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -62,6 +63,8 @@ test_handoff_SRCS := handoff.c
 test_button_SRCS := button.c
 # Pairing LED phase (#19).
 test_pair_led_SRCS := pair_led.c
+# Frequency offset of our network's frames and the drift warning (#11).
+test_freqoff_SRCS := freqoff.c
 # The rolling one-hour airtime budget (src/airtime.h).
 test_airtime_SRCS := airtime.c
 # The radio driver's transmit functions against a simulated chip
