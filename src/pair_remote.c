@@ -131,8 +131,8 @@ static const struct {
     [PAIR_REMOTE_NETWORK] = {COAP_UNAVAILABLE,
                              "a network record exists but is not in use, no new network over it"},
     [PAIR_REMOTE_OPEN_FAILED] = {COAP_UNAVAILABLE,
-                                 "window not opened (network key not read back, no random numbers, "
-                                 "or the target is not a device address)"},
+                                 "window not opened (key not read back, no random numbers, or "
+                                 "target not a device)"},
     [PAIR_REMOTE_BUSY]        = {COAP_UNAVAILABLE, "another pair request is in work"},
     [PAIR_REMOTE_NO_RADIO]    = {COAP_UNAVAILABLE, "the radio task did not take it in time"},
 };

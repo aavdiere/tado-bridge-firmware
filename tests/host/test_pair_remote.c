@@ -270,7 +270,7 @@ static void test_codes(void) {
     }
     for (unsigned rc = 0; rc < PAIR_REMOTE_RC_COUNT; rc++) {
         const char *t = pair_remote_text((enum pair_remote_rc)rc);
-        CHECK(t && *t && strlen(t) < 128); /* fits the session log line */
+        CHECK(t && *t && strlen(t) <= 80); /* the session's log line stays below 192 bytes */
     }
     CHECK_EQ(pair_remote_code(PAIR_REMOTE_RC_COUNT), COAP_INTERNAL);
 }

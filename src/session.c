@@ -587,7 +587,7 @@ static void pair_log(uint16_t            mid,
         what,
         (unsigned)(c >> 5),
         (unsigned)(c & 31u),
-        sent ? "sent" : "not sent (no session or send queue full; the server resends)");
+        sent ? "sent" : "not sent (the server resends)");
 }
 
 static void on_pair(const struct coap_msg *m) {
@@ -603,7 +603,7 @@ static void on_pair(const struct coap_msg *m) {
          * nothing done again (RFC 7252 4.5). */
         pair_log(m->mid,
                  UINT32_MAX,
-                 " resent, answered as before, nothing done",
+                 " resent, nothing done again",
                  rc,
                  secs,
                  NULL,
