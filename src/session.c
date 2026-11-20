@@ -598,13 +598,15 @@ static void on_pair(const struct coap_msg *m) {
         m, serial(), radio_pair_target_named(), RADIO_TX_ALLOWED != 0, &open, &dur);
     if (rc == PAIR_REMOTE_FORWARD) {
         pair_remote_key_of(m, dur, &k);
-        if (pr.pending && pair_remote_same(&k, &pr.key)) {
+        enum pair_remote_sort how =
+            pair_remote_sort(&pr_seen, pr.pending ? &pr.key : NULL, &k, now_ms(), &rc, &secs);
+        if (how == PAIR_REMOTE_COPY_IN_WORK) {
             LOG("session: POST pair resent (mid %04x) while the radio task has it: answered when "
                 "done",
                 (unsigned)m->mid);
             return;
         }
-        if (pair_remote_seen_find(&pr_seen, &k, now_ms(), &rc, &secs)) {
+        if (how == PAIR_REMOTE_COPY_DONE) {
             /* A copy of a request the radio task acted on: its answer
              * again, nothing done again (RFC 7252 4.5). */
             pair_log(m->mid,
@@ -616,15 +618,22 @@ static void on_pair(const struct coap_msg *m) {
                      pair_answer(m->mid, m->token, m->tkl, rc));
             return;
         }
-        if (pr.pending || !pair_remote_post(open, open ? pair_remote_window_ms(dur) : 0u)) {
-            rc = PAIR_REMOTE_BUSY;
-        } else {
+        if (how == PAIR_REMOTE_NEW
+            && pair_remote_post(open, open ? pair_remote_window_ms(dur) : 0u)) {
             radio_request_remote_pairing();
             pr.pending = true;
             pr.key     = k;
             pr.t0      = xTaskGetTickCount();
             return; /* answered by pair_poll() */
         }
+        /* Another request is in work (or, never expected, the slot is not
+         * empty without one): no ACK, so the server sends it again after
+         * its retry interval (src/pair_remote.h, pair_remote_sort()). */
+        LOG("session: POST pair (mid %04x, dur %lu s) while another is in work: no ACK, the "
+            "server resends it",
+            (unsigned)m->mid,
+            (unsigned long)dur);
+        return;
     }
     char path[48] = "";
     if (rc == PAIR_REMOTE_NOT_OURS) {

@@ -412,6 +412,49 @@ static void test_seen(void) {
     }
 }
 
+/* fw-reviewer L1 of #40: a close sent while an open is in work is not
+ * answered, so tanoclo resends it; once the open is done the next copy is
+ * acted on, and a copy of the open gets the open's answer. */
+static void test_sort(void) {
+    struct pair_remote_seen s;
+    memset(&s, 0, sizeof s);
+    enum pair_remote_rc          rc   = PAIR_REMOTE_RC_COUNT;
+    uint32_t                     secs = 77;
+    const struct pair_remote_key op   = key(0x7abc, "\x01\x02", 300);
+    const struct pair_remote_key cl   = key(0x7abd, "\x03", 0);
+
+    CHECK_EQ(pair_remote_sort(&s, NULL, &op, 0, &rc, &secs), PAIR_REMOTE_NEW);
+    /* The open in work: its copy waits for its answer, the close gets no ACK. */
+    CHECK_EQ(pair_remote_sort(&s, &op, &op, 10, &rc, &secs), PAIR_REMOTE_COPY_IN_WORK);
+    CHECK_EQ(pair_remote_sort(&s, &op, &cl, 10, &rc, &secs), PAIR_REMOTE_WAIT);
+    /* The close's resend 6 s later, the open still in work (not claimed
+     * yet; at most PAIR_WAIT_MS): again no ACK. */
+    CHECK_EQ(pair_remote_sort(&s, &op, &cl, 6010, &rc, &secs), PAIR_REMOTE_WAIT);
+    CHECK_EQ(rc, PAIR_REMOTE_RC_COUNT); /* nothing to answer with */
+    CHECK_EQ(secs, 77);
+    /* A request with the open's ID but another token is not its copy. */
+    const struct pair_remote_key op_other = key(0x7abc, "\x09", 300);
+    CHECK_EQ(pair_remote_sort(&s, &op, &op_other, 10, &rc, &secs), PAIR_REMOTE_WAIT);
+    /* The open done: the close's resend at 19 s is acted on. */
+    pair_remote_seen_add(&s, &op, PAIR_REMOTE_OPENED, 300, 900);
+    CHECK_EQ(pair_remote_sort(&s, NULL, &cl, 19010, &rc, &secs), PAIR_REMOTE_NEW);
+    /* The close in work: a late copy of the open gets the open's answer
+     * again, the close's copy waits for its own. */
+    CHECK_EQ(pair_remote_sort(&s, &cl, &op, 19020, &rc, &secs), PAIR_REMOTE_COPY_DONE);
+    CHECK_EQ(rc, PAIR_REMOTE_OPENED);
+    CHECK_EQ(secs, 300);
+    CHECK_EQ(pair_remote_sort(&s, &cl, &cl, 19020, &rc, &secs), PAIR_REMOTE_COPY_IN_WORK);
+    pair_remote_seen_add(&s, &cl, PAIR_REMOTE_CLOSED, 0, 19500);
+    CHECK_EQ(pair_remote_sort(&s, NULL, &cl, 45010, &rc, &secs), PAIR_REMOTE_COPY_DONE);
+    CHECK_EQ(rc, PAIR_REMOTE_CLOSED);
+    CHECK_EQ(pair_remote_sort(&s, NULL, &op, 45010, &rc, &secs), PAIR_REMOTE_COPY_DONE);
+    CHECK_EQ(rc, PAIR_REMOTE_OPENED); /* nothing reopened */
+    CHECK_EQ(pair_remote_sort(&s, NULL, &op_other, 45010, &rc, &secs), PAIR_REMOTE_NEW);
+    /* After the lifetime the same key is new again. */
+    CHECK_EQ(pair_remote_sort(&s, NULL, &op, 900 + PAIR_REMOTE_LIFETIME_MS, &rc, &secs),
+             PAIR_REMOTE_NEW);
+}
+
 static void test_handover(void) {
     bool                open;
     uint32_t            wms, secs;
@@ -472,6 +515,7 @@ int main(void) {
     test_codes();
     test_key();
     test_seen();
+    test_sort();
     test_handover();
     return TEST_REPORT("test_pair_remote");
 }

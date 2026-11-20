@@ -21,10 +21,12 @@
  *   payload 01 04 00 00 <dur u16 BE> 02 01 00: one-byte tags and lengths,
  *   tag 0x01 the duration in seconds (u32 BE; 1..65535, default 300; 0 to
  *   close), tag 0x02 of unknown meaning (ignored).
- * tanoclo resends it at 6, 13, 26, 50 and 90 s until an ACK with its
- * Message ID comes back; it reads neither code nor payload
- * (lib/coap-transport.js:35, 195-265). It runs its own timer and sends
- * duration 0 after the duration it asked for (device.js:357-376). */
+ * tanoclo resends it 6, 13, 26, 50 and 90 s apart (6, 19, 45, 95 and
+ * 185 s after the first send) until an ACK with its Message ID comes back;
+ * it reads neither code nor payload (lib/coap-transport.js:35, 195-265).
+ * It runs its own timer and sends duration 0 after the duration it asked
+ * for (device.js:357-376); a close of its own clears that timer first
+ * (device.js:344). */
 
 #include "coap.h"
 
@@ -54,7 +56,6 @@ enum pair_remote_rc {
     PAIR_REMOTE_QUEUED,      /* 5.03: frames of the last window still queued */
     PAIR_REMOTE_NETWORK,     /* 5.03: a network record exists but is not in use */
     PAIR_REMOTE_OPEN_FAILED, /* 5.03: key, random numbers or target refused */
-    PAIR_REMOTE_BUSY,        /* 5.03: another pair request is in work */
     PAIR_REMOTE_NO_RADIO,    /* 5.03: the radio task did not take it in time */
     PAIR_REMOTE_RC_COUNT,
 };
@@ -115,7 +116,7 @@ bool pair_remote_same(const struct pair_remote_key *a, const struct pair_remote_
  * of the first, and nothing is done again: so a late copy of an "open"
  * never reopens a window a later "close" closed. Kept across sessions:
  * tanoclo resends by bridge, also over a new connection. Refusals the net
- * task decides alone (NOT_OURS to RX_ONLY, BUSY) are not kept: a copy is
+ * task decides alone (NOT_OURS to RX_ONLY) are not kept: a copy is
  * checked again and gets the same answer, or a better one. */
 #define PAIR_REMOTE_SEEN        8u
 #define PAIR_REMOTE_LIFETIME_MS 247000u
@@ -146,6 +147,30 @@ void pair_remote_seen_add(struct pair_remote_seen      *s,
                           enum pair_remote_rc           rc,
                           uint32_t                      secs,
                           uint32_t                      now_ms);
+
+/* What to do with a request that passed the checks, key k, against the
+ * cache and the request in work (in_work, NULL if none). */
+enum pair_remote_sort {
+    PAIR_REMOTE_NEW,          /* hand it to the radio task */
+    PAIR_REMOTE_COPY_DONE,    /* a copy of one acted on: *rc and *secs, its answer again */
+    PAIR_REMOTE_COPY_IN_WORK, /* a copy of the one in work: answered when that is done */
+    PAIR_REMOTE_WAIT,         /* another request is in work: no ACK, the server resends it */
+};
+/* WAIT gets no answer at all, as an in-work copy gets none yet
+ * (fw-reviewer L1 of #40): tanoclo stops resending on any ACK with its
+ * Message ID and reads no code (lib/coap-transport.js:237-265), so a
+ * 5.03 would lose the request, for example a close sent while an open
+ * is in work. Without an ACK tanoclo sends it again 6, 19, 45, 95 and
+ * 185 s after the first send (RETRY_INTERVALS 6, 13, 26, 50, 90 s,
+ * coap-transport.js:35, 195-234); a request is in work at most about
+ * 11 s (src/session.c, PAIR_WAIT_MS 10 s unclaimed plus a claimed
+ * request's at most 0.8 s), so the copy at 19 s at the latest is taken. */
+enum pair_remote_sort pair_remote_sort(const struct pair_remote_seen *s,
+                                       const struct pair_remote_key  *in_work,
+                                       const struct pair_remote_key  *k,
+                                       uint32_t                       now_ms,
+                                       enum pair_remote_rc           *rc,
+                                       uint32_t                      *secs);
 
 /* --- Hand-over, net task (poster) to radio task (runner) -------------------- */
 /* One request at a time, four states:
