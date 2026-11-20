@@ -50,14 +50,14 @@ Expected size effect: "0" means text, data and bss equal to the baseline, with t
 | 10 | done `4bbfbe4` | `tests/host/Makefile` | `test_airtime_SRCS` sits under the comment on the two cc110l programs (`Makefile:69-74`). | none | |
 | 11 | done `e9b659f` | `src/watchdog.c` | `IWDG_PR_DIV64` (`watchdog.c:47`) and `WDG_PRESCALER_DIV 64` (`watchdog.h:9`) are set apart; tie them with a `_Static_assert`. | 0 | |
 | 12 | done `c95dd81`, `87f5779`, `cc8bc79` | `src/fwupd.c`, `src/fwupd_task.c` | Durations and limits written into `why` strings next to the constants they repeat: "every 10 s", "448 KB", "0x08010000", "120 s", "10 min", "in 10 s" (`fwupd.c:296,323,454,486,495,529,533`; `fwupd_task.c:174,187` against `UPDATE_OP_WAIT_MS`, `radio.c:406`). Pin each with a `_Static_assert` on its constant (strings unchanged); name the 5 s cap (`fwupd.c:515`). | 0 | |
-| 13 | todo | `src/cc110l.c` | Magic numbers: strobe and status range 0x30-0x3D and FIFO 0x3F (`cc110l.c:152,161,164,170,463,677,979`), MARCSTATE mask 0x1F (`:612,633,841`), TXBYTES 0x80/0x7F (`:801,804`; `CC_RXBYTES_*` exist, `cc110l.h:129-130`), ISR CHIP_RDYn wait 100 us (`:907,964,986`), `tx_expect()` 11/160/75 (`:237`). Names only; codegen identical. | 0 | R |
-| 14 | todo | `src/radio.c` | Frequency checks use literals 0xF8, 0x22 and 999000 (`radio.c:199-212`) instead of the table (`radio.c:127-188`) and `TXGATE_MIN_DIST_HZ` (`txgate.h:38`); IDLE to TX "+ 75u" in the beacon log (`radio.c:1732`). | 0 | R |
-| 15 | todo | `src/txgate.c` | Frame offsets 3, 5, 7, 11, 13, 21 and the beacon length 32 (`txgate.c:122,125,134,137,150,166,179,182,185`) as named offsets, from `src/mac.h` where they exist. Safety code: `test_txgate` must pass unchanged. | 0 | R |
-| 16 | todo | `src/fwimg.c` | Slot header and descriptor field offsets 4/6/8/12/16/20/52/60 (`fwimg.c:45-94`) and the sector map 0x08020000/0x20000/0x10000 (`fwimg.c:36,40`) as named constants. | 0, boot hash | R |
-| 17 | todo | `src/store.c`, `src/store.h` | `STORE_CTR_ENTRIES *STORE_CTR_ENTRY` formatted as a pointer (`store.c:14`); 4096u (`store.h:162`) for the sector size. | 0, boot hash | R |
-| 18 | todo | `src/spi1.c` | `clock.h` included after the libopencm3 headers (`spi1.c:28`); `br << 3` (`spi1.c:64`) as the BR field shift. | 0 | |
-| 19 | todo | `src/clock.c` | SysTick set-up repeated (`clock.c:102-105`, `:298-301`) and "back to HSI and wait" repeated (`clock.c:182-187`, `:202-207`): two static helpers; `0` passed for a NULL pointer (`clock.c:125,151,158,181,187,200,207`). | about -20 to -40 B text | |
-| 20 | todo | `src/board.c`, `src/board.h` | LED and button pins defined in `board.c:8-12` and raw in `GPIOB_USED` (`board.c:35-37`), unlike the `BOARD_*_PIN` table (`board.h:7-21`); the PB1 MODER write by hand (`board.c:128`) repeats the pattern of `board_cs_early()` (`board.c:61-64`): one static helper. | about 0 | |
+| 13 | done `7739e1d` | `src/cc110l.c`, `src/cc110l.h` | Magic numbers: strobe and status range 0x30-0x3D and FIFO 0x3F (`cc110l.c:152,161,164,170,463,677,979`), MARCSTATE mask 0x1F (`:612,633,841`), TXBYTES 0x80/0x7F (`:801,804`; `CC_RXBYTES_*` exist, `cc110l.h:129-130`), ISR CHIP_RDYn wait 100 us (`:907,964,986`), `tx_expect()` 11/160/75 (`:237`). Names only; codegen identical. | 0 | R |
+| 14 | done `7703ecd` | `src/radio.c` | Frequency checks use literals 0xF8, 0x22 and 999000 (`radio.c:199-212`) instead of the table (`radio.c:127-188`) and `TXGATE_MIN_DIST_HZ` (`txgate.h:38`); IDLE to TX "+ 75u" in the beacon log (`radio.c:1732`). | 0 | R |
+| 15 | done `6f27d3f` | `src/txgate.c` | Frame offsets 3, 5, 7, 11, 13, 21 and the beacon length 32 (`txgate.c:122,125,134,137,150,166,179,182,185`) as named offsets, from `src/mac.h` where they exist. Safety code: `test_txgate` must pass unchanged. | 0 | R |
+| 16 | done `54ce676` | `src/fwimg.c` | Slot header and descriptor field offsets 4/6/8/12/16/20/52/60 (`fwimg.c:45-94`) and the sector map 0x08020000/0x20000/0x10000 (`fwimg.c:36,40`) as named constants. | 0, boot hash | R |
+| 17 | done `a052290` | `src/store.c`, `src/store.h` | `STORE_CTR_ENTRIES *STORE_CTR_ENTRY` formatted as a pointer (`store.c:14`); 4096u (`store.h:162`) for the sector size. | 0, boot hash | R |
+| 18 | done `b7d22bd` | `src/spi1.c` | `clock.h` included after the libopencm3 headers (`spi1.c:28`); `br << 3` (`spi1.c:64`) as the BR field shift. | 0 | |
+| 19 | done `fe15ebc` | `src/clock.c` | SysTick set-up repeated (`clock.c:102-105`, `:298-301`) and "back to HSI and wait" repeated (`clock.c:182-187`, `:202-207`): two static helpers; `0` passed for a NULL pointer (`clock.c:125,151,158,181,187,200,207`). | about -20 to -40 B text | |
+| 20 | done `28f8b68` | `src/board.c`, `src/board.h` | LED and button pins defined in `board.c:8-12` and raw in `GPIOB_USED` (`board.c:35-37`), unlike the `BOARD_*_PIN` table (`board.h:7-21`); the PB1 MODER write by hand (`board.c:128`) repeats the pattern of `board_cs_early()` (`board.c:61-64`): one static helper. | about 0 | |
 | 21 | todo | `cmake/toolchain-arm-none-eabi.cmake`, `cmake/CMakeLists.txt` | Template leftovers: C++ flags with no C++ source (`toolchain-arm-none-eabi.cmake:89,134,150,168`), the "e.g. STM32L476RG" comment (`CMakeLists.txt:130`). Optional: lwIP sources compiled while their options are off (`raw.c`, `stats.c`, `ip4_frag.c`; `lwipopts.h:36,47-48,87`). | 0 | |
 | 22 | owner | `tests/host/test_store.c`, `test_identity.c`, `test_boot.c`, `test_fwupd.c` | Four copies of the external-flash model with power cuts (`test_store.c:71-152`, `test_identity.c:59-96`, `test_boot.c:93-151`, `test_fwupd.c:112-173`) into one `tests/host/flash_model.h`. Test code only, but four files in one commit. | none | |
 | 23 | owner | `tools/sdr/hs18place.py` | Reads the `hs18:` log lines of the temporary #18 test image (`hs18place.py:3-6`); no such line is left in `src/`. Delete, or keep as the record of the #18 measurement. | none | |
@@ -74,6 +74,26 @@ Built from a clean export of each commit with the owner's `config/local.cmake` (
 - **Follow-up `23f8dd7` (entropy module):** `rng.h`, `entropy.h` and `pa3_adc.h` said the net task alone owns ADC1 and makes every call that can reseed. Since #19 the radio task also draws with `rng_random()`, in `network_create()` and `pairing_trigger()`, so a reseed can read the ADC in the radio task. `radio-runtime.md`, "Pairing (#19)", counts that reseed in the up to 0.8 s the trigger may take. The DRBG mutex serialises every request after `rng_init()`, so the ADC has one user at a time; the comments now say so. No code changed.
 - **On the bench (rule 5), 2026-11-20 [V]:** `424420e` (rows 1-10 plus one comment-only follow-up) was built with `FW_VERSION=4` (id `68a24dfcd65549c4`), installed over the air and confirmed. Built with `FW_VERSION=0`, the same export is `508b33a1…` byte for byte, the build `fw-reviewer` cleared. The boot log is unchanged (identity version 1, placeholder MAC), and the session came up. Too late 0, airtime refusals 0, stack words never used 532/844/332/261. On channel 16 the bridge's Enhanced ACK gap is 225.5-236.6 us, median 225.9 us (n=5). Details: `test-bench.md`, "P8 rows 1-10 image (#33): first flash".
 - **Seen and left alone:** log format strings that clang-format split mid-sentence (`radio.c` wake-train and minute lines, `net.c`). Splitting them is codegen-neutral, but they are code, not comments. History notes that record where a measurement came from ("the P2 bench run" in the `radio.c` FREQEST block) stay. `app.c:31-32` still says the radio stack's deepest path is "to be measured". The bench logs (`test-bench.md`) show at least 494 of 896 words never used, but not whether that run took the deepest path.
+
+### Rows 11-20: result (#33, 2026-11-20) [V]
+
+Built as for rows 1-10: a clean export of each commit outside the working tree, the owner's `config/local.cmake` (not printed), no local `src/airtime.h` edit, `FW_VERSION=0`. After every commit: `make format` clean; `make test` all passed (21 programs, including `test_txgate`, `test_identity_tool` and `test_upload_tool`); data 136 and bss 85756 as in the baseline; bootloader `.bin` `eb2f44fb…5290` unchanged (rows 16 and 17 touch boot-linked files). A receive-only build (`RADIO_TX_ALLOWED=0`) of the last commit also compiles.
+
+| After row | text | Application `.bin` SHA-256 | Against the commit before |
+| ---: | ---: | :--- | :--- |
+| 11, 12 (`cc8bc79`) | 171848 | `b7fc3216…6f35` | one `__LINE__`: `fwupd_task.c` `configASSERT` 249 to 251 |
+| 13 (`7739e1d`) | 171848 | `e2dfec41…e71b` | eight `__LINE__` in `cc110l.c` (+8 in the guard, +10 after `tx_expect()`) |
+| 14 (`7703ecd`) | 171848 | `ac15eb2d…5bb1` | two `__LINE__` in `radio.c`, 742 to 760 and 1295 to 1313; the register table bytes unchanged |
+| 15, 16, 17 | 171848 | `ac15eb2d…5bb1` | none: byte for byte |
+| 18 (`b7d22bd`) | 171848 | `a0bd4dbf…e2ca` | five `__LINE__` in `spi1.c`, +2 each |
+| 19 (`fe15ebc`) | 171816 | `e7f292d1…b894` | code: -32 B, as predicted (-20 to -40) |
+| 20 (`28f8b68`) | 171816 | `e7f292d1…b894` | none: byte for byte |
+
+- **Rows 11-18:** from the row 10 image to row 18, `objdump -d` differs in 16 instructions, every one a `__LINE__` immediate loaded into r2 for `fw_panic()`; 19 bytes of the `.bin`.
+- **Row 14, the static asserts still bite:** in a scratch copy, FREQ1 0x33, MDMCFG0 0xF9, MDMCFG4 0xAB and DEVIATN 0x41 each fail the build on the carrier, spacing, data rate or deviation assert.
+- **Row 19, why the code is the same in effect:** `systick_ms_start()` makes the same four calls in the same order (CLKSOURCE AHB, reload `clock_hz / 1000 - 1`, clear, enable) for `wait_bits()` and the inlined `delay_ms()`; `sysclk_to_hsi()` makes the same `rcc_set_sysclk_source(HSI)` and the same `wait_bits(&RCC_CFGR, 0xC, 0, 5, NULL)` that `pll_start()` and the inlined `clock_init()` made, checked in the disassembly. The 32 bytes are the two copies folded into calls.
+- **Row 20:** `moder_output()` is inlined; the `.bin` does not change.
+- **Seen and left alone:** `radio.c` masks MARCSTATE with a literal 0x1F in four places (`CC_MARC_STATE_MASK` now exists); the boot state payload offsets in `fwimg.c` (`p + 4`); `own + 5` and the length 3 in `txgate.c`'s `eui_set()`; FSCAL1 0x3F ("no lock") in `cc110l.c`. Row 14 puts the IDLE to TX time in one place (`CC_IDLE_TO_TX_US`, used by `cc110l.c` and `radio.c`); the rest of proposal 6 stays for #34.
 
 ## Not to change
 
@@ -108,23 +128,23 @@ Status: **todo** (rows above), **done** (all its rows landed), **none** (nothing
 | Module | Files | Read | Status | Rows |
 | :--- | :--- | :--- | :--- | :--- |
 | Startup, tasks | `main.c`, `app.c/.h`, `hooks.c`, `syscalls.c`, `faults.c/.h` | full | done | 6 done; P10, P12 |
-| Board | `board.c/.h` | full | todo | 6 done; 20 |
+| Board | `board.c/.h` | full | done | 6, 20 done |
 | Log, RTT | `log.c/.h`, `rtt.c/.h` | full | proposal | P4 |
-| Time, clock, watchdog | `timebase.c/.h`, `clock.c/.h`, `watchdog.c/.h` | full | todo | 6 done; 11, 19 |
+| Time, clock, watchdog | `timebase.c/.h`, `clock.c/.h`, `watchdog.c/.h` | full | done | 6, 11, 19 done |
 | Buttons, pairing LED | `button.c/.h`, `pair_led.c/.h` | full | none | |
 | Config headers | `FreeRTOSConfig.h`, `lwipopts.h`, `tado_mbedtls_config.h`, `arch/cc.h`, `lwip_port.c` | full | done | 1 done |
 | Entropy, DRBG | `pa3_adc.c/.h`, `entropy.c/.h`, `rng.c/.h` | full | done | 1, 7 done |
-| SPI1 | `spi1.c/.h` | full | todo | 18 |
-| CC110L driver | `cc110l.c/.h` | full | todo | 3 done; 13; P6, P7 |
+| SPI1 | `spi1.c/.h` | full | done | 18 done |
+| CC110L driver | `cc110l.c/.h` | full | done | 3, 13 done; P6, P7 |
 | Airtime | `airtime.c/.h` | full | out (local edit) | P6 later |
-| Transmit gate | `txgate.c/.h` | full | todo | 15 |
-| Radio task | `radio.c/.h` | full (#33 row 2) | todo | 2 done; 14; P1, P6, P7, P10 |
+| Transmit gate | `txgate.c/.h` | full | done | 15 done |
+| Radio task | `radio.c/.h` | full (#33 row 2) | done | 2, 14 done; P1, P6, P7, P10 |
 | MAC, CCM | `mac.c/.h`, `ccm.c/.h` | ccm full, mac skimmed | none | |
 | Link, 6LoWPAN, CSL, relay, msgq | `link.c/.h`, `lowpan.c/.h`, `csl.c/.h`, `relay.c/.h`, `msgq.c/.h` | msgq full, rest skimmed | proposal | P3 |
 | Pairing | `pair.c/.h` | skimmed | proposal | P3 |
 | External flash driver | `mx25r.c/.h`, `flash_layout.h` | full | proposal | P9, P11 |
-| Store, identity, network | `store.c/.h`, `store_port.c`, `identity.c/.h`, `network.c/.h` | full | todo | 4, 5 done; 17; P8 |
-| Images, update | `fwimg.c/.h`, `image_desc.c/.h`, `fwupd.c/.h`, `fwupd_task.c/.h`, `handoff.c/.h` | full | todo | 7 done; 12, 16; P2, P5 |
+| Store, identity, network | `store.c/.h`, `store_port.c`, `identity.c/.h`, `network.c/.h` | full | done | 4, 5, 17 done; P8 |
+| Images, update | `fwimg.c/.h`, `image_desc.c/.h`, `fwupd.c/.h`, `fwupd_task.c/.h`, `handoff.c/.h` | full | done | 7, 12, 16 done; P2, P5 |
 | Bootloader | `boot/main.c`, `boot/bootctl.c/.h`, `boot/bl_hw.c/.h`, `boot/bl_mbedtls_config.h` | `bootctl.h` full, rest skimmed | done | 9 done; P2, P4, P9 |
 | Ethernet, lwIP, net task | `enc28j60.c/.h`, `net.c/.h` | `enc28j60.h`, `net.c` full; `enc28j60.c` part | done | 8 done; P4 |
 | TLS, WebSocket, CoAP, session | `tls.c/.h`, `ws.c/.h`, `coap.c/.h`, `session.c/.h` | skimmed | proposal | P4 |
