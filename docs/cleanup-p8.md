@@ -105,22 +105,39 @@ These look redundant but are defence in depth; P8 leaves them as they are:
 - Rule 5 of the transmit gate stays separate although rule 2 implies it (`txgate.c:99-104`).
 - `store_id_write()` repeats the commit steps of `store_slot_write()` on purpose, so that the bootloader image stayed the same with #39 (`store.c:316-323`). Merging them is proposal 8 below.
 
-## Proposals for #34 (owner approval first; none made)
+## Proposals for #34
 
-| # | Kind | Proposal | Sources | Effect |
-| ---: | :--- | :--- | :--- | :--- |
-| 1 | architecture | Split `src/radio.c` (2244 lines; `radio_task_run()` 203 lines from `radio.c:2041`) into the task loop, receive and ACK task side (`radio.c:588-1032`), bring-up (`:1033-1304`), flash on the shared bus and update operations (`:1305-1344`, `:1829-1886`, `:1940-2012`) and pairing (`:1648-1828`). | function list of `radio.c` | no size change expected; review of the whole radio path |
-| 2 | module | One little-endian helper header for `get16/get32/put16/put32`, now in four files. | `fwimg.c:17-32`, `store.c:24-37`, `fwupd.c:303-305`, `boot/bootctl.c:23` | bootloader `.bin` changes: needs a reflash decision |
-| 3 | module | One secure wipe helper; five local copies next to `mbedtls_platform_zeroize()` elsewhere. | `store.c:17`, `csl.c:186`, `pair.c:82`, `link.c:64`, `cc110l.c:690`; `network.c:84` | boot `.bin` changes (store.c) |
-| 4 | module | One fault-code LED pattern (code and time to level); four copies of 150/250/2500 ms. | `log.c:58-83`, `net.c:123-137`, `session.c:589-602`, `boot/bl_hw.c:125-135` | bootloader copy may stay |
-| 5 | API | Export the hex formatter of the update module; two copies. | `fwupd.c:569-576`, `fwupd_task.c:135-142` | small |
-| 6 | API | One home for the channel plan and radio timing constants: fXOSC and the frequency word in two files; IDLE to TX 75 us in two places; the airtime charge (161 us per byte, 100 us ramp) and the TX watch window (160 us, 75 us) differ on purpose and should say so in one place. Values unchanged. | `radio.c:197-198`, `txgate.c:11-14`, `cc110l.c:237`, `radio.c:1732`, `airtime.h:45-49` | R; `airtime.h` only after the local edit is gone |
-| 7 | rename | `radio_strobe()` to `cc110l_strobe()`; `RADIO_PA_BRINGUP` to a name without "bring-up"; drop the alias `RADIO_PROTECTED_CHANNEL` for `TXGATE_PROTECTED_CHANNEL`. | `cc110l.h:47,146`, `radio.h:25`, `radio.c:112,207-208`; tests `test_cc110l.c:52-73`, `test_cc110l_off.c:38-85` | R |
-| 8 | storage code | Merge the commit steps of `store_id_write()` into a helper shared with `store_slot_write()`, and the slot choice repeated in both. | `store.c:139-184`, `store.c:324-364`, `store.c:154-155`, `store.c:335-336` | bootloader `.bin` changes; R |
-| 9 | module | One MX25R opcode header for the driver and the bootloader. | `mx25r.c:32-44`, `boot/bl_hw.c:189-196` | boot hash should stay (defines only) |
-| 10 | API | One test for "a pairing target is named in the build" instead of two. | `main.c:26-31`, `radio.c:1764` | small |
-| 11 | API | `mx25r_read_id()` and `mx25r_read_status()` return `bool` but always return true. | `mx25r.c:186-196` | small |
-| 12 | behaviour (log text) | Boot banner still reads "tado-bridge P5 #19" (`main.c:58`). Log text is observable; bench tools parse log lines. | `main.c:58-70` | none |
+**Owner decision, 2026-11-20 (comment on #34):** all 12 proposals approved. Order: **batch A** now, application only: 5, 9 (bootloader hash must stay), 10, 11, 12. **Batch B** after P7.1 (the P7.1 branch reworks the channel names, and the local `airtime.h` edit must go first): 7, 6, then 1 (split `radio.c`). **Batch C**, the bootloader changes, with one reviewed SWD reflash of the bootloader for all of them and a recovery rehearsal: 2, 3, 8, 4. One commit per item; one `fw-reviewer` verdict per batch before anything is flashed. Sources below are line numbers as of `6462644`.
+
+| # | Status | Kind | Proposal | Sources | Effect |
+| ---: | :--- | :--- | :--- | :--- | :--- |
+| 1 | batch B | architecture | Split `src/radio.c` (2244 lines; `radio_task_run()` 203 lines from `radio.c:2041`) into the task loop, receive and ACK task side (`radio.c:588-1032`), bring-up (`:1033-1304`), flash on the shared bus and update operations (`:1305-1344`, `:1829-1886`, `:1940-2012`) and pairing (`:1648-1828`). | function list of `radio.c` | no size change expected; review of the whole radio path |
+| 2 | batch C | module | One little-endian helper header for `get16/get32/put16/put32`, now in four files. | `fwimg.c:17-32`, `store.c:24-37`, `fwupd.c:303-305`, `boot/bootctl.c:23` | bootloader `.bin` changes: needs a reflash decision |
+| 3 | batch C | module | One secure wipe helper; five local copies next to `mbedtls_platform_zeroize()` elsewhere. | `store.c:17`, `csl.c:186`, `pair.c:82`, `link.c:64`, `cc110l.c:690`; `network.c:84` | boot `.bin` changes (store.c) |
+| 4 | batch C | module | One fault-code LED pattern (code and time to level); four copies of 150/250/2500 ms. | `log.c:58-83`, `net.c:123-137`, `session.c:589-602`, `boot/bl_hw.c:125-135` | bootloader copy may stay |
+| 5 | done `2d039b0` | API | Export the hex formatter of the update module; two copies. | `fwupd.c:569-576`, `fwupd_task.c:135-142` | small |
+| 6 | batch B | API | One home for the channel plan and radio timing constants: fXOSC and the frequency word in two files; IDLE to TX 75 us in two places; the airtime charge (161 us per byte, 100 us ramp) and the TX watch window (160 us, 75 us) differ on purpose and should say so in one place. Values unchanged. | `radio.c:197-198`, `txgate.c:11-14`, `cc110l.c:237`, `radio.c:1732`, `airtime.h:45-49` | R; `airtime.h` only after the local edit is gone |
+| 7 | batch B | rename | `radio_strobe()` to `cc110l_strobe()`; `RADIO_PA_BRINGUP` to a name without "bring-up"; drop the alias `RADIO_PROTECTED_CHANNEL` for `TXGATE_PROTECTED_CHANNEL`. | `cc110l.h:47,146`, `radio.h:25`, `radio.c:112,207-208`; tests `test_cc110l.c:52-73`, `test_cc110l_off.c:38-85` | R |
+| 8 | batch C | storage code | Merge the commit steps of `store_id_write()` into a helper shared with `store_slot_write()`, and the slot choice repeated in both. | `store.c:139-184`, `store.c:324-364`, `store.c:154-155`, `store.c:335-336` | bootloader `.bin` changes; R |
+| 9 | done `b540409` | module | One MX25R opcode header for the driver and the bootloader. | `mx25r.c:32-44`, `boot/bl_hw.c:189-196` | boot hash should stay (defines only) |
+| 10 | done `2153229` | API | One test for "a pairing target is named in the build" instead of two. | `main.c:26-31`, `radio.c:1764` | small |
+| 11 | done `c6ad05e` | API | `mx25r_read_id()` and `mx25r_read_status()` return `bool` but always return true. | `mx25r.c:186-196` | small |
+| 12 | done `df3e05d` | behaviour (log text) | Boot banner still reads "tado-bridge P5 #19" (`main.c:58`). Log text is observable; bench tools parse log lines. | `main.c:58-70` | none |
+
+### Batch A: result (#34, 2026-11-20) [V]
+
+Built as for the #33 rows: a clean export of each commit outside the working tree, the owner's `config/local.cmake` (not printed), `FW_VERSION=0`, default build (`RADIO_TX_ALLOWED=1`). Base: `d50aabd` (main), text 175348, data 136, bss 86112. After every commit: clang-format clean; `make test` all passed (including `test_identity_tool` and `test_upload_tool`); data 136 and bss 86112 unchanged; bootloader `.bin` `eb2f44fb…5290` unchanged, also for proposal 9, which touches `src/boot/bl_hw.c`. Not reviewed, not flashed yet.
+
+| # | Commit | text | Against the commit before |
+| ---: | :--- | ---: | :--- |
+| 5 | `2d039b0` | 175284 (-64) | `fwupd.c`'s `hex()` (inlined as `hex.constprop.0`, 52 B) and `fwupd_task.c`'s `hex8()` (52 B) with their two 17-byte digit tables become one `fwupd_hex()` (52 B) and one table. Status text: 16 bytes per id as before; boot log line: the first 8 bytes as before. |
+| 9 | `b540409` | 175284 | `src/mx25r_ops.h` (`MX25R_OP_*`, `MX25R_SR_*`, `MX25R_SCUR_*`, same values) for `mx25r.c`, `boot/bl_hw.c` and the flash model in `test_mx25r.c`. Bootloader `.bin` byte for byte the same. Application: three `__LINE__` immediates in `mx25r.c`, -13 each (9 bytes). |
+| 10 | `2153229` | 175284 | `radio.c` tests `PROVISION_PAIR_EUI64` once, as `PAIR_TARGET_NAMED`, for `radio_pair_target_named()` and `pairing_open()`'s compile-time switch; `main.c` calls `radio_pair_target_named()` (folded to the constant) and no longer includes `provision.h`. One `__LINE__` in `main.c`, 109 to 102. Also built without `PAIR_TARGET_EUI64`: the same single difference. |
+| 11 | `c6ad05e` | 175252 (-32) | `uint32_t mx25r_read_id(void)`, `uint8_t mx25r_read_status(void)`. `mx25r_read_id` 48 to 42 B; `radio_task` 7796 to 7768 B (`flash_boot()` and `flash_check()` are inlined into it: no stack slot for the ID, no always-true tests). The register allocation of the whole `radio_task` function changes with it; `rx_service()` (which holds `ack_consider()`), the GDO interrupts and every `cc110l_*` function are instruction for instruction the same once addresses are normalised. Two `__LINE__` in `mx25r.c`, -3. |
+| 12 | `df3e05d` | 175268 (+16) | Banner `tado-bridge fw %lu: ...` with `image_desc.fw_version`; the format string has the same length. `main` +4 B (one more argument), 12 B alignment. One `__LINE__` in `main.c`, +2. No tool in `tools/` or `tests/` parses the banner (grep for its fragments); `TRANSMIT image (RADIO_TX_ALLOWED 1)`, which `test-bench.md` checks, is still in the line. |
+
+- **Total:** text 175348 to 175268 (-80 B), data and bss unchanged. Application `.bin` after proposal 12 (`FW_VERSION=0`): `ada70bd7…f594`. Receive-only (`RADIO_TX_ALLOWED=0`): 169512 to 169432 (-80 B), `.bin` `8093a646…88d3`.
+- **Review:** the batch needs one `fw-reviewer` verdict before it is flashed (rule 4). Proposal 11 changes the code of `radio_task`, so the bench check (rule 5) should include the Enhanced ACK gap on channel 16.
 
 ## Progress by module
 
@@ -128,7 +145,7 @@ Status: **todo** (rows above), **done** (all its rows landed), **none** (nothing
 
 | Module | Files | Read | Status | Rows |
 | :--- | :--- | :--- | :--- | :--- |
-| Startup, tasks | `main.c`, `app.c/.h`, `hooks.c`, `syscalls.c`, `faults.c/.h` | full | done | 6 done; P10, P12 |
+| Startup, tasks | `main.c`, `app.c/.h`, `hooks.c`, `syscalls.c`, `faults.c/.h` | full | done | 6 done; P10, P12 done |
 | Board | `board.c/.h` | full | done | 6, 20 done |
 | Log, RTT | `log.c/.h`, `rtt.c/.h` | full | proposal | P4 |
 | Time, clock, watchdog | `timebase.c/.h`, `clock.c/.h`, `watchdog.c/.h` | full | done | 6, 11, 19 done |
@@ -139,14 +156,14 @@ Status: **todo** (rows above), **done** (all its rows landed), **none** (nothing
 | CC110L driver | `cc110l.c/.h` | full | done | 3, 13 done; P6, P7 |
 | Airtime | `airtime.c/.h` | full | out (local edit) | P6 later |
 | Transmit gate | `txgate.c/.h` | full | done | 15 done |
-| Radio task | `radio.c/.h` | full (#33 row 2) | done | 2, 14 done; P1, P6, P7, P10 |
+| Radio task | `radio.c/.h` | full (#33 row 2) | done | 2, 14 done; P1, P6, P7; P10 done |
 | MAC, CCM | `mac.c/.h`, `ccm.c/.h` | ccm full, mac skimmed | none | |
 | Link, 6LoWPAN, CSL, relay, msgq | `link.c/.h`, `lowpan.c/.h`, `csl.c/.h`, `relay.c/.h`, `msgq.c/.h` | msgq full, rest skimmed | proposal | P3 |
 | Pairing | `pair.c/.h` | skimmed | proposal | P3 |
-| External flash driver | `mx25r.c/.h`, `flash_layout.h` | full | proposal | P9, P11 |
+| External flash driver | `mx25r.c/.h`, `mx25r_ops.h`, `flash_layout.h` | full | done | P9, P11 done |
 | Store, identity, network | `store.c/.h`, `store_port.c`, `identity.c/.h`, `network.c/.h` | full | done | 4, 5, 17 done; P8 |
-| Images, update | `fwimg.c/.h`, `image_desc.c/.h`, `fwupd.c/.h`, `fwupd_task.c/.h`, `handoff.c/.h` | full | done | 7, 12, 16 done; P2, P5 |
-| Bootloader | `boot/main.c`, `boot/bootctl.c/.h`, `boot/bl_hw.c/.h`, `boot/bl_mbedtls_config.h` | `bootctl.h` full, rest skimmed | done | 9 done; P2, P4, P9 |
+| Images, update | `fwimg.c/.h`, `image_desc.c/.h`, `fwupd.c/.h`, `fwupd_task.c/.h`, `handoff.c/.h` | full | done | 7, 12, 16 done; P2; P5 done |
+| Bootloader | `boot/main.c`, `boot/bootctl.c/.h`, `boot/bl_hw.c/.h`, `boot/bl_mbedtls_config.h` | `bootctl.h` full, rest skimmed | done | 9 done; P2, P4; P9 done |
 | Ethernet, lwIP, net task | `enc28j60.c/.h`, `net.c/.h` | `enc28j60.h`, `net.c` full; `enc28j60.c` part | done | 8 done; P4 |
 | TLS, WebSocket, CoAP, session | `tls.c/.h`, `ws.c/.h`, `coap.c/.h`, `session.c/.h` | skimmed | proposal | P4 |
 | Host tests | `tests/host/*` | Makefile full, rest skimmed | done | 10 done; 22 skipped |
