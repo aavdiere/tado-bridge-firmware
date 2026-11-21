@@ -11,7 +11,9 @@
  * - Replies are piggybacked ACKs with code 2.05 (handlers.js:154, 309).
  * - GET time: 2.05 with 0D + u32le Unix seconds (lib/coap.js:503-508).
  * The bridge answers the server's own requests for it: PUT d/config,
- * b/fw (#24) and POST d/I/<serial>/pair (#40, src/pair_remote.h). */
+ * b/fw (#24) and POST d/I/<serial>/pair (#40, src/pair_remote.h). Once
+ * ready, it reports each device it paired with POST found (#41,
+ * src/pair_found.h). */
 #include "session.h"
 
 #include "board.h"
@@ -20,6 +22,7 @@
 #include "identity.h"
 #include "link.h"
 #include "log.h"
+#include "pair_found.h"
 #include "pair_remote.h"
 #include "radio.h"
 #include "relay.h"
@@ -115,6 +118,16 @@ static struct {
     TickType_t             t0;
 } pr;
 static struct pair_remote_seen pr_seen;
+
+/* The joiner report in flight (#41, src/pair_found.h): the request's bytes
+ * for its resends. Only while the session is ready; the report itself
+ * stays in the queue until it is answered or given up, so a session's end
+ * only means it goes again, with a new Message ID, on the next one. Net
+ * task only. */
+static struct pair_found_tx found_tx;
+static uint8_t              found_msg[PAIR_FOUND_COAP_MAX];
+static size_t               found_len;
+static uint32_t             found_full_seen;
 
 /* The serial from the identity record (#21, src/identity.h). Only called
  * once identity_init() has found one. */
@@ -669,6 +682,94 @@ static void pair_poll(void) {
     pair_log(pr.key.mid, pr.key.dur_s, "", rc, secs, NULL, sent);
 }
 
+/* --- Joiner report, POST found (#41, src/pair_found.h) ----------------------- */
+/* The answer to the report in flight: the report is done, whatever it says
+ * (tanoclo answers every one, handlers.js:207-211; a refusal is not
+ * resent). The factory key tanoclo may send is not used and not logged. */
+static void on_found_answer(const struct coap_msg *m) {
+    static const char *const what[] = {
+        [PAIR_FOUND_ANS_KEY]     = "taken; the server has a factory key for the device (16 bytes, "
+                                   "not used, not logged)",
+        [PAIR_FOUND_ANS_NO_KEY]  = "taken",
+        [PAIR_FOUND_ANS_EMPTY]   = "empty ACK: taken",
+        [PAIR_FOUND_ANS_REFUSED] = "REFUSED: register the device in tanoclo by hand",
+    };
+    found_tx.active = false;
+    pair_found_pop();
+    LOG("session: POST found (mid %04x): %s %u.%02u after %lu ms (send %u): %s",
+        (unsigned)m->mid,
+        m->type == COAP_RST ? "Reset," : "answer",
+        (unsigned)(m->code >> 5),
+        (unsigned)(m->code & 31u),
+        (unsigned long)(now_ms() - found_tx.first_ms),
+        (unsigned)found_tx.sends,
+        what[pair_found_answer(m)]);
+}
+
+/* Starts the next report once the session is ready, resends it on RFC 7252
+ * timeouts, gives it up after PAIR_FOUND_SENDS sends. One at a time. */
+static void found_poll(void) {
+    uint32_t full = pair_found_full_count();
+    if (full != found_full_seen) {
+        LOG("session: POST found: %lu joiner report(s) dropped, queue of %u full",
+            (unsigned long)(full - found_full_seen),
+            PAIR_FOUND_QUEUE);
+        found_full_seen = full;
+    }
+    if (phase != P_READY) {
+        if (found_tx.active) {
+            found_tx.active = false;
+            LOG("session: POST found (mid %04x): the session ended before an answer; sent again "
+                "once the next one is ready",
+                (unsigned)found_tx.mid);
+        }
+        return;
+    }
+    if (!found_tx.active) {
+        uint8_t ipv6[16], tok[PAIR_FOUND_TOKEN_LEN];
+        if (!pair_found_peek(ipv6)) {
+            return;
+        }
+        uint16_t m = mid++;
+        rng_bytes(tok, sizeof tok);
+        found_len = pair_found_build(
+            found_msg, sizeof found_msg, m, tok, have_token ? session_token : NULL, ipv6);
+        if (found_len == 0u) {
+            pair_found_pop(); /* never: PAIR_FOUND_COAP_MAX holds it */
+            return;
+        }
+        pair_found_tx_start(&found_tx, m, tok, now_ms(), rng_u32());
+        bool sent = send_coap(found_msg, found_len);
+        LOG("session: POST found (mid %04x): the device paired just now, its address: %s",
+            (unsigned)m,
+            sent ? "sent" : "not sent (send queue full), tried again in 2-3 s");
+        return;
+    }
+    uint32_t waited = found_tx.timeout_ms;
+    switch (pair_found_tx_due(&found_tx, now_ms())) {
+        case PAIR_FOUND_RESEND: {
+            bool sent = send_coap(found_msg, found_len);
+            LOG("session: POST found (mid %04x): no answer in %lu ms: send %u of %u %s",
+                (unsigned)found_tx.mid,
+                (unsigned long)waited,
+                (unsigned)found_tx.sends,
+                PAIR_FOUND_SENDS,
+                sent ? "sent" : "not sent (send queue full)");
+            break;
+        }
+        case PAIR_FOUND_GIVE_UP:
+            pair_found_pop();
+            LOG("session: POST found (mid %04x): no answer after %u sends in %lu s: dropped; "
+                "register the device in tanoclo by hand",
+                (unsigned)found_tx.mid,
+                PAIR_FOUND_SENDS,
+                (unsigned long)((now_ms() - found_tx.first_ms) / 1000u));
+            break;
+        default:
+            break;
+    }
+}
+
 /* Every binary message from the server (ws.c handler). */
 static void on_message(const uint8_t *d, size_t n) {
     if (n < FRAME_HDR || d[2] != 16u) {
@@ -699,6 +800,10 @@ static void on_message(const uint8_t *d, size_t n) {
             LOG("session: downlink for a device dropped, radio queue full (mid %04x)",
                 (unsigned)m.mid);
         }
+        return;
+    }
+    if (to_us && pair_found_tx_match(&found_tx, &m)) {
+        on_found_answer(&m);
         return;
     }
     if (pending && m.type == COAP_ACK && m.mid == pending_mid && m.tkl == sizeof pending_token
@@ -804,6 +909,7 @@ void session_poll(bool net_up, const ip_addr_t *server, bool *busy) {
     relay_uplinks();
     fw_poll();
     pair_poll();
+    found_poll();
     if (!started) {
         /* The radio task reads the identity record at boot (it owns SPI1):
          * wait for its verdict, then decide once. */

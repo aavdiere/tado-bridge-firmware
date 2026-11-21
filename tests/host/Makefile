@@ -21,7 +21,7 @@ AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o $(OUT)/sha256.o
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
          test_airtime test_cc110l test_cc110l_off test_store test_identity test_pair test_coap \
          test_mx25r test_button test_pair_led test_boot test_fwupd test_handoff test_pair_remote \
-         test_freqoff
+         test_freqoff test_pair_found
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -29,7 +29,7 @@ test_lowpan_SRCS := lowpan.c mac.c ccm.c
 test_txgate_SRCS := txgate.c mac.c ccm.c
 test_csl_SRCS := csl.c txgate.c mac.c ccm.c
 test_relay_SRCS := relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
-test_link_SRCS := link.c pair.c relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
+test_link_SRCS := link.c pair.c pair_found.c coap.c relay.c msgq.c lowpan.c csl.c txgate.c mac.c ccm.c
 # Pairing window, beacon and d/pair (#19).
 test_pair_SRCS := pair.c mac.c ccm.c
 # CoAP codec and the bridge's answer to PUT d/config (refs #19).
@@ -37,6 +37,9 @@ test_coap_SRCS := coap.c
 # The server's remote pairing trigger (#40): path, payload, outcomes,
 # duplicates and the hand-over to the radio task.
 test_pair_remote_SRCS := pair_remote.c coap.c
+# The joiner report (#41): queue, request and answer bytes against
+# tanoclo's codec, retransmission schedule.
+test_pair_found_SRCS := pair_found.c coap.c
 # Network record and counter log against a flash model with power cuts (#37).
 test_store_SRCS := store.c
 # Identity record (#21), as the provisioning tool writes it and the boot loads it.

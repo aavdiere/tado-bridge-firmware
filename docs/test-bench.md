@@ -1018,3 +1018,31 @@ The certificate validity runs to 2046, so a bridge with no real-time clock canno
 Not yet tested: the `tun0` (192.168.124.6) interface, which is not covered by the bind but gets nothing because Docker publishes on `10.42.0.1` only **[I]**.
 
 **NAT gives the bridge internet access.** Our firmware never contacts tado, but the stock firmware would try to reach the tado cloud if it ran with Ethernet plugged in. It is no longer on the board since P1 (2026-11-11), so this only matters after a restore. P0 runs with Ethernet unplugged anyway (`tanoclo/patch_ib_firmware/README.md:247`).
+
+## Joiner report (#41), plan [I]
+
+Not run yet. Code: `radio-runtime.md`, "Joiner report (#41)"; request, answers and the tanoclo patch: `server-api.md`, "Joiner report". This run checks that a device the bridge pairs gets its `devices` row by itself and that its uplinks are then accepted. On the air it is the #19/#40 pairing, unchanged.
+
+**Gates.** A `fw-reviewer` "safe to flash" verdict on the #41 commits (rule 4). Then the local pairing build as for #40 (spare device in `PAIR_TARGET_EUI64` in `config/local.cmake`, `RADIO_TX_ALLOWED` 1), from a clean export of the committed tree, flashed with OpenOCD and verified. The serials below are the bench bridge's own and the spare device's; neither is written here.
+
+**tanoclo patch (the main session deploys it).** Branch `bench/found-register` in `../tanoclo` (on `bench/send-raw-waitack`, not pushed), checked out in its own worktree `/home/aavdiere/Projects/tado/tanoclo-found-register`. It changes `ws-server/lib/handlers.js` and adds `ws-server/lib/joiner-registry.js` (plus a vitest file, not needed in the container). In `~/tanoclo-bench/docker-compose.override.yml`, `node` volumes, mount from that worktree: `.../tanoclo-found-register/ws-server/lib/command-api.js:/app/ws-server/lib/command-api.js:ro` (the same file as now, the waitAck patch), `.../ws-server/lib/handlers.js:/app/ws-server/lib/handlers.js:ro` and `.../ws-server/lib/joiner-registry.js:/app/ws-server/lib/joiner-registry.js:ro`; then recreate `node`. Before that, check that the image's `handlers.js` is the base the patch was made on: `docker exec tanoclo-ws sha256sum /app/ws-server/lib/handlers.js` must give `fbfa1456…249d2d` (tanoclo `main`). To go back, drop the two new lines and recreate `node`.
+
+**Rules:** as for #40 (one request at a time, the bridge's own serial only in router paths, captures and logs in `~/ib01-captures/found41/`, outside git; abort if any frame with the bridge's address shows on channel 26 or off channel 16).
+
+1. **Back up and remove the spare device's row** in the bench database (table `devices`, primary key `serial_no`; `tanoclo/ws-server/tanoclo.sql:23013-23079,24971-24972`; no foreign key points at it). The password comes from the database container's own environment:
+   ```
+   docker exec tanoclo-db sh -c "mysqldump -u tanoclo -p\"\$MYSQL_PASSWORD\" --no-create-info --replace --no-tablespaces --where=\"serial_no='<spare serial>'\" tanoclo devices" > ~/ib01-backups/found41-spare-devices-row.sql
+   docker exec tanoclo-db sh -c "mysql -u tanoclo -p\"\$MYSQL_PASSWORD\" tanoclo -e \"SELECT serial_no, home_id, zone_id, device_type, ipv6_address FROM devices WHERE serial_no='<spare serial>'; DELETE FROM devices WHERE serial_no='<spare serial>';\""
+   ```
+   The dump holds one `REPLACE INTO` line; check it before deleting. Then deploy the patch (above): recreating `node` also clears tanoclo's in-memory address map of the old row. The bridge reconnects by itself. From now until step 4 the spare device's uplinks are dropped (`AUTH REJECTED`, as in row 28b).
+2. **SDR before** (`rf-bench`), as in #40 step 1, out to `~/ib01-captures/found41/`.
+3. **Open the window from the server** (the command router's localhost route; `/api/v2/homes/1/devices/...` reaches the authenticated route instead):
+   ```
+   docker exec tanoclo-ws node -e "require('http').request({host: '127.0.0.1', port: 3111, method: 'POST', path: '/api/devices/<bridge serial>/pairing'}, r => r.pipe(process.stdout)).end()"
+   ```
+   RTT `session: POST pair (mid <m>, dur 300 s): window opened for 300 s on channel 16, ...: 2.04 sent`. **Owner:** put the spare device into pairing mode right after.
+4. **Expected RTT:** the #19 lines up to `PAIRED`, then within about 50 ms `session: POST found (mid <f>): the device paired just now, its address: sent`, and `session: POST found (mid <f>): answer 2.03 after N ms (send 1): taken` (2.03: no row has that address yet, so no factory key; a 2.05 with `... factory key ...` would mean a row with that address still exists). **Expected tanoclo** (`docker logs tanoclo-ws`, serials masked by its logger): `PAIR_FOUND received from Bridge: ipv6=<bridge> payloadHex=0510fe80...`, `PAIR_FOUND: Discovered device target IPv6 = fe80:...`, `PAIR_FOUND: joiner at fe80:... noted for bridge IB...`, `... has no custom factory key ...`, then at the device's first `auth/token`: `PAIR_FOUND: registered VA... (VA02, home 1, no zone) at fe80:..., reported by bridge IB...` (prefix and type are the spare's own), and no `AUTH REJECTED` for it after that line.
+5. **Uplinks accepted:** the row is back (`SELECT serial_no, home_id, zone_id, device_type, ipv6_address, connection_state, last_contact FROM devices WHERE serial_no='<spare serial>'`, `last_contact` moving); the device's onboarding requests get answers: RTT minute line `session: 60 s: ... downlinks to the radio N` with N above 0, the device's ACKs to them, and no doubling back-off of its 91-byte uplinks as in row 28b. Close the window (`method: 'DELETE'`, as #40 step 5).
+6. **SDR after:** as #40 step 7.
+7. **Restore:** the new row has no zone. Put the old row back over it: `docker exec -i tanoclo-db sh -c "mysql -u tanoclo -p\"\$MYSQL_PASSWORD\" tanoclo" < ~/ib01-backups/found41-spare-devices-row.sql` (`REPLACE` overwrites the registered row), then check zone and type with the `SELECT` of step 1.
+8. **Optional, nothing extra on the air:** a report across a session break (`docker restart tanoclo-ws` within a second of `PAIRED`): either `session: POST found (mid ...): the session ended before an answer; sent again once the next one is ready` and the report goes with a new Message ID on the next session, or it was answered first. tanoclo's dedup is per Message ID, so the second send is handled.

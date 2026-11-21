@@ -268,6 +268,7 @@ add_executable(${BINARY}
     ../src/link.c
     ../src/pair.c
     ../src/pair_remote.c
+    ../src/pair_found.c
     ../src/image_desc.c
     ../src/fwimg.c
     ../src/fwupd.c
