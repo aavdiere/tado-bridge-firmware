@@ -25,7 +25,9 @@
  * default of its own.
  *   1: the transmit functions below may key the transmitter, and only for
  *      a frame the transmit gate (src/txgate.h) approves: the test channel
- *      16 only, at least 999 kHz from channel 26, the carrier registers
+ *      only (RADIO_NET_CHANNEL, default 16), at least 999 kHz from channel
+ *      26 unless the build is for channel 26 itself with the opt-in
+ *      RADIO_ALLOW_CH26 (stage P7.1), the carrier registers
  *      read back from the chip, within the airtime budget (src/airtime.h)
  *      and at an output power at most the reset level (cc110l_set_pa()).
  *   0: a receive-only image (`make RADIO_TX_ALLOWED=0`): the transmit

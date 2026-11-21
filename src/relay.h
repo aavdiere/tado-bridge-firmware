@@ -116,6 +116,7 @@ enum relay_down {
     RELAY_DOWN_BAD_ADDRESS, /* not a link-local device address, or our own */
     RELAY_DOWN_TOO_LARGE,
     RELAY_DOWN_QUEUE_FULL, /* not enough free jobs for all fragments; nothing queued */
+    RELAY_DOWN_NOT_PEER,   /* channel-26 build only: not the named spare device (txgate.h rule 6) */
 };
 
 /* One frame from the server. Queues the Data frames on the CSL coordinator

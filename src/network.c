@@ -14,6 +14,10 @@
 
 #include <string.h>
 
+/* The record holds the build's channel only (RADIO_NET_CHANNEL, the test
+ * channel, src/txgate.h): a record written by an image for another channel
+ * is not used, and a new network replaces it only when pairing asks for one
+ * (network_replaceable(), stage P7.1). */
 _Static_assert(RADIO_CHANNEL == TXGATE_TEST_CHANNEL, "the record holds the test channel only");
 
 #define RETRY_MS 10000u /* after a failed counter-log write */
@@ -22,8 +26,11 @@ static bool     active, failing;
 static uint32_t limit, retry_ms;
 static uint32_t active_seq; /* seq of the record whose key is set */
 
-/* What the boot found (#19): network_create() runs only on NET_NONE. */
-static enum { NET_UNKNOWN, NET_NONE, NET_RECORD } found = NET_UNKNOWN;
+/* What the boot found (#19): network_create() runs only on NET_NONE, or on
+ * NET_OTHER (a sound record for another channel, P7.1). */
+static enum { NET_UNKNOWN, NET_NONE, NET_RECORD, NET_OTHER } found = NET_UNKNOWN;
+static uint8_t  other_channel;
+static uint32_t other_seq;
 
 bool network_active(void) {
     return active;
@@ -31,6 +38,16 @@ bool network_active(void) {
 
 bool network_absent(void) {
     return found == NET_NONE && !active;
+}
+
+bool network_replaceable(uint8_t *channel) {
+    if (found != NET_OTHER || active) {
+        return false;
+    }
+    if (channel) {
+        *channel = other_channel;
+    }
+    return true;
 }
 
 /* Reserve counters and set the key of a network read back from flash. */
@@ -76,6 +93,19 @@ void network_boot(void) {
     } else if (store_net_probe(&any) && !any) {
         found = NET_NONE;
         LOG("network: no network record: no key, nothing sent");
+    } else if (store_net_other_channel(&other_channel, &other_seq)) {
+        /* Written by an image for another channel (stage P7.1): never
+         * retuned to, never used; replaced only by a pairing request. */
+        found = NET_OTHER;
+        LOG("network: record seq %lu is for channel %u, this image for channel %u only: not used, "
+            "no key, nothing sent; receiving goes on",
+            (unsigned long)other_seq,
+            other_channel,
+            RADIO_CHANNEL);
+        LOG("network: a pair request (button or server) replaces it with a new network on channel "
+            "%u; devices of the channel %u network must then pair again",
+            RADIO_CHANNEL,
+            other_channel);
     } else {
         found = NET_RECORD;
         LOG("network: a network record that is damaged or not for this channel, or unreadable: "
@@ -96,7 +126,8 @@ bool network_key(uint8_t key_out[CCM_KEY_LEN]) {
 }
 
 bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]) {
-    if (channel != TXGATE_TEST_CHANNEL || channel == TXGATE_PROTECTED_CHANNEL) {
+    if (channel != TXGATE_TEST_CHANNEL
+        || (channel == TXGATE_PROTECTED_CHANNEL && !TXGATE_NET_ON_PROTECTED)) {
         LOG("network: create on channel %u refused (test channel %u only)",
             channel,
             TXGATE_TEST_CHANNEL);
@@ -106,13 +137,24 @@ bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]) {
         LOG("network: create refused: no identity");
         return false;
     }
-    if (!network_absent()) {
+    uint8_t old_ch   = 0;
+    bool    replaces = network_replaceable(&old_ch);
+    if (!network_absent() && !replaces) {
         LOG("network: create refused: a network record exists, or the flash was not read at "
             "boot");
         return false;
     }
     /* From here on, whatever happens, no second create in this boot. */
     found = NET_RECORD;
+    if (replaces) {
+        /* The record for another channel stays the newest until the new
+         * one is complete (src/store.h, store_slot_write()): a cut leaves
+         * it as it was, and the next boot finds it again. */
+        LOG("network: replacing the record seq %lu for channel %u with a new network on channel %u",
+            (unsigned long)other_seq,
+            old_ch,
+            channel);
+    }
     /* Counters of an earlier network stay used: start above them. */
     uint32_t max     = 0;
     bool     any_ctr = false; /* unused: max stays 0 on an empty log */

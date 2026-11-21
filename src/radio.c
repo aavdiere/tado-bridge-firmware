@@ -111,8 +111,10 @@
 
 #include "board.h"
 
-/* Also refused at run time by the transmit gate, whatever these say. */
-_Static_assert(RADIO_CHANNEL != RADIO_PROTECTED_CHANNEL,
+/* Also refused at run time by the transmit gate, whatever these say. The
+ * protected channel only in a channel-26 build with the opt-in (P7.1,
+ * src/txgate.h). */
+_Static_assert(RADIO_CHANNEL != RADIO_PROTECTED_CHANNEL || TXGATE_NET_ON_PROTECTED,
                "the bridge's channel is the protected one");
 _Static_assert(RADIO_CHANNEL == TXGATE_TEST_CHANNEL, "transmit only on the test channel for now");
 
@@ -218,7 +220,8 @@ _Static_assert(CARRIER_HZ(16) > 866323500ull && CARRIER_HZ(16) < 866325000ull,
                "ch 16 = 866.3242 MHz");
 _Static_assert(CARRIER_HZ(RADIO_CHANNEL) + TXGATE_MIN_DIST_HZ <= CARRIER_HZ(RADIO_PROTECTED_CHANNEL)
                    || CARRIER_HZ(RADIO_CHANNEL)
-                          >= CARRIER_HZ(RADIO_PROTECTED_CHANNEL) + TXGATE_MIN_DIST_HZ,
+                          >= CARRIER_HZ(RADIO_PROTECTED_CHANNEL) + TXGATE_MIN_DIST_HZ
+                   || (TXGATE_NET_ON_PROTECTED && RADIO_CHANNEL == RADIO_PROTECTED_CHANNEL),
                "the bridge's channel is at least 999 kHz from the protected one");
 _Static_assert((FSCTRL1_VAL & 0x1Fu) * FXOSC_HZ / 1024u == 152343u,
                "IF 152 kHz with FSCTRL1 = 0x06");
@@ -1861,6 +1864,13 @@ static enum pair_remote_rc pairing_open(uint32_t window_ms) {
         ok = network_key(key);
     } else if (network_absent()) {
         LOG("pair: no network yet: creating one on channel %u before the window opens",
+            RADIO_CHANNEL);
+        ok = network_create(RADIO_CHANNEL, key);
+    } else if (network_replaceable(NULL)) {
+        /* A record written by an image for another channel (stage P7.1,
+         * src/network.h): this pair request replaces it. */
+        LOG("pair: the network record is for another channel: a new network on channel %u "
+            "replaces it before the window opens",
             RADIO_CHANNEL);
         ok = network_create(RADIO_CHANNEL, key);
     } else {

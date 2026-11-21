@@ -11,6 +11,23 @@ RADIO_TX_ALLOWED	?= 1
 ifeq ($(filter 0 1,$(RADIO_TX_ALLOWED)),)
 $(error RADIO_TX_ALLOWED must be 0 or 1, not '$(RADIO_TX_ALLOWED)')
 endif
+# Network channel (stage P7.1, cmake/CMakeLists.txt, src/txgate.h): the one
+# channel the image transmits on, default 16. Channel 26, the protected
+# channel of the owner's stock network, needs RADIO_ALLOW_CH26=1 as well
+# (CLAUDE.md hard rule and its P7.1 exception), so that no one-word slip
+# builds a channel-26 image.
+RADIO_NET_CHANNEL	?= 16
+RADIO_ALLOW_CH26	?= 0
+ifeq ($(filter 0 1,$(RADIO_ALLOW_CH26)),)
+$(error RADIO_ALLOW_CH26 must be 0 or 1, not '$(RADIO_ALLOW_CH26)')
+endif
+ifeq ($(RADIO_NET_CHANNEL),26)
+ifneq ($(RADIO_ALLOW_CH26),1)
+$(error RADIO_NET_CHANNEL=26 is the protected channel, the owner's stock tado network (CLAUDE.md hard rule). A stage P7.1 channel-26 image needs RADIO_ALLOW_CH26=1 as well, and the P7.1 gates before it is flashed (docs/test-bench.md "P7.1 channel 26, plan"))
+endif
+else ifeq ($(RADIO_ALLOW_CH26),1)
+$(error RADIO_ALLOW_CH26=1 is for RADIO_NET_CHANNEL=26 only, not '$(RADIO_NET_CHANNEL)')
+endif
 # The image descriptor's fw_version (#24, cmake/CMakeLists.txt FW_VERSION).
 FW_VERSION		?= 0
 
@@ -18,7 +35,7 @@ DEVICE_LC		:= $(shell echo $(DEVICE) | tr '[:upper:]' '[:lower:]')
 FAMILY			:= $(shell echo $(DEVICE_LC) | cut -c1-7)
 FAMILY_CMAKE	:= cmake/$(FAMILY).cmake
 LINKER_SCRIPT	:= cmake/$(DEVICE_LC).ld
-DEVICE_STAMP	:= $(BUILD_DIR)/.device-$(DEVICE_LC)-$(BUILD_TYPE)-tx$(RADIO_TX_ALLOWED)-v$(FW_VERSION)
+DEVICE_STAMP	:= $(BUILD_DIR)/.device-$(DEVICE_LC)-$(BUILD_TYPE)-tx$(RADIO_TX_ALLOWED)-ch$(RADIO_NET_CHANNEL)-v$(FW_VERSION)
 OPENCM3_LIB		:= vendor/libopencm3/lib/libopencm3_$(FAMILY).a
 
 .PHONY: all format build cmake clean flash rtt size test identity-tool
@@ -45,10 +62,12 @@ cmake: $(BUILD_DIR)/Makefile
 $(BUILD_DIR)/Makefile: cmake/CMakeLists.txt $(FAMILY_CMAKE) $(LINKER_SCRIPT) cmake/toolchain-arm-none-eabi.cmake $(DEVICE_STAMP)
 	cmake -G "Unix Makefiles" -B$(BUILD_DIR) -DBINARY=$(BINARY) \
 		-DDEVICE=$(DEVICE) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DRADIO_TX_ALLOWED=$(RADIO_TX_ALLOWED) -DFW_VERSION=$(FW_VERSION) cmake/
+		-DRADIO_TX_ALLOWED=$(RADIO_TX_ALLOWED) -DFW_VERSION=$(FW_VERSION) \
+		-DRADIO_NET_CHANNEL=$(RADIO_NET_CHANNEL) -DRADIO_ALLOW_CH26=$(RADIO_ALLOW_CH26) cmake/
 
-# Start from a clean build directory whenever DEVICE, BUILD_TYPE or
-# RADIO_TX_ALLOWED changes, so a cached value can never pick the variant
+# Start from a clean build directory whenever DEVICE, BUILD_TYPE,
+# RADIO_TX_ALLOWED or RADIO_NET_CHANNEL changes, so a cached value can never
+# pick the variant (RADIO_ALLOW_CH26 follows from the channel, above)
 $(DEVICE_STAMP):
 	rm -rf $(BUILD_DIR)
 	mkdir -p $(BUILD_DIR)

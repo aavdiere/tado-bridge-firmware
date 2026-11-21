@@ -56,6 +56,10 @@ int main(void) {
         RADIO_TX_ALLOWED,
         RADIO_CHANNEL,
         RADIO_TX_ALLOWED ? "on, test channel only" : "switched off");
+#if TXGATE_NET_ON_PROTECTED
+    LOG("tado-bridge: CHANNEL 26 IMAGE (RADIO_NET_CHANNEL 26, RADIO_ALLOW_CH26 1): the protected "
+        "channel, next to the stock network (stage P7.1)");
+#endif
     LOG("tado-bridge: pairing %s",
         !RADIO_TX_ALLOWED ? "off (receive-only image): the pair button opens no window"
         : radio_pair_target_named()

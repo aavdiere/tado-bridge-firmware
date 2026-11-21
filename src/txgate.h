@@ -9,16 +9,29 @@
  *      (channel 26, 868.3237 MHz), nor within 5 channels (about 1 MHz) of it.
  *      The carrier is computed from the register values that set it, so a
  *      changed base frequency, channel spacing or offset trim cannot move a
- *      "channel 16" onto it.
- *   2. Transmit only on the test channel (channel 16, 866.3242 MHz) while
- *      the project is on the bench.
+ *      "channel 16" onto it. Only exception: a build for channel 26 itself
+ *      with the second opt-in RADIO_ALLOW_CH26=1 (stage P7.1, below), which
+ *      allows channel 26's own carrier and still refuses its neighbours.
+ *   2. Transmit only on the test channel, the build's network channel
+ *      (RADIO_NET_CHANNEL, default 16, 866.3242 MHz) while the project is
+ *      on the bench.
  *   3. An Enhanced ACK is sent only as the exact answer to a unicast Data
  *      frame addressed to our own EUI-64.
  *   4. Every other frame carries our own EUI-64 as its source, and only the
  *      frame classes a coordinator sends are let through.
  *   5. Pairing frames (the Enhanced Beacon, and anything flagged as part of
  *      pairing) go out on the test channel only, and a beacon only as the
- *      answer to a Beacon Request. */
+ *      answer to a Beacon Request.
+ *   6. Channel-26 build only (TXGATE_NET_ON_PROTECTED, stage P7.1): unicast
+ *      goes to the named spare device only, the build's pairing target
+ *      (PAIR_TARGET_EUI64 in config/local.cmake, PROVISION_PAIR_EUI64). A
+ *      Data frame to any other EUI-64, a wake-up frame to any short address
+ *      but the spare's or ff ff (the broadcast's train), and a beacon to any
+ *      other joiner are refused (TXGATE_NOT_PEER). On channel 26 the stock
+ *      devices share our PAN, so a server downlink to one of them would
+ *      otherwise wake it and reach it. Such a build needs the target: without
+ *      one, src/txgate.c and CMake do not build. Channel-16 builds: no such
+ *      rule, nothing compiled. */
 #ifndef TXGATE_H
 #define TXGATE_H
 
@@ -30,12 +43,50 @@
  * (docs/test-bench.md "Channel scan result"); test channel 16, owner
  * decision of 2026-11-17 (was 10: the spare device scans 11, 16, 21 and 26
  * for a network and never asked on 10; docs/README.md "Project
- * decisions"). Channel 16 is 10 channels (2.0 MHz) from channel 26. */
+ * decisions"). Channel 16 is 10 channels (2.0 MHz) from channel 26.
+ *
+ * The test channel is a build option (stage P7.1, docs/prototype-plan.md):
+ * RADIO_NET_CHANNEL (cmake/CMakeLists.txt, `make RADIO_NET_CHANNEL=n`,
+ * default 16), the one channel an image may transmit on. It must be at
+ * least 5 channels from the protected one, or the protected channel 26
+ * itself with a second opt-in, RADIO_ALLOW_CH26=1, so that no one-word
+ * slip builds a channel-26 transmitter. Channel 26 stays under the hard
+ * rule of CLAUDE.md; its P7.1 exception (owner, 2026-11-20) allows a
+ * transmitter there only in an image built with this opt-in, with a
+ * fw-reviewer "safe to flash" verdict for it, and under the abort rules of
+ * docs/test-bench.md "P7.1 channel 26, plan". Checked here, in the
+ * Makefile and in CMake; a source compiled without both definitions does
+ * not build. */
+#ifndef RADIO_NET_CHANNEL
+#error "RADIO_NET_CHANNEL comes from the build: CMake option, default 16 (make RADIO_NET_CHANNEL=n)"
+#endif
+#ifndef RADIO_ALLOW_CH26
+#error "RADIO_ALLOW_CH26 comes from the build: CMake option, default 0"
+#endif
+#if RADIO_ALLOW_CH26 != 0 && RADIO_ALLOW_CH26 != 1
+#error "RADIO_ALLOW_CH26 must be 0 or 1"
+#endif
+#if RADIO_NET_CHANNEL == 26 && RADIO_ALLOW_CH26 != 1
+#error \
+    "RADIO_NET_CHANNEL 26 is the protected channel (CLAUDE.md hard rule): needs RADIO_ALLOW_CH26=1"
+#endif
+#if RADIO_ALLOW_CH26 == 1 && RADIO_NET_CHANNEL != 26
+#error "RADIO_ALLOW_CH26=1 is for a channel-26 build only (RADIO_NET_CHANNEL=26)"
+#endif
+#if RADIO_NET_CHANNEL < 0 || RADIO_NET_CHANNEL > 49
+#error "RADIO_NET_CHANNEL must be a channel of the plan, 0-49"
+#endif
+#define TXGATE_PASTE_(a, b) a##b
+#define TXGATE_U_(n)        TXGATE_PASTE_(n, u)
+
 #define TXGATE_PROTECTED_CHANNEL 26u
-#define TXGATE_TEST_CHANNEL      16u
+#define TXGATE_TEST_CHANNEL      TXGATE_U_(RADIO_NET_CHANNEL)
 #define TXGATE_MAX_CHANNEL       49u
 #define TXGATE_MIN_CHANNEL_DIST  5u       /* docs/test-bench.md rule 2 */
 #define TXGATE_MIN_DIST_HZ       999000ll /* 5 channels of 199.951 kHz, rounded down */
+/* 1 only in a channel-26 build with the opt-in: rule 1 then allows channel
+ * 26's own carrier. 0 in every other build, where nothing below changes. */
+#define TXGATE_NET_ON_PROTECTED (RADIO_NET_CHANNEL == 26 && RADIO_ALLOW_CH26 == 1)
 /* Largest frequency offset trim (FSCTRL0) in units of 1.587 kHz: 32 units are
  * 50.8 kHz, 59 ppm at 865 MHz, more than any crystal correction needs
  * (docs/open-questions.md row 7). Stock writes 0. */
@@ -64,6 +115,9 @@ enum txgate_verdict {
     TXGATE_NOT_FOR_US,   /* the answered frame is not addressed to us */
     TXGATE_WRONG_ANSWER, /* the ACK or beacon does not match the answered frame */
     TXGATE_MALFORMED,
+#if TXGATE_NET_ON_PROTECTED
+    TXGATE_NOT_PEER, /* rule 6: unicast to a device other than the named spare */
+#endif
 };
 
 /* For log lines. */
@@ -89,5 +143,12 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
                                        size_t                     len,
                                        const uint8_t             *answered,
                                        unsigned                   flags);
+
+#if TXGATE_NET_ON_PROTECTED
+/* Rule 6: wire is the named spare device's EUI-64 (wire order, as in a
+ * frame's destination). Also asked by src/relay.c before a downlink is
+ * queued, so that a refused one costs no listen and no job. */
+bool txgate_unicast_allowed(const uint8_t wire[8]);
+#endif
 
 #endif

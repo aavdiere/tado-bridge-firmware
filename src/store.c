@@ -372,7 +372,8 @@ _Static_assert(STORE_NET_LEN == 2u + 1u + 1u + CCM_KEY_LEN + 4u, "network payloa
 _Static_assert(STORE_NET_LEN <= STORE_REC_PAYLOAD, "network payload fits");
 
 bool store_net_allowed(const struct store_net *n) {
-    return n->channel == TXGATE_TEST_CHANNEL && n->channel != TXGATE_PROTECTED_CHANNEL
+    return n->channel == TXGATE_TEST_CHANNEL
+           && (n->channel != TXGATE_PROTECTED_CHANNEL || TXGATE_NET_ON_PROTECTED)
            && n->pan_id == MAC_PAN_ID;
 }
 
@@ -390,6 +391,41 @@ bool store_net_load(struct store_net *out, uint32_t *seq) {
         }
     }
     wipe(p, sizeof p);
+    return ok;
+}
+
+bool store_net_other_channel(uint8_t *channel, uint32_t *seq) {
+    /* Each slot either holds no record (no magic: never written, erased,
+     * or a write cut before its commit mark) or a valid one for the tado
+     * PAN on the plan; anything else (a damaged record, a read error)
+     * gives false, as store_net_probe() then counts it as a network that
+     * may still have devices. The newest must be on another channel. */
+    uint8_t  p[STORE_NET_LEN];
+    uint32_t newest = 0;
+    uint8_t  ch     = 0;
+    bool     ok = true, any = false;
+    for (unsigned i = 0; i < 2u && ok; i++) {
+        uint32_t addr = FLASH_NET_A + i * FLASH_SECTOR;
+        uint8_t  m[4];
+        uint32_t s = 0;
+        if (!store_port_read(addr, m, sizeof m)) {
+            ok = false;
+        } else if (get32(m) == STORE_NET_MAGIC) {
+            ok = slot_read(addr, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, &s)
+                 && get16(p) == MAC_PAN_ID && p[3] == 0 && p[2] <= TXGATE_MAX_CHANNEL;
+            if (ok && (!any || s > newest)) {
+                newest = s;
+                ch     = p[2];
+                any    = true;
+            }
+        }
+    }
+    wipe(p, sizeof p);
+    ok = ok && any && ch != TXGATE_TEST_CHANNEL;
+    if (ok) {
+        *channel = ch;
+        *seq     = newest;
+    }
     return ok;
 }
 
