@@ -1,10 +1,15 @@
 /* Host tests for src/relay.c and src/msgq.c (#17): the WebSocket frame, the
  * uplink path (duplicates, reassembly, what is and is not relayed) and the
- * downlink path through the CSL coordinator, read back as a device would. */
+ * downlink path through the CSL coordinator, read back as a device would.
+ * tests/host/Makefile builds it twice: test_relay for channel 16 and
+ * test_relay_ch26 as the channel-26 build (stage P7.1), where downlinks go
+ * to the build's pairing target only (src/txgate.h rule 6; the stand-in
+ * provision/peer/provision.h names dev below). */
 #include "relay.h"
 
 #include "csl.h"
 #include "msgq.h"
+#include "txgate.h"
 
 #include "test.h"
 #include "vectors_freedo.h"
@@ -16,7 +21,13 @@
 static struct ccm_key key;
 static struct relay   relay;
 static const uint8_t  own[8] = {0x10, 0x20, 0x30, 0x40, 0x50, 0xC5, 0x1B, 0x00};
-static const uint8_t  dev[8] = {0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xC5, 0x1B, 0x00};
+#if TXGATE_NET_ON_PROTECTED
+#include "provision.h"
+/* The pairing target of provision/peer/provision.h, wire order. */
+static const uint8_t dev[8] = {0x0b, 0xb1, 0xce, 0xfa, 0x07, 0xc5, 0x1b, 0x00};
+#else
+static const uint8_t dev[8] = {0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xC5, 0x1B, 0x00};
+#endif
 
 /* --- CSL port: every Data frame is acknowledged at once -------------------- */
 static uint64_t now_us = 1000000;
@@ -86,13 +97,14 @@ static void reset(const uint8_t *me) {
 
 /* --- Frame and addresses ------------------------------------------------------ */
 static void test_frame(void) {
-    uint8_t ip[16], wire[8];
-    relay_ipv6_from_wire(dev, ip);
+    static const uint8_t a[8] = {0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xC5, 0x1B, 0x00};
+    uint8_t              ip[16], wire[8];
+    relay_ipv6_from_wire(a, ip);
     static const uint8_t want[16] = {0xFE, 0x80, 0, 0, 0,    0,    0,    0,
                                      0x02, 0x1B, 0xC5, 0xA5, 0xA4, 0xA3, 0xA2, 0xA1};
     CHECK_MEM(ip, want, 16);
     CHECK(relay_wire_from_ipv6(ip, wire));
-    CHECK_MEM(wire, dev, 8);
+    CHECK_MEM(wire, a, 8);
     ip[0] = 0xAA; /* not link-local */
     CHECK(!relay_wire_from_ipv6(ip, wire));
     ip[0] = 0xFE;
@@ -385,6 +397,66 @@ static void test_downlink(void) {
     CHECK_EQ(n_data, 0);
 }
 
+/* Downlinks to any device but the pairing target: refused in the channel-26
+ * build, nothing queued and nothing sent; queued as before in the
+ * channel-16 build. */
+static void test_downlink_peer(void) {
+    static uint8_t msg[RELAY_MSG_MAX + 8], coap[64];
+    memset(coap, 0x5A, sizeof coap);
+    coap[0] = 0x44;
+    coap[1] = 0x03; /* PUT */
+    enum relay_down other = TXGATE_NET_ON_PROTECTED ? RELAY_DOWN_NOT_PEER : RELAY_DOWN_QUEUED;
+
+#if TXGATE_NET_ON_PROTECTED
+    static const uint8_t stored[8] = PROVISION_PAIR_EUI64;
+    for (unsigned i = 0; i < 8; i++) {
+        CHECK_EQ(stored[i], dev[7 - i]);
+    }
+#endif
+    reset(own);
+    size_t n = make_downlink(msg, dev, 5683, coap, 40);
+    CHECK_EQ(relay_downlink(&relay, msg, n), RELAY_DOWN_QUEUED);
+    drain();
+    CHECK_EQ(n_data, 1);
+
+    /* Any one bit of the target's address changed (a neighbour's), and an
+     * unrelated device; a request and an answer, one frame and fragments. */
+    static const size_t   lens[]   = {40, LOWPAN_FRAME_MAX - LOWPAN_LL_HDR_LEN + 1, RELAY_COAP_MAX};
+    static const unsigned frames[] = {1, 2, 15}; /* as test_downlink */
+    for (unsigned b = 0; b < 8; b++) {
+        for (unsigned bit = 0; bit < 8; bit++) {
+            uint8_t to[8], ip[16], back[8];
+            memcpy(to, dev, 8);
+            to[b] ^= (uint8_t)(1u << bit);
+            relay_ipv6_from_wire(to, ip);
+            if (!relay_wire_from_ipv6(ip, back) || memcmp(to, own, 8) == 0) {
+                continue; /* refused as an address already (suffix not tado's) */
+            }
+            for (size_t k = 0; k < N(lens); k++) {
+                reset(own);
+                coap[1] = (k & 1u) ? 0x45 : 0x03; /* 2.05 or PUT */
+                static uint8_t big[RELAY_COAP_MAX];
+                memset(big, 0x5A, sizeof big);
+                memcpy(big, coap, 4);
+                n = make_downlink(msg, to, 5683, big, lens[k]);
+                CHECK_EQ(relay_downlink(&relay, msg, n), other);
+                if (TXGATE_NET_ON_PROTECTED) {
+                    CHECK_EQ(csl_free_jobs(), CSL_JOB_POOL);
+                }
+                drain();
+                CHECK_EQ(n_data, TXGATE_NET_ON_PROTECTED ? 0u : frames[k]);
+            }
+        }
+    }
+    static const uint8_t stock[8] = {0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xC5, 0x1B, 0x00};
+    reset(own);
+    coap[1] = 0x03;
+    n       = make_downlink(msg, stock, 5683, coap, 40);
+    CHECK_EQ(relay_downlink(&relay, msg, n), other);
+    drain();
+    CHECK_EQ(n_data, TXGATE_NET_ON_PROTECTED ? 0u : 1u);
+}
+
 /* --- Message queue ------------------------------------------------------------ */
 static void test_msgq(void) {
     uint8_t     store[64], out[64];
@@ -455,6 +527,7 @@ int main(void) {
     test_uplink();
     test_uplink_fragments();
     test_downlink();
+    test_downlink_peer();
     test_msgq();
-    return TEST_REPORT("test_relay");
+    return TEST_REPORT(TEST_NAME);
 }

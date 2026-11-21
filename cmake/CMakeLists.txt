@@ -136,6 +136,13 @@ if(DEFINED PAIR_TARGET_EUI64)
     string(APPEND PROVISION "#define PROVISION_PAIR_EUI64 {${peui}}\n")
     message("Provisioning: pairing target set (PAIR_TARGET_EUI64)")
 endif()
+# A channel-26 build (stage P7.1) sends unicast to the pairing target only
+# (src/txgate.h rule 6): without one it is refused here, before project(),
+# and again by src/txgate.c (#error).
+if(RADIO_NET_CHANNEL EQUAL 26 AND NOT DEFINED PAIR_TARGET_EUI64)
+    message(FATAL_ERROR "RADIO_NET_CHANNEL=26 needs PAIR_TARGET_EUI64 in config/local.cmake: "
+        "a channel-26 image sends unicast to that named spare device only (src/txgate.h rule 6)")
+endif()
 if(DEFINED SERVER_CA_PEM)
     if(NOT EXISTS ${SERVER_CA_PEM})
         message(FATAL_ERROR "SERVER_CA_PEM ${SERVER_CA_PEM} not found")

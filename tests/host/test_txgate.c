@@ -5,7 +5,10 @@
  * src/txgate.h). tests/host/Makefile builds this program twice:
  * test_txgate for the default channel 16, test_txgate_ch26 for channel 26
  * with its opt-in RADIO_ALLOW_CH26. tests/host/test_channel_build.sh checks
- * that channel 26 without the opt-in does not build. */
+ * that channel 26 without the opt-in does not build. The channel-26
+ * program gets the stand-in provision.h of provision/peer/, whose pairing
+ * target is freedo's test joiner (below): rule 6 lets unicast go to that
+ * device only (test_peer_rule). */
 #include "txgate.h"
 
 #include "mac.h"
@@ -181,6 +184,16 @@ static void test_channel(void) {
 /* A set of our own frames: wire addresses from the freedo vectors. */
 static struct ccm_key key;
 static uint8_t        own[8], peer[8];
+/* freedo's test joiner (tado/pair_window_test.go:13), wire order: the
+ * source of the Beacon Request below, and in the channel-26 program the
+ * build's pairing target (provision/peer/provision.h). */
+static const uint8_t joiner[8] = {0x0b, 0xb1, 0xce, 0xfa, 0x07, 0xc5, 0x1b, 0x00};
+#if TXGATE_NET_ON_PROTECTED
+#include "provision.h"
+#define LAST_VERDICT TXGATE_NOT_PEER
+#else
+#define LAST_VERDICT TXGATE_MALFORMED
+#endif
 
 static void test_ack_rule(void) {
     struct txgate_radio r = plan(TXGATE_TEST_CHANNEL);
@@ -236,8 +249,9 @@ static void test_frame_rules(void) {
     uint8_t             f[MAC_FRAME_MAX], dgram[40] = {0x7E, 0x33, 0xF0};
     static const uint8_t zero[8];
 
-    /* Wake-up. */
-    static const uint8_t short_addr[2] = {0x12, 0x34};
+    /* Wake-up (to the joiner's short address, its first two wire bytes
+     * swapped as src/csl.c send_wake() builds it). */
+    static const uint8_t short_addr[2] = {0xb1, 0x0b};
     mac_build_wakeup(f, 7, short_addr, 100);
     CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_OK);
     CHECK_EQ(txgate_check_frame(&prot, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_PROTECTED);
@@ -246,8 +260,9 @@ static void test_frame_rules(void) {
     f[2] = 0xFF; /* another PAN */
     CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_MALFORMED);
 
-    /* Unicast Data from us. */
-    size_t n = mac_build_data(&key, f, sizeof f, false, 1, peer, own, 5, dgram, sizeof dgram);
+    /* Unicast Data from us (to the joiner, the pairing target of the
+     * channel-26 program; test_peer_rule covers any other destination). */
+    size_t n = mac_build_data(&key, f, sizeof f, false, 1, joiner, own, 5, dgram, sizeof dgram);
     CHECK(n > 0);
     CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), TXGATE_OK);
     CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
@@ -336,9 +351,118 @@ static void test_frame_rules(void) {
                  ch == TXGATE_TEST_CHANNEL);
     }
 
-    for (int v = TXGATE_OK; v <= TXGATE_MALFORMED; v++) {
+    for (int v = TXGATE_OK; v <= LAST_VERDICT; v++) {
         CHECK(strcmp(txgate_reason((enum txgate_verdict)v), "?") != 0);
     }
+}
+
+/* Rule 6 (src/txgate.h): in the channel-26 build, unicast Data, wake-up
+ * frames and beacons go to the named spare device only (here the joiner);
+ * in the channel-16 build to any device, as before. */
+static void test_peer_rule(void) {
+    struct txgate_radio r = plan(TXGATE_TEST_CHANNEL);
+    uint8_t             f[MAC_FRAME_MAX], dgram[40] = {0x7E, 0x33, 0xF0};
+#if TXGATE_NET_ON_PROTECTED
+    enum txgate_verdict other = TXGATE_NOT_PEER;
+#else
+    enum txgate_verdict other = TXGATE_OK; /* rule 6 exists in the channel-26 build only */
+#endif
+
+#if TXGATE_NET_ON_PROTECTED
+    /* The target of the build, in wire order, is the joiner. */
+    static const uint8_t stored[8] = PROVISION_PAIR_EUI64;
+    for (unsigned i = 0; i < 8; i++) {
+        CHECK_EQ(stored[i], joiner[7 - i]);
+    }
+    CHECK(txgate_unicast_allowed(joiner));
+    CHECK(!txgate_unicast_allowed(peer));
+    CHECK(!txgate_unicast_allowed(own));
+    static const uint8_t ones[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    CHECK(!txgate_unicast_allowed(ones));
+#endif
+
+    /* Data: to the joiner, to the freedo vectors' device, and to the
+     * joiner with any one bit of any byte changed (a stock device next to
+     * it); under either key, Frame Pending or not. */
+    for (unsigned pend = 0; pend < 2; pend++) {
+        size_t n =
+            mac_build_data(&key, f, sizeof f, pend != 0, 1, joiner, own, 5, dgram, sizeof dgram);
+        CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), TXGATE_OK);
+        CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
+        n = mac_build_data(&key, f, sizeof f, pend != 0, 1, peer, own, 5, dgram, sizeof dgram);
+        CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), other);
+        CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, TXGATE_PAIRING), other);
+        for (unsigned b = 0; b < 8; b++) {
+            for (unsigned bit = 0; bit < 8; bit++) {
+                uint8_t to[8];
+                memcpy(to, joiner, 8);
+                to[b] ^= (uint8_t)(1u << bit);
+                n = mac_build_data(&key, f, sizeof f, pend != 0, 1, to, own, 5, dgram, sizeof dgram);
+                CHECK(n > 0);
+                if (memcmp(to, own, 8) != 0) {
+                    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), other);
+                }
+            }
+        }
+    }
+
+    /* Wake-up: the joiner's short address and ff ff (a broadcast's train)
+     * pass; any other short address is a stock device's. */
+    static const uint8_t mine[2] = {0xb1, 0x0b}, bcast[2] = {0xFF, 0xFF};
+    mac_build_wakeup(f, 7, mine, 100);
+    CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_OK);
+    mac_build_wakeup(f, 7, bcast, 0);
+    CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, TXGATE_PAIRING), TXGATE_OK);
+    static const uint8_t others[][2] = {
+        {0x0b, 0xb1}, /* the joiner's bytes in the other order */
+        {0xb1, 0x0a},
+        {0xb0, 0x0b},
+        {0x12, 0x34},
+        {0xFF, 0xFE},
+        {0x00, 0x00},
+    };
+    for (size_t k = 0; k < N(others); k++) {
+        mac_build_wakeup(f, 7, others[k], 100);
+        CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), other);
+    }
+    /* The device of the freedo vectors: its short address as csl.c builds it. */
+    uint8_t ps[2] = {peer[1], peer[0]};
+    mac_build_wakeup(f, 7, ps, 100);
+    CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), other);
+
+    /* Beacon: freedo's request from the joiner passes (test_frame_rules);
+     * the same request from another device, with the beacon addressed to
+     * it, is refused in the channel-26 build only. */
+    static const uint8_t bridge[8] = {0x09, 0xa1, 0xce, 0xfa, 0x07, 0xc5, 0x1b, 0x00};
+    uint8_t              ebr[27]   = {
+        0x0b, 0xe8, 0x7b, 0xff, 0xff, 0xff, 0xff, 0x0b, 0xb1, 0xce, 0xfa, 0x07, 0xc5, 0x1b,
+        0x00, 0x04, 0x58, 0x14, 0x63, 0xf9, 0x01, 0x47, 0xed, 0x74, 0xca, 0xf1, 0xbd,
+    };
+    uint8_t eb[32] = {
+        0x18, 0xec, 0x59, 0xcd, 0xab, 0x0b, 0xb1, 0xce, 0xfa, 0x07, 0xc5,
+        0x1b, 0x00, 0x09, 0xa1, 0xce, 0x08, 0x5a, 0x08, 0x64, 0xb7, 0x71,
+        0x9c, 0x19, 0xe3, 0x42, 0x85, 0xc9, 0xcd, 0xed, 0x7e, 0xc2,
+    };
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
+    for (unsigned b = 0; b < 8; b++) {
+        ebr[7 + b] ^= 0x10;
+        eb[5 + b] ^= 0x10;
+        CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), other);
+        ebr[7 + b] ^= 0x10;
+        eb[5 + b] ^= 0x10;
+    }
+    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
+
+    /* Broadcasts and our Enhanced ACK are not unicast of ours: unchanged. */
+    size_t n = mac_build_broadcast(&key, f, sizeof f, true, 3, own, 9, dgram, 20);
+    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r,
+                                v_ack[0].own.p,
+                                v_ack[0].ack.p,
+                                MAC_ACK_LEN,
+                                v_ack[0].data_hdr.p,
+                                0),
+             TXGATE_OK);
 }
 
 int main(void) {
@@ -349,5 +473,6 @@ int main(void) {
     test_channel();
     test_ack_rule();
     test_frame_rules();
+    test_peer_rule();
     return TEST_REPORT(TEST_NAME);
 }

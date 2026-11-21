@@ -21,7 +21,8 @@ AES_OBJS := $(OUT)/aes.o $(OUT)/platform_util.o $(OUT)/sha256.o
 TESTS := test_mac test_lowpan test_txgate test_csl test_relay test_link \
          test_airtime test_cc110l test_cc110l_off test_store test_identity test_pair test_coap \
          test_mx25r test_button test_pair_led test_boot test_fwupd test_handoff test_pair_remote \
-         test_freqoff test_pair_found test_txgate_ch26 test_cc110l_ch26 test_store_ch26
+         test_freqoff test_pair_found test_txgate_ch26 test_cc110l_ch26 test_store_ch26 \
+         test_relay_ch26
 
 # Protocol modules each test links.
 test_mac_SRCS := mac.c ccm.c
@@ -100,6 +101,14 @@ test_cc110l_ch26_CH := 26
 test_store_ch26_MAIN := test_store.c
 test_store_ch26_SRCS := $(test_store_SRCS)
 test_store_ch26_CH := 26
+test_relay_ch26_MAIN := test_relay.c
+test_relay_ch26_SRCS := $(test_relay_SRCS)
+test_relay_ch26_CH := 26
+# A channel-26 build needs a pairing target, the one device it may send
+# unicast to (src/txgate.h rule 6): the _ch26 programs get the stand-in
+# provision.h of provision/peer/ (a made-up target), as the firmware gets
+# the generated one. test_channel_build.sh checks the build without one.
+CH26_PROVISION := provision/peer
 
 .PHONY: all run
 all: run
@@ -130,9 +139,10 @@ $(OUT)/sha256.o: $(MBEDTLS)/library/sha256.c mbedtls_host_config.h | $(OUT)
 	$(CC) $(MBEDTLS_CFLAGS) -c $< -o $@
 
 .SECONDEXPANSION:
-$(OUT)/test_%: $$(or $$(test_$$*_MAIN),test_$$*.c) test.h vectors_freedo.h Makefile $$(addprefix $(SRC)/,$$(test_$$*_SRCS)) $$(test_$$*_DEPS) $(wildcard $(SRC)/*.h $(SRC)/boot/*.h) $(AES_OBJS) | $(OUT)
+$(OUT)/test_%: $$(or $$(test_$$*_MAIN),test_$$*.c) test.h vectors_freedo.h Makefile $(CH26_PROVISION)/provision.h $$(addprefix $(SRC)/,$$(test_$$*_SRCS)) $$(test_$$*_DEPS) $(wildcard $(SRC)/*.h $(SRC)/boot/*.h) $(AES_OBJS) | $(OUT)
 	$(CC) $(CFLAGS) -DRADIO_TX_ALLOWED=$(if $(test_$*_TX),$(test_$*_TX),1) \
 	    -DRADIO_NET_CHANNEL=$(or $(test_$*_CH),16) \
 	    -DRADIO_ALLOW_CH26=$(if $(filter 26,$(test_$*_CH)),1,0) \
+	    $(if $(filter 26,$(test_$*_CH)),-I$(CH26_PROVISION)) \
 	    -DTEST_NAME='"test_$*"' \
 	    $< $(addprefix $(SRC)/,$(test_$*_SRCS)) $(AES_OBJS) -o $@

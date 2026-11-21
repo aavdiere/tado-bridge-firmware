@@ -5,6 +5,37 @@
 
 #include <string.h>
 
+#if TXGATE_NET_ON_PROTECTED
+/* Rule 6 (src/txgate.h): the one device a channel-26 build may send
+ * unicast to, the build's pairing target, in stored order (00 1b c5
+ * first; cmake/CMakeLists.txt "Pairing"). A channel-26 build without it
+ * does not build, so that no such image can reach a stock device. */
+#include "provision.h"
+#ifndef PROVISION_PAIR_EUI64
+#error \
+    "a channel-26 build sends unicast to the named spare device only: PAIR_TARGET_EUI64 in config/local.cmake"
+#endif
+static const uint8_t peer_stored[MAC_EUI_LEN] = PROVISION_PAIR_EUI64;
+
+bool txgate_unicast_allowed(const uint8_t wire[MAC_EUI_LEN]) {
+    for (unsigned i = 0; i < MAC_EUI_LEN; i++) {
+        if (wire[i] != peer_stored[MAC_EUI_LEN - 1u - i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* A wake-up frame's short address: the first two wire bytes swapped
+ * (src/csl.c send_wake()), so the stored order's last two bytes; or ff ff,
+ * the broadcast's train. */
+static bool wake_allowed(const uint8_t dst_short[2]) {
+    return (dst_short[0] == 0xFF && dst_short[1] == 0xFF)
+           || (dst_short[0] == peer_stored[MAC_EUI_LEN - 2u]
+               && dst_short[1] == peer_stored[MAC_EUI_LEN - 1u]);
+}
+#endif
+
 /* The tado channel plan as the stock register table programs it
  * (docs/radio.md "Stock CC110L register table"): FREQ = 0x213276
  * (863.125 MHz), CHANSPC_E = 2, CHANSPC_M = 0xF8 (199.951 kHz). */
@@ -135,7 +166,15 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
                 return TXGATE_BAD_LENGTH;
             }
             mac_build_wakeup(again, w.seq, w.dst_short, w.rendezvous);
-            return memcmp(again, f, MAC_WAKE_LEN) == 0 ? TXGATE_OK : TXGATE_MALFORMED;
+            if (memcmp(again, f, MAC_WAKE_LEN) != 0) {
+                return TXGATE_MALFORMED;
+            }
+#if TXGATE_NET_ON_PROTECTED
+            if (!wake_allowed(w.dst_short)) {
+                return TXGATE_NOT_PEER;
+            }
+#endif
+            return TXGATE_OK;
         }
 
         case MAC_DATA:
@@ -149,6 +188,11 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
             if (memcmp(f + OFF_DST, own, MAC_EUI_LEN) == 0) {
                 return TXGATE_MALFORMED; /* a frame to ourselves */
             }
+#if TXGATE_NET_ON_PROTECTED
+            if (!txgate_unicast_allowed(f + OFF_DST)) {
+                return TXGATE_NOT_PEER;
+            }
+#endif
             return TXGATE_OK;
 
         case MAC_BROADCAST:
@@ -214,6 +258,11 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
                 || memcmp(answered + BREQ_OFF_SRC, own, MAC_EUI_LEN) == 0) {
                 return TXGATE_WRONG_ANSWER;
             }
+#if TXGATE_NET_ON_PROTECTED
+            if (!txgate_unicast_allowed(f + BEACON_OFF_DST)) {
+                return TXGATE_NOT_PEER; /* a stock device's request: never answered */
+            }
+#endif
             return TXGATE_OK;
         }
 
@@ -237,6 +286,9 @@ const char *txgate_reason(enum txgate_verdict v) {
         [TXGATE_NOT_FOR_US]       = "answered frame is not addressed to us",
         [TXGATE_WRONG_ANSWER]     = "does not match the answered frame",
         [TXGATE_MALFORMED]        = "malformed frame",
+#if TXGATE_NET_ON_PROTECTED
+        [TXGATE_NOT_PEER] = "unicast to a device other than the named spare",
+#endif
     };
     return (unsigned)v < sizeof s / sizeof s[0] && s[v] ? s[v] : "?";
 }

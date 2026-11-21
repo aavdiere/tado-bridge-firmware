@@ -38,7 +38,13 @@ _Static_assert(RADIO_TX_ALLOWED == 1, "this program tests the driver with the tr
 #define MIN_US  60000000u
 
 static const uint8_t own[8]     = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC5, 0x1B, 0x00};
-static const uint8_t device[8]  = {0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xC5, 0x1B, 0x00};
+#if TXGATE_NET_ON_PROTECTED
+/* The channel-26 build sends unicast to its pairing target only (src/txgate.h
+ * rule 6): the device is the target of provision/peer/provision.h. */
+static const uint8_t device[8] = {0x0b, 0xb1, 0xce, 0xfa, 0x07, 0xc5, 0x1b, 0x00};
+#else
+static const uint8_t device[8] = {0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xC5, 0x1B, 0x00};
+#endif
 static const uint8_t another[8] = {0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xC5, 0x1B, 0x00};
 static const uint8_t key_bytes[CCM_KEY_LEN] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 static struct ccm_key key;
@@ -358,6 +364,27 @@ static void test_frames(void) {
     CHECK_EQ(chip.stx_count, 0);
     CHECK_EQ(chip.tx_fifo_writes, 0);
     CHECK_EQ(chip.st, M_RX);
+    check_clean();
+
+    /* A Data frame and a wake-up frame of ours to a device other than the
+     * pairing target: refused in the channel-26 build (rule 6), the chip
+     * not keyed; sent in the channel-16 build. */
+    n            = data_frame(f, another, own, 20);
+    unsigned stx = chip.stx_count;
+#if TXGATE_NET_ON_PROTECTED
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
+    CHECK_EQ(cc110l_tx_verdict(), TXGATE_NOT_PEER);
+    CHECK_EQ(chip.stx_count, stx);
+    uint8_t other_short[2] = {another[1], another[0]};
+    mac_build_wakeup(f, 7, other_short, 100);
+    CHECK_EQ(cc110l_tx_start(f, MAC_WAKE_LEN, 0), CC_TX_REFUSED);
+    CHECK_EQ(cc110l_tx_verdict(), TXGATE_NOT_PEER);
+    CHECK_EQ(chip.stx_count, stx);
+#else
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
+    finish_frame();
+    CHECK_EQ(chip.stx_count, stx + 1u);
+#endif
     check_clean();
 }
 

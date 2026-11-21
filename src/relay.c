@@ -6,6 +6,7 @@
 #include "relay.h"
 
 #include "csl.h"
+#include "txgate.h"
 
 #include <string.h>
 
@@ -185,6 +186,14 @@ enum relay_down relay_downlink(struct relay *r, const uint8_t *msg, size_t len) 
     if (!relay_wire_from_ipv6(f.ipv6, dst) || memcmp(dst, r->own, MAC_EUI_LEN) == 0) {
         return RELAY_DOWN_BAD_ADDRESS;
     }
+#if TXGATE_NET_ON_PROTECTED
+    /* Channel-26 build (stage P7.1): downlinks to the named spare device
+     * only; a stock device on that channel shares our PAN. The transmit
+     * gate refuses the same frames again (src/txgate.h rule 6). */
+    if (!txgate_unicast_allowed(dst)) {
+        return RELAY_DOWN_NOT_PEER;
+    }
+#endif
 
     /* UDP ports [I]. A request (code 0.01-0.31) goes out from port 4005 to
      * the port the server names, as the stock bridge's downlinks do (freedo

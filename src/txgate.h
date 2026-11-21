@@ -21,7 +21,17 @@
  *      frame classes a coordinator sends are let through.
  *   5. Pairing frames (the Enhanced Beacon, and anything flagged as part of
  *      pairing) go out on the test channel only, and a beacon only as the
- *      answer to a Beacon Request. */
+ *      answer to a Beacon Request.
+ *   6. Channel-26 build only (TXGATE_NET_ON_PROTECTED, stage P7.1): unicast
+ *      goes to the named spare device only, the build's pairing target
+ *      (PAIR_TARGET_EUI64 in config/local.cmake, PROVISION_PAIR_EUI64). A
+ *      Data frame to any other EUI-64, a wake-up frame to any short address
+ *      but the spare's or ff ff (the broadcast's train), and a beacon to any
+ *      other joiner are refused (TXGATE_NOT_PEER). On channel 26 the stock
+ *      devices share our PAN, so a server downlink to one of them would
+ *      otherwise wake it and reach it. Such a build needs the target: without
+ *      one, src/txgate.c and CMake do not build. Channel-16 builds: no such
+ *      rule, nothing compiled. */
 #ifndef TXGATE_H
 #define TXGATE_H
 
@@ -105,6 +115,9 @@ enum txgate_verdict {
     TXGATE_NOT_FOR_US,   /* the answered frame is not addressed to us */
     TXGATE_WRONG_ANSWER, /* the ACK or beacon does not match the answered frame */
     TXGATE_MALFORMED,
+#if TXGATE_NET_ON_PROTECTED
+    TXGATE_NOT_PEER, /* rule 6: unicast to a device other than the named spare */
+#endif
 };
 
 /* For log lines. */
@@ -130,5 +143,12 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
                                        size_t                     len,
                                        const uint8_t             *answered,
                                        unsigned                   flags);
+
+#if TXGATE_NET_ON_PROTECTED
+/* Rule 6: wire is the named spare device's EUI-64 (wire order, as in a
+ * frame's destination). Also asked by src/relay.c before a downlink is
+ * queued, so that a refused one costs no listen and no job. */
+bool txgate_unicast_allowed(const uint8_t wire[8]);
+#endif
 
 #endif

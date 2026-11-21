@@ -6,7 +6,8 @@
 # CMake), so that no one-word slip builds a channel-26 transmitter. Also:
 # the opt-in without channel 26, a neighbour of channel 26, a value off the
 # plan and a source compiled without the definitions do not build; the
-# default channel 16 and channel 26 with the opt-in do.
+# default channel 16 and channel 26 with the opt-in do. A channel-26
+# transmit gate also needs a pairing target (src/txgate.h rule 6).
 # Nothing here builds an image: the compiler runs -fsyntax-only, make runs
 # -n on `clean`, and CMake stops before project() for a refused value.
 # Usage: test_channel_build.sh <scratch dir>
@@ -44,7 +45,7 @@ cc() {
 # The gate itself, and the store (also compiled into the bootloader).
 for f in txgate.c store.c; do
     cc pass "" "$f" -DRADIO_NET_CHANNEL=16 -DRADIO_ALLOW_CH26=0
-    cc pass "" "$f" -DRADIO_NET_CHANNEL=26 -DRADIO_ALLOW_CH26=1
+    cc pass "" "$f" -DRADIO_NET_CHANNEL=26 -DRADIO_ALLOW_CH26=1 -I"$ROOT/tests/host/provision/peer"
     cc fail "protected channel" "$f" -DRADIO_NET_CHANNEL=26 -DRADIO_ALLOW_CH26=0
     cc fail "RADIO_NET_CHANNEL comes from the build" "$f" -DRADIO_ALLOW_CH26=0
     cc fail "RADIO_ALLOW_CH26 comes from the build" "$f" -DRADIO_NET_CHANNEL=16
@@ -52,6 +53,12 @@ for f in txgate.c store.c; do
     cc fail "must be 0 or 1" "$f" -DRADIO_NET_CHANNEL=26 -DRADIO_ALLOW_CH26=2
     cc fail "0-49" "$f" -DRADIO_NET_CHANNEL=50 -DRADIO_ALLOW_CH26=0
 done
+# A channel-26 gate sends unicast to the build's pairing target only
+# (src/txgate.h rule 6): without one (a provision.h without
+# PROVISION_PAIR_EUI64) it does not build. Channel 16 needs no provision.h.
+cc fail "named spare device only" txgate.c -DRADIO_NET_CHANNEL=26 -DRADIO_ALLOW_CH26=1 \
+    -I"$ROOT/tests/host/provision/none"
+cc pass "" txgate.c -DRADIO_NET_CHANNEL=16 -DRADIO_ALLOW_CH26=0 -I"$ROOT/tests/host/provision/none"
 # A neighbour of channel 26 passes the header but not the gate's own check.
 cc fail "at least 5 channels" txgate.c -DRADIO_NET_CHANNEL=25 -DRADIO_ALLOW_CH26=0
 cc fail "at least 5 channels" txgate.c -DRADIO_NET_CHANNEL=22 -DRADIO_ALLOW_CH26=0
@@ -103,6 +110,13 @@ cm "0-49" -DRADIO_NET_CHANNEL=50
 cm "0-49" -DRADIO_NET_CHANNEL=016
 cm "0-49" -DRADIO_NET_CHANNEL=x
 cm "must be ON or OFF" -DRADIO_NET_CHANNEL=26 -DRADIO_ALLOW_CH26=maybe
+# Channel 26 with its opt-in but no pairing target (rule 6). config/local.cmake,
+# if present, may name one, so this check runs only without it.
+if [[ ! -e $ROOT/config/local.cmake ]]; then
+    cm "needs PAIR_TARGET_EUI64" -DRADIO_NET_CHANNEL=26 -DRADIO_ALLOW_CH26=ON
+else
+    echo "test_channel_build: config/local.cmake present, CMake check without a pairing target skipped"
+fi
 rm -rf "$T/cmake"
 
 echo "test_channel_build: $checks checks, $fails failed"
