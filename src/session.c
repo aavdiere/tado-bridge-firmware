@@ -128,6 +128,12 @@ static struct pair_found_tx found_tx;
 static uint8_t              found_msg[PAIR_FOUND_COAP_MAX];
 static size_t               found_len;
 static uint32_t             found_full_seen;
+/* The report is built (found_msg, found_mid, found_tok) but its first send
+ * found the send queue full: it goes on the next pass, and the uplinks
+ * wait behind it (session_poll()). */
+static bool     found_held;
+static uint16_t found_mid;
+static uint8_t  found_tok[PAIR_FOUND_TOKEN_LEN];
 
 /* The serial from the identity record (#21, src/identity.h). Only called
  * once identity_init() has found one. */
@@ -707,8 +713,12 @@ static void on_found_answer(const struct coap_msg *m) {
 }
 
 /* Starts the next report once the session is ready, resends it on RFC 7252
- * timeouts, gives it up after PAIR_FOUND_SENDS sends. One at a time. */
-static void found_poll(void) {
+ * timeouts, gives it up after PAIR_FOUND_SENDS sends. One at a time.
+ * Returns true while a report waits for its first send (the send queue was
+ * full): session_poll() then holds the uplinks back, so that the joiner's
+ * first auth request never reaches the server before its report (#41
+ * review L1). */
+static bool found_poll(void) {
     uint32_t full = pair_found_full_count();
     if (full != found_full_seen) {
         LOG("session: POST found: %lu joiner report(s) dropped, queue of %u full",
@@ -717,33 +727,48 @@ static void found_poll(void) {
         found_full_seen = full;
     }
     if (phase != P_READY) {
+        found_held = false; /* built again, with the next session's token */
         if (found_tx.active) {
             found_tx.active = false;
             LOG("session: POST found (mid %04x): the session ended before an answer; sent again "
                 "once the next one is ready",
                 (unsigned)found_tx.mid);
         }
-        return;
+        return false;
     }
     if (!found_tx.active) {
-        uint8_t ipv6[16], tok[PAIR_FOUND_TOKEN_LEN];
-        if (!pair_found_peek(ipv6)) {
-            return;
+        if (!found_held) {
+            uint8_t ipv6[16];
+            if (!pair_found_peek(ipv6)) {
+                return false;
+            }
+            found_mid = mid++;
+            rng_bytes(found_tok, sizeof found_tok);
+            found_len = pair_found_build(found_msg,
+                                         sizeof found_msg,
+                                         found_mid,
+                                         found_tok,
+                                         have_token ? session_token : NULL,
+                                         ipv6);
+            if (found_len == 0u) {
+                pair_found_pop(); /* never: PAIR_FOUND_COAP_MAX holds it */
+                return false;
+            }
         }
-        uint16_t m = mid++;
-        rng_bytes(tok, sizeof tok);
-        found_len = pair_found_build(
-            found_msg, sizeof found_msg, m, tok, have_token ? session_token : NULL, ipv6);
-        if (found_len == 0u) {
-            pair_found_pop(); /* never: PAIR_FOUND_COAP_MAX holds it */
-            return;
+        if (!send_coap(found_msg, found_len)) {
+            if (!found_held) {
+                LOG("session: POST found (mid %04x): send queue full: the report and the uplinks "
+                    "wait, tried again on every pass",
+                    (unsigned)found_mid);
+            }
+            found_held = true;
+            return true;
         }
-        pair_found_tx_start(&found_tx, m, tok, now_ms(), rng_u32());
-        bool sent = send_coap(found_msg, found_len);
-        LOG("session: POST found (mid %04x): the device paired just now, its address: %s",
-            (unsigned)m,
-            sent ? "sent" : "not sent (send queue full), tried again in 2-3 s");
-        return;
+        found_held = false;
+        pair_found_tx_start(&found_tx, found_mid, found_tok, now_ms(), rng_u32());
+        LOG("session: POST found (mid %04x): the device paired just now, its address: sent",
+            (unsigned)found_mid);
+        return false;
     }
     uint32_t waited = found_tx.timeout_ms;
     switch (pair_found_tx_due(&found_tx, now_ms())) {
@@ -768,6 +793,7 @@ static void found_poll(void) {
         default:
             break;
     }
+    return false;
 }
 
 /* Every binary message from the server (ws.c handler). */
@@ -906,10 +932,14 @@ void session_log_minute(void) {
 void session_poll(bool net_up, const ip_addr_t *server, bool *busy) {
     static bool started;
     *busy = false;
-    relay_uplinks();
+    /* The joiner report before the uplinks: the joiner's first auth request
+     * may already wait in the uplink queue, and tanoclo refuses it if it
+     * comes before the report (#41 review L1). */
+    if (!found_poll()) {
+        relay_uplinks();
+    }
     fw_poll();
     pair_poll();
-    found_poll();
     if (!started) {
         /* The radio task reads the identity record at boot (it owns SPI1):
          * wait for its verdict, then decide once. */
