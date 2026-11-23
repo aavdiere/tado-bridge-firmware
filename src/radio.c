@@ -72,6 +72,8 @@
  * while the beacon waits for its moment, on right after the strobe. */
 #include "radio.h"
 
+#include "radio_internal.h"
+
 #include "airtime.h"
 #include "cc110l.h"
 #include "csl.h"
@@ -129,7 +131,6 @@ _Static_assert(RADIO_CHANNEL == TXGATE_TEST_CHANNEL, "transmit only on the test 
  *   FSCTRL1 0x18 -> 0x06  IF 152 kHz, owner decision (docs/radio.md Conflicts)
  * IOCFG1 stays 0x2E: GDO1 is the SO pin and must be 3-state while CSn is
  * high, because the flash shares MISO (cc110l.txt:2891-2893, 2901). */
-#define PKTLEN_MAX   0x80u /* variable length: max length byte (cc110l.txt:3607-3612) */
 #define MCSM1_VAL    0x3Fu /* RXOFF_MODE 11 stay in RX, TXOFF_MODE 11 RX, CCA_MODE 11 */
 #define PKTCTRL0_VAL 0x05u
 /* The registers that the frequency plan checks below read. */
@@ -249,33 +250,19 @@ _Static_assert(PHY_FXOSC_HZ * (8u + (DEVIATN_VAL & 7u)) * (1u << ((DEVIATN_VAL >
 #define FREQEST_HZ(fe) ((int32_t)(int8_t)(fe) * 203125 / 128)
 
 /* --- Interrupts -------------------------------------------------------------- */
-#define NOTE_GDO0  (1u << 0) /* end of a packet, received or sent */
-#define NOTE_CRCOK (1u << 1) /* a packet arrived with a good CRC */
-#define NOTE_FLASH (1u << 2)
-#define NOTE_STORM (1u << 3)
-#define NOTE_SYNC  (1u << 4)
-#define NOTE_LINK  (1u << 5) /* the net task queued a message for a device */
-/* The ACK interrupt could not strobe STX after making the chip IDLE (see
- * cc110l_ack_fire_from_isr()): CHECK, it strobed SRX again, confirm RX;
- * REARM, it could not, abort and re-arm now. */
-#define NOTE_ACK_CHECK   (1u << 6)
-#define NOTE_ACK_REARM   (1u << 7)
-#define NOTE_PAIR        (1u << 8)  /* the pair button: open or close a window (#19) */
-#define NOTE_RESET       (1u << 9)  /* the factory reset button (P6) */
-#define NOTE_UPDATE      (1u << 10) /* the update task posted a flash operation (#24) */
-#define NOTE_PAIR_REMOTE (1u << 11) /* a pair request of the server is posted (#40) */
+/* Notification bits: src/radio_internal.h. */
 
 /* FreeRTOS FromISR calls need a numeric priority >= 5 (FreeRTOSConfig.h,
  * configMAX_SYSCALL_INTERRUPT_PRIORITY = 0x50). */
 #define GDO_IRQ_PRIO (5u << 4)
 _Static_assert(GDO_IRQ_PRIO >= configMAX_SYSCALL_INTERRUPT_PRIORITY, "FromISR needs prio >= 5");
 
-static TaskHandle_t self;
+TaskHandle_t radio_self;
 
 static void notify_from_isr(uint32_t bits) {
     BaseType_t woken = pdFALSE;
-    if (self) {
-        xTaskNotifyFromISR(self, bits, eSetBits, &woken);
+    if (radio_self) {
+        xTaskNotifyFromISR(radio_self, bits, eSetBits, &woken);
     }
     portYIELD_FROM_ISR(woken);
 }
@@ -290,12 +277,10 @@ static void notify_from_isr(uint32_t bits) {
  * the pins are not doing what the table says: both interrupts go off at once
  * and the radio task re-initialises, which enables them again only after the
  * table is loaded and verified. Both ISRs run at the same priority, so they never
- * preempt each other and share the counter safely. */
-#define STORM_WINDOW_US 1000u
-#define STORM_MAX_EDGES 32u
-
-static uint32_t      storm_win_start, storm_edges;
-static volatile bool gdo_irq_on;
+ * preempt each other and share the counter safely. STORM_WINDOW_US and
+ * STORM_MAX_EDGES: src/radio_internal.h. */
+static uint32_t storm_win_start, storm_edges;
+volatile bool   gdo_irq_on;
 
 static void gdo_edge_from_isr(uint32_t note) {
     uint32_t now = timebase_us();
@@ -313,7 +298,7 @@ static void gdo_edge_from_isr(uint32_t note) {
 
 /* Every GDO0 edge, both directions. sample_in_packet() compares it before and
  * after its reads: unchanged means no packet started or ended in between. */
-static volatile uint32_t gdo0_edges;
+volatile uint32_t gdo0_edges;
 
 /* The pin level after the edge tells the direction: high = sync word, low =
  * end of packet, discard or overflow. GDO0 stays high from sync to end of
@@ -326,7 +311,8 @@ static volatile uint32_t gdo0_edges;
 static volatile uint32_t gdo0_fall_us;
 /* Enhanced ACKs sent by the interrupt below, and attempts that failed after
  * the chip had been made IDLE. */
-static volatile uint32_t acks_fired, acks_failed;
+static volatile uint32_t acks_fired;
+volatile uint32_t        acks_failed;
 
 void exti0_isr(void) {
     exti_reset_request(EXTI0);
@@ -366,7 +352,7 @@ void exti1_isr(void) {
     gdo_edge_from_isr(note);
 }
 
-static void gdo_irq_enable(bool on) {
+void gdo_irq_enable(bool on) {
     /* EXTI_IMR is read-modify-written here and by the storm guard in the ISR:
      * mask the GDO interrupts (priority 5 = configMAX_SYSCALL) meanwhile. */
     taskENTER_CRITICAL();
@@ -386,7 +372,7 @@ static void gdo_irq_enable(bool on) {
     taskEXIT_CRITICAL();
 }
 
-static void gdo_irq_setup(void) {
+void gdo_irq_setup(void) {
     rcc_periph_clock_enable(RCC_SYSCFG); /* rm0383.txt:6122 */
     exti_disable_request(EXTI0 | EXTI1);
     exti_select_source(EXTI0 | EXTI1, GPIOA);   /* SYSCFG_EXTICR1, rm0383.txt:11032-11050 */
@@ -399,26 +385,26 @@ static void gdo_irq_setup(void) {
 }
 
 void radio_request_flash_check(void) {
-    if (self) {
-        xTaskNotify(self, NOTE_FLASH, eSetBits);
+    if (radio_self) {
+        xTaskNotify(radio_self, NOTE_FLASH, eSetBits);
     }
 }
 
 void radio_notify_link(void) {
-    if (self) {
-        xTaskNotify(self, NOTE_LINK, eSetBits);
+    if (radio_self) {
+        xTaskNotify(radio_self, NOTE_LINK, eSetBits);
     }
 }
 
 void radio_request_pairing(void) {
-    if (self) {
-        xTaskNotify(self, NOTE_PAIR, eSetBits);
+    if (radio_self) {
+        xTaskNotify(radio_self, NOTE_PAIR, eSetBits);
     }
 }
 
 void radio_request_factory_reset(void) {
-    if (self) {
-        xTaskNotify(self, NOTE_RESET, eSetBits);
+    if (radio_self) {
+        xTaskNotify(radio_self, NOTE_RESET, eSetBits);
     }
 }
 
@@ -441,7 +427,7 @@ uint32_t handoff_port_ms(void) {
 }
 
 void handoff_port_wake(void) {
-    xTaskNotify(self, NOTE_UPDATE, eSetBits);
+    xTaskNotify(radio_self, NOTE_UPDATE, eSetBits);
 }
 
 void handoff_port_sleep(uint32_t ms) {
@@ -452,8 +438,8 @@ void handoff_port_sleep(uint32_t ms) {
 
 bool radio_update_op(struct fwupd_op *op) {
     TickType_t t0 = xTaskGetTickCount();
-    while (self == NULL) {
-        /* The radio task has not started yet: it sets self first thing. */
+    while (radio_self == NULL) {
+        /* The radio task has not started yet: it sets radio_self first thing. */
         if (xTaskGetTickCount() - t0 >= pdMS_TO_TICKS(RADIO_UPDATE_OP_WAIT_MS)) {
             op->ok   = false;
             op->done = false;
@@ -468,7 +454,7 @@ bool radio_update_op(struct fwupd_op *op) {
 /* Microseconds since boot that do not wrap: TIM2's 32 bits extended. Radio
  * task only, called on every loop pass, far more often than the 71 minutes
  * of one wrap. */
-static uint64_t now64(void) {
+uint64_t now64(void) {
     static uint32_t last, high;
     uint32_t        t = timebase_us();
     if (t < last) {
@@ -484,41 +470,17 @@ static uint64_t stamp64(uint32_t stamp) {
     return n - (uint32_t)((uint32_t)n - stamp);
 }
 
-/* --- Counters ---------------------------------------------------------------- */
-struct counters {
-    uint32_t frames, crc_ok, crc_bad, wake, overflow, bad_len, stale, rearm, reinit, spi_err;
-    uint32_t flash_ok, flash_bad, flash_in_frame, status_glitch, storm;
-    uint32_t fe_pkt, fe_none, fe_stale, fe_rssi_diff; /* #11, see fe_sample */
-    uint32_t ack_prepared, ack_sent, ack_late, tx_frames, tx_fail, tx_refused;
-    uint32_t tx_no_lock;        /* of tx_refused: no calibration with PLL lock */
-    uint32_t tx_duty, ack_duty; /* refused: the hour's airtime budget is spent */
-    uint32_t ack_rearm;         /* the ACK interrupt failed and the task re-armed RX */
-    uint32_t lbt_rssi_busy;     /* listens found busy by RSSI */
-    /* Enhanced Beacons (#19): sent, and not sent because the request's end
-     * was not seen live, the channel was busy, it was too late, or the
-     * driver refused or failed. */
-    uint32_t beacon_sent, beacon_no_stamp, beacon_busy, beacon_late, beacon_fail;
-    /* Flash work while frames arrive (#22): radio services run from inside
-     * a flash program or erase, and the frames and Enhanced ACKs done in
-     * them. */
-    uint32_t flash_serve, flash_frames, flash_acks;
-};
-static struct counters minute, total;
-
-#define COUNT(field)    \
-    do {                \
-        minute.field++; \
-        total.field++;  \
-    } while (0)
+/* --- Counters (struct counters, COUNT(): src/radio_internal.h) -------------- */
+struct counters radio_minute, radio_total;
 
 /* --- Formatting helpers ------------------------------------------------------- */
-static const char *half_db(char *b, size_t sz, int x2) {
+const char *half_db(char *b, size_t sz, int x2) {
     unsigned a = (unsigned)(x2 < 0 ? -x2 : x2);
     snprintf(b, sz, "%s%u.%u", x2 < 0 ? "-" : "", a / 2, (a & 1) ? 5u : 0u);
     return b;
 }
 
-static int rssi_x2(uint8_t raw) {
+int rssi_x2(uint8_t raw) {
     return (int)(int8_t)raw - 2 * RSSI_OFFSET_DB;
 }
 
@@ -544,13 +506,13 @@ static int32_t mean_x10(int32_t sum, unsigned n) {
     return (sum * 20 + (sum < 0 ? -(int32_t)n : (int32_t)n)) / (2 * (int32_t)n);
 }
 
-static const char *tenths(char *b, size_t sz, int32_t x10) {
+const char *tenths(char *b, size_t sz, int32_t x10) {
     unsigned a = (unsigned)(x10 < 0 ? -x10 : x10);
     snprintf(b, sz, "%s%u.%u", x10 < 0 ? "-" : "", a / 10, a % 10);
     return b;
 }
 
-static void wake_flush(void) {
+void wake_flush(void) {
     if (!wake.active) {
         return;
     }
@@ -615,27 +577,12 @@ static void wake_add(uint8_t seq, bool crc_ok, int rssi, int fe) {
 }
 
 /* --- Receive ----------------------------------------------------------------- */
-#define RX_BUF_MAX  (1u + PKTLEN_MAX + 2u) /* length byte, payload, RSSI, CRC_OK */
 #define RX_STALE_US 60000u /* longest frame 131 B x 160 us = 21 ms; freedo uses 60 ms */
 
-static struct {
-    uint8_t  buf[RX_BUF_MAX];
-    unsigned got, total;
-    bool     assembling;
-    uint32_t start_us;
-    /* A sync edge was seen and its frame is not complete yet: pump every
-     * tick (see the top of this file). Given up after RX_STALE_US. */
-    bool     in_packet;
-    uint32_t sync_us;
-    bool     ack_considered; /* ack_consider() has run for this frame */
-    /* gdo0_edges before the RXBYTES read that brought this frame's length
-     * byte: at frame_done() exactly one more edge (the frame's end) means
-     * gdo0_fall_us is this frame's end (#19, beacon_answer()). */
-    uint32_t edges_at_len;
-} rx;
+struct radio_rx radio_rx; /* struct radio_rx: src/radio_internal.h */
 
-static bool packet_arriving(void) {
-    return rx.assembling || rx.in_packet || gpio_get(GPIOA, BOARD_GDO0_PIN);
+bool packet_arriving(void) {
+    return radio_rx.assembling || radio_rx.in_packet || gpio_get(GPIOA, BOARD_GDO0_PIN);
 }
 
 /* FREQEST and RSSI sampled while a packet is on the air (#11).
@@ -683,11 +630,7 @@ static bool packet_arriving(void) {
  * logged, not used to reject the sample. */
 #define FE_SAMPLE_MAX_EDGES 2u
 
-static struct {
-    bool     valid;
-    uint8_t  fe, rssi;
-    uint32_t edges; /* gdo0_edges when sampled (after this packet's sync) */
-} fe_sample;
+struct fe_sample fe_sample; /* struct fe_sample: src/radio_internal.h */
 
 /* Status registers the radio updates by itself can read corrupt once in a
  * while (cc110l.txt:1436-1441): stable reads. At most 2 x 5 short SPI
@@ -728,7 +671,7 @@ static bool marc_is_tx(uint8_t m) {
 
 /* Returns false at once on a TX state, so the caller's failure path (which
  * runs tx_watch) stops it without waiting out the timeout. */
-static bool wait_marcstate(uint8_t want, uint32_t timeout_us) {
+bool wait_marcstate(uint8_t want, uint32_t timeout_us) {
     uint32_t start = timebase_us();
     uint8_t  m;
     do {
@@ -755,7 +698,7 @@ static bool wait_marcstate(uint8_t want, uint32_t timeout_us) {
  * transmit strobe (STX 0x35/0xB5, SFSTXON 0x31/0xB1). The confirmation reads
  * MARCSTATE (0xF5), 1 bit from 0xB5 (STX); a TX state caused that way shows
  * in the next status byte and is caught by the next round. */
-static bool tx_watch(void) {
+bool tx_watch(void) {
     for (int round = 0; round < 3; round++) {
         uint8_t rb;
         (void)cc110l_read_status(CC_RXBYTES, &rb);
@@ -795,13 +738,13 @@ static void radio_force_idle(void) {
  * cc110l.txt:3252-3253, 1501; SIDLE drops strobes sent before IDLE,
  * cc110l.txt:1449-1451), then SRX. RX to IDLE takes ~0.1 us, IDLE to RX
  * without calibration 75 us (cc110l.txt:2538-2549). */
-static bool rx_flush_and_arm(void) {
+bool rx_flush_and_arm(void) {
     cc110l_ack_cancel();
-    rx.assembling   = false;
-    rx.in_packet    = false;
-    fe_sample.valid = false;
-    bool ok         = cc110l_strobe(CC_SIDLE, NULL) && wait_marcstate(CC_MARC_IDLE, 1000)
-                      && cc110l_strobe(CC_SFRX, NULL) && cc110l_strobe(CC_SRX, NULL);
+    radio_rx.assembling = false;
+    radio_rx.in_packet  = false;
+    fe_sample.valid     = false;
+    bool ok             = cc110l_strobe(CC_SIDLE, NULL) && wait_marcstate(CC_MARC_IDLE, 1000)
+                          && cc110l_strobe(CC_SFRX, NULL) && cc110l_strobe(CC_SRX, NULL);
     if (!ok) {
         COUNT(spi_err);
     }
@@ -882,39 +825,38 @@ static const char *const link_rx_name[LINK_RX_COUNT] = {
 };
 _Static_assert(LINK_RX_OTHER + 1 == LINK_RX_COUNT, "a name for every link_rx");
 
-static void beacon_answer(uint32_t fall_us, bool own_end);
-
 /* FREQEST of our own network's frames and the drift warning (#11,
  * src/freqoff.h): fed by frame_done() after the frame is handled, reported
  * by log_minute(). Radio task only. */
-static struct freqoff fo;
+struct freqoff radio_fo;
 
-/* A complete frame is in rx.buf. By now the GDO2 interrupt has sent the
+/* A complete frame is in radio_rx.buf. By now the GDO2 interrupt has sent the
  * Enhanced ACK if one was prepared, so this may take its time and log. */
 static void frame_done(void) {
     static uint32_t acks_seen;
     /* The frame's end edge, taken together with the edge count (#19). */
     taskENTER_CRITICAL();
     uint32_t fall_us = gdo0_fall_us;
-    bool     own_end = (uint32_t)(gdo0_edges - rx.edges_at_len) == 1u;
+    bool     own_end = (uint32_t)(gdo0_edges - radio_rx.edges_at_len) == 1u;
     taskEXIT_CRITICAL();
-    unsigned       len      = rx.buf[0];
-    const uint8_t *mac      = &rx.buf[1];
-    uint8_t        rssi_raw = rx.buf[1 + len];
-    uint8_t st2    = rx.buf[2 + len]; /* bit 7 CRC_OK, bits 6:0 reserved (cc110l.txt:1747-1757) */
-    bool    crc_ok = (st2 & 0x80) != 0;
-    int     rssi   = rssi_x2(rssi_raw);
-    int     fe     = FE_NONE;
+    unsigned       len      = radio_rx.buf[0];
+    const uint8_t *mac      = &radio_rx.buf[1];
+    uint8_t        rssi_raw = radio_rx.buf[1 + len];
+    uint8_t        st2 =
+        radio_rx.buf[2 + len]; /* bit 7 CRC_OK, bits 6:0 reserved (cc110l.txt:1747-1757) */
+    bool    crc_ok    = (st2 & 0x80) != 0;
+    int     rssi      = rssi_x2(rssi_raw);
+    int     fe        = FE_NONE;
     uint8_t sync_rssi = fe_sample.rssi;
     bool    rssi_diff = false;
 
     /* An ACK prepared for this frame and not sent (bad CRC, or prepared too
      * late) must not answer a later frame. */
     cc110l_ack_cancel();
-    uint32_t fired = acks_fired;
-    bool     acked = fired != acks_seen;
-    acks_seen      = fired;
-    rx.in_packet   = false;
+    uint32_t fired     = acks_fired;
+    bool     acked     = fired != acks_seen;
+    acks_seen          = fired;
+    radio_rx.in_packet = false;
 
     if (fe_sample.valid && (uint32_t)(gdo0_edges - fe_sample.edges) > FE_SAMPLE_MAX_EDGES) {
         fe_sample.valid = false; /* from an earlier packet, see fe_sample */
@@ -953,7 +895,7 @@ static void frame_done(void) {
     /* After the ACK (sent from the CRC-OK interrupt before this runs) and the
      * beacon (answered just above): no deadline left for this frame (#11). */
     if (fe != FE_NONE && crc_ok && link_rx_from_network(what)) {
-        freqoff_add(&fo, fe);
+        freqoff_add(&radio_fo, fe);
     }
 
     if ((mac[0] & 0x07) == 5 && len >= 2) { /* wake-up: 25 <seq> CD AB ... */
@@ -996,13 +938,14 @@ static void frame_done(void) {
  * as a new one is written duplicates it (cc110l.txt:2593-2597), so one byte
  * stays until the rest of the packet is in. */
 static void rx_pump(void) {
-    if (rx.assembling && (uint32_t)(timebase_us() - rx.start_us) > RX_STALE_US) {
+    if (radio_rx.assembling && (uint32_t)(timebase_us() - radio_rx.start_us) > RX_STALE_US) {
         COUNT(stale);
         rx_flush_and_arm();
         return;
     }
-    if (rx.in_packet && (uint32_t)(timebase_us() - rx.sync_us) > RX_STALE_US) {
-        rx.in_packet = false; /* a sync edge without a frame (length-filtered, or our own TX) */
+    if (radio_rx.in_packet && (uint32_t)(timebase_us() - radio_rx.sync_us) > RX_STALE_US) {
+        radio_rx.in_packet =
+            false; /* a sync edge without a frame (length-filtered, or our own TX) */
     }
     for (int guard = 0; guard < 16; guard++) {
         uint32_t edges = gdo0_edges; /* before RXBYTES: see ack_consider() */
@@ -1020,29 +963,29 @@ static void rx_pump(void) {
         if (n > CC_FIFO_SIZE) {
             continue; /* a corrupt read (cc110l.txt:1436-1441); read again */
         }
-        if (!rx.assembling) {
+        if (!radio_rx.assembling) {
             if (n < 2) {
                 return;
             }
-            if (!cc110l_read_rxfifo(rx.buf, 1)) {
+            if (!cc110l_read_rxfifo(radio_rx.buf, 1)) {
                 COUNT(spi_err);
                 return;
             }
-            unsigned len = rx.buf[0];
+            unsigned len = radio_rx.buf[0];
             if (len == 0 || len > PKTLEN_MAX) {
                 COUNT(bad_len);
                 rx_flush_and_arm();
                 return;
             }
-            rx.got            = 1;
-            rx.total          = 1 + len + 2;
-            rx.assembling     = true;
-            rx.ack_considered = false;
-            rx.edges_at_len   = edges;
-            rx.start_us       = timebase_us();
+            radio_rx.got            = 1;
+            radio_rx.total          = 1 + len + 2;
+            radio_rx.assembling     = true;
+            radio_rx.ack_considered = false;
+            radio_rx.edges_at_len   = edges;
+            radio_rx.start_us       = timebase_us();
             continue;
         }
-        unsigned remaining = rx.total - rx.got;
+        unsigned remaining = radio_rx.total - radio_rx.got;
         unsigned to_read   = 0;
         if (n >= remaining) {
             to_read = remaining;
@@ -1052,20 +995,20 @@ static void rx_pump(void) {
         if (to_read == 0) {
             return;
         }
-        if (!cc110l_read_rxfifo(rx.buf + rx.got, to_read)) {
+        if (!cc110l_read_rxfifo(radio_rx.buf + radio_rx.got, to_read)) {
             COUNT(spi_err);
             return;
         }
-        rx.got += to_read;
-        if (!rx.ack_considered && rx.got >= 1u + MAC_HDR_LEN) {
+        radio_rx.got += to_read;
+        if (!radio_rx.ack_considered && radio_rx.got >= 1u + MAC_HDR_LEN) {
             /* The header is in. n < remaining: when RXBYTES was read just
              * now, the chip had not received the whole frame yet, so the
              * packet on the air is this one. */
-            rx.ack_considered = true;
-            ack_consider(rx.buf + 1, edges, n < remaining);
+            radio_rx.ack_considered = true;
+            ack_consider(radio_rx.buf + 1, edges, n < remaining);
         }
-        if (rx.got >= rx.total) {
-            rx.assembling = false;
+        if (radio_rx.got >= radio_rx.total) {
+            radio_rx.assembling = false;
             frame_done(); /* FREQEST comes from the in-packet sample (#11) */
         }
     }
@@ -1130,12 +1073,12 @@ static unsigned regs_lost(void) {
  * than CC_CAL_MAX_AGE_US (two missed periods and more) stops the
  * transmitter until the next one. Each recalibration costs about 1 ms of
  * deaf receiver: a Data frame lost then is sent again by its device. */
-#define RECAL_PERIOD_MS 300000u
+/* RECAL_PERIOD_MS: src/radio_internal.h. */
 _Static_assert(2ull * RECAL_PERIOD_MS * 1000u < CC_CAL_MAX_AGE_US,
                "a missed recalibration does not stop the transmitter yet");
 
-static uint64_t cal_at;      /* last calibration attempt, now64() */
-static uint64_t cal_good_at; /* last calibration with lock */
+uint64_t cal_at;      /* last calibration attempt, now64() */
+uint64_t cal_good_at; /* last calibration with lock */
 
 /* With the chip in IDLE: calibrate (lock check and carrier read-back in the
  * driver), then the same register read-back as the health check, so every
@@ -1179,9 +1122,9 @@ static bool radio_calibrate(const char *why) {
 static bool radio_configure_steps(void) {
     gdo_irq_enable(false);
     cc110l_ack_cancel();
-    rx.assembling   = false;
-    rx.in_packet    = false;
-    fe_sample.valid = false;
+    radio_rx.assembling = false;
+    radio_rx.in_packet  = false;
+    fe_sample.valid     = false;
 
     if (!cc110l_reset()) {
         LOG("radio: no CHIP_RDYn after SRES (SO stayed high)");
@@ -1269,7 +1212,7 @@ static bool radio_configure_steps(void) {
 /* Reset, load and verify the table, calibrate, enter RX. On any failure the
  * chip is checked for a TX state and forced to IDLE before returning, with
  * the GDO interrupts left off. */
-static bool radio_configure(void) {
+bool radio_configure(void) {
     if (radio_configure_steps()) {
         return true;
     }
@@ -1278,7 +1221,7 @@ static bool radio_configure(void) {
 }
 
 /* Runtime re-init: check and force IDLE first, then the full bring-up. */
-static void radio_reinit(void) {
+void radio_reinit(void) {
     COUNT(reinit);
     radio_force_idle();
     (void)radio_configure();
@@ -1287,11 +1230,11 @@ static void radio_reinit(void) {
 /* Every RECAL_PERIOD_MS, at a quiet moment: from RX to IDLE, calibrate,
  * back to RX. A prepared ACK is dropped first; GDO2 cannot fire while the
  * chip is IDLE. Any failure re-initialises the radio. */
-static void radio_recalibrate(void) {
+void radio_recalibrate(void) {
     cc110l_ack_cancel();
-    rx.assembling   = false;
-    rx.in_packet    = false;
-    fe_sample.valid = false;
+    radio_rx.assembling = false;
+    radio_rx.in_packet  = false;
+    fe_sample.valid     = false;
     if (!cc110l_strobe(CC_SIDLE, NULL) || !wait_marcstate(CC_MARC_IDLE, 1000)
         || !radio_calibrate("periodic") || !rx_flush_and_arm()
         || !wait_marcstate(CC_MARC_RX, 2000)) {
@@ -1303,7 +1246,7 @@ static void radio_recalibrate(void) {
 /* Every 10 s: the chip must still hold our configuration and be in RX. A
  * brown-out or reset of the radio leaves reset defaults (IOCFG0 = 0x3F);
  * regs_lost() compares the registers that matter. */
-static void health_check(void) {
+void health_check(void) {
     if (!gdo_irq_on) {
         /* A storm guard trip or a failed re-init left the interrupts off. */
         LOG("radio: GDO interrupts off; re-initialising");
@@ -1347,7 +1290,7 @@ static void health_check(void) {
 /* Wake the chip, wait for a program or erase still running (an MCU reset
  * does not stop it, and the array reads garbage meanwhile), then check the
  * JEDEC ID. True if the flash may be read: otherwise no record is read. */
-static bool flash_boot(void) {
+bool flash_boot(void) {
     (void)mx25r_wake(); /* its ID check fails while WIP = 1; checked below */
     bool     idle = mx25r_wait_idle();
     uint32_t id   = 0;
@@ -1367,8 +1310,8 @@ static bool flash_boot(void) {
     return ok;
 }
 
-static void flash_check(void) {
-    bool     in_frame = rx.assembling || gpio_get(GPIOA, BOARD_GDO0_PIN);
+void flash_check(void) {
+    bool     in_frame = radio_rx.assembling || gpio_get(GPIOA, BOARD_GDO0_PIN);
     uint32_t id       = mx25r_read_id();
     if (id == MX25R_JEDEC_ID) {
         COUNT(flash_ok);
@@ -1386,54 +1329,53 @@ static void flash_check(void) {
  * kBaud, -104 dBm (cc110l.txt:600-603; 50 kBaud here), and well below the
  * -41 to -72 dBm of the tado frames seen on the bench (radio-runtime.md,
  * P2). The highest RSSI of the minute's listens is logged, to set it from
- * bench data. */
-#define LBT_RSSI_BUSY_DBM (-85)
-static bool lbt_listening;
-static bool lbt_rssi_seen; /* lbt_rssi_max_x2 holds a value this minute */
-static int  lbt_rssi_max_x2;
+ * bench data. LBT_RSSI_BUSY_DBM: src/radio_internal.h. */
+bool lbt_listening;
+bool lbt_rssi_seen; /* lbt_rssi_max_x2 holds a value this minute */
+int  lbt_rssi_max_x2;
 
 static void log_minute(void) {
     LOG("radio: 60 s: frames %lu (crc ok %lu, bad %lu, wake %lu), overflow %lu, bad len %lu, stale "
         "%lu, "
         "rearm %lu, reinit %lu, spi err %lu, status glitch %lu, irq storm %lu",
-        (unsigned long)minute.frames,
-        (unsigned long)minute.crc_ok,
-        (unsigned long)minute.crc_bad,
-        (unsigned long)minute.wake,
-        (unsigned long)minute.overflow,
-        (unsigned long)minute.bad_len,
-        (unsigned long)minute.stale,
-        (unsigned long)minute.rearm,
-        (unsigned long)minute.reinit,
-        (unsigned long)minute.spi_err,
-        (unsigned long)minute.status_glitch,
-        (unsigned long)minute.storm);
+        (unsigned long)radio_minute.frames,
+        (unsigned long)radio_minute.crc_ok,
+        (unsigned long)radio_minute.crc_bad,
+        (unsigned long)radio_minute.wake,
+        (unsigned long)radio_minute.overflow,
+        (unsigned long)radio_minute.bad_len,
+        (unsigned long)radio_minute.stale,
+        (unsigned long)radio_minute.rearm,
+        (unsigned long)radio_minute.reinit,
+        (unsigned long)radio_minute.spi_err,
+        (unsigned long)radio_minute.status_glitch,
+        (unsigned long)radio_minute.storm);
     LOG("flash: 60 s: JEDEC ID ok %lu, mismatch %lu (%lu during a frame); total frames %lu, "
         "flash mismatches %lu",
-        (unsigned long)minute.flash_ok,
-        (unsigned long)minute.flash_bad,
-        (unsigned long)minute.flash_in_frame,
-        (unsigned long)total.frames,
-        (unsigned long)total.flash_bad);
+        (unsigned long)radio_minute.flash_ok,
+        (unsigned long)radio_minute.flash_bad,
+        (unsigned long)radio_minute.flash_in_frame,
+        (unsigned long)radio_total.frames,
+        (unsigned long)radio_total.flash_bad);
     const struct mx25r_stats *fs = mx25r_stats();
     LOG("flash: 60 s: radio served %lu times during flash work, frames %lu, acks %lu; totals: "
         "cycles %lu (longest %lu us), held %lu (longest %lu us, gave up %lu)",
-        (unsigned long)minute.flash_serve,
-        (unsigned long)minute.flash_frames,
-        (unsigned long)minute.flash_acks,
+        (unsigned long)radio_minute.flash_serve,
+        (unsigned long)radio_minute.flash_frames,
+        (unsigned long)radio_minute.flash_acks,
         (unsigned long)fs->cycles,
         (unsigned long)fs->cycle_max,
         (unsigned long)fs->held,
         (unsigned long)fs->held_max,
         (unsigned long)fs->gave_up);
     struct freqoff_report fr;
-    freqoff_report(&fo, &fr);
+    freqoff_report(&radio_fo, &fr);
     LOG("radio: 60 s: freqest in packet %lu, none %lu (stale sample dropped %lu), sync rssi "
         "differs %lu; our network %lu frames, mean %+ld Hz (%d..%d)",
-        (unsigned long)minute.fe_pkt,
-        (unsigned long)minute.fe_none,
-        (unsigned long)minute.fe_stale,
-        (unsigned long)minute.fe_rssi_diff,
+        (unsigned long)radio_minute.fe_pkt,
+        (unsigned long)radio_minute.fe_none,
+        (unsigned long)radio_minute.fe_stale,
+        (unsigned long)radio_minute.fe_rssi_diff,
         (unsigned long)fr.minute_n,
         (long)fr.minute_mean_hz,
         fr.minute_min,
@@ -1456,25 +1398,25 @@ static void log_minute(void) {
     /* Two lines: one log line holds 191 characters (src/log.c). */
     LOG("link: 60 s: acks prepared %lu sent %lu too late %lu, tx frames %lu fail %lu refused %lu "
         "(no pll lock %lu)",
-        (unsigned long)minute.ack_prepared,
-        (unsigned long)minute.ack_sent,
-        (unsigned long)minute.ack_late,
-        (unsigned long)minute.tx_frames,
-        (unsigned long)minute.tx_fail,
-        (unsigned long)minute.tx_refused,
-        (unsigned long)minute.tx_no_lock);
+        (unsigned long)radio_minute.ack_prepared,
+        (unsigned long)radio_minute.ack_sent,
+        (unsigned long)radio_minute.ack_late,
+        (unsigned long)radio_minute.tx_frames,
+        (unsigned long)radio_minute.tx_fail,
+        (unsigned long)radio_minute.tx_refused,
+        (unsigned long)radio_minute.tx_no_lock);
     LOG("link: airtime last hour %lu ms of %lu ms; 60 s: refused for airtime %lu frames, %lu acks; "
         "acks failed %lu (re-armed %lu)",
         (unsigned long)(cc110l_airtime_used_us() / 1000u),
         (unsigned long)(AIRTIME_BUDGET_US / 1000u),
-        (unsigned long)minute.tx_duty,
-        (unsigned long)minute.ack_duty,
+        (unsigned long)radio_minute.tx_duty,
+        (unsigned long)radio_minute.ack_duty,
         (unsigned long)acks_failed,
-        (unsigned long)minute.ack_rearm);
+        (unsigned long)radio_minute.ack_rearm);
     {
         char r[12];
         LOG("link: 60 s: listens busy by rssi %lu (threshold %d dBm), highest listen rssi %s%s",
-            (unsigned long)minute.lbt_rssi_busy,
+            (unsigned long)radio_minute.lbt_rssi_busy,
             LBT_RSSI_BUSY_DBM,
             lbt_rssi_seen ? half_db(r, sizeof r, lbt_rssi_max_x2) : "none",
             lbt_rssi_seen ? " dBm" : "");
@@ -1493,11 +1435,11 @@ static void log_minute(void) {
     if (ps->windows) {
         LOG("pair: 60 s: beacons sent %lu, not sent: end not live %lu, busy %lu, late %lu, failed "
             "%lu; totals: requests answered %lu, from others %lu",
-            (unsigned long)minute.beacon_sent,
-            (unsigned long)minute.beacon_no_stamp,
-            (unsigned long)minute.beacon_busy,
-            (unsigned long)minute.beacon_late,
-            (unsigned long)minute.beacon_fail,
+            (unsigned long)radio_minute.beacon_sent,
+            (unsigned long)radio_minute.beacon_no_stamp,
+            (unsigned long)radio_minute.beacon_busy,
+            (unsigned long)radio_minute.beacon_late,
+            (unsigned long)radio_minute.beacon_fail,
             (unsigned long)ps->req[PAIR_REQ_OK],
             (unsigned long)ps->req[PAIR_REQ_NOT_TARGET]);
         LOG("pair: totals: windows %lu, paired %lu, target frames %lu, RA pairs %lu, d/pair sent "
@@ -1510,13 +1452,13 @@ static void log_minute(void) {
             (unsigned long)ps->dpair_delivered,
             (unsigned long)ps->dpair_failed);
     }
-    minute = (struct counters){0};
+    radio_minute = (struct counters){0};
 }
 
 /* --- The coordinator's radio (src/csl.h "Port") ------------------------------- */
 /* Notification bits taken while a frame of ours is on the air, for the task
  * loop to act on afterwards. */
-static uint32_t pending_bits;
+uint32_t pending_bits;
 
 uint64_t csl_port_now(void) {
     return now64();
@@ -1525,8 +1467,8 @@ uint64_t csl_port_now(void) {
 /* Backoff source: xorshift32, seeded once from the DRBG when it is ready
  * (rng_try_bytes never waits). Until then, and mixed in afterwards, the
  * microsecond clock: the backoff only has to differ between attempts. */
-static uint32_t lbt_state;
-static bool     lbt_seeded;
+uint32_t lbt_state;
+bool     lbt_seeded;
 
 uint32_t csl_port_random(void) {
     uint32_t x = lbt_state ^ timebase_us();
@@ -1560,12 +1502,12 @@ static void tx_wait_tick(void) {
  * for a frame that answers a received one. mark: the pairing LED goes on
  * right after the STX strobe (#19, the beacon's scope marker), and *stx_us
  * (if not NULL) is the time just after it. */
-static bool send_frame(const uint8_t *frame,
-                       size_t         len,
-                       const uint8_t *answered,
-                       unsigned       flags,
-                       bool           mark,
-                       uint32_t      *stx_us) {
+bool send_frame(const uint8_t *frame,
+                size_t         len,
+                const uint8_t *answered,
+                unsigned       flags,
+                bool           mark,
+                uint32_t      *stx_us) {
     if (!gdo_irq_on) {
         /* The storm guard tripped or a re-init failed: the chip may have
          * reset and is not known to hold our configuration. Nothing goes
@@ -1603,9 +1545,9 @@ static bool send_frame(const uint8_t *frame,
         return false;
     }
     /* cc110l_tx_start() emptied the RX FIFO. */
-    rx.assembling   = false;
-    rx.in_packet    = false;
-    fe_sample.valid = false;
+    radio_rx.assembling = false;
+    radio_rx.in_packet  = false;
+    fe_sample.valid     = false;
     if (r != CC_TX_OK) {
         return tx_failed();
     }
@@ -1645,8 +1587,8 @@ static bool send_frame(const uint8_t *frame,
         /* A sync word already: its edge went to tx_wait_tick(), which
          * drops the edges of our own frame. Pump every tick as for any
          * other packet. */
-        rx.in_packet = true;
-        rx.sync_us   = timebase_us();
+        radio_rx.in_packet = true;
+        radio_rx.sync_us   = timebase_us();
     }
     return true;
 }
@@ -1676,7 +1618,7 @@ static bool on_air_now(void) {
     return packet_arriving() || cc110l_tx_expected();
 }
 
-static void lbt_sample_rssi(void) {
+void lbt_sample_rssi(void) {
     uint8_t raw;
     if (!cc110l_read_status_stable(CC_RSSI, &raw)) {
         COUNT(spi_err);
@@ -1746,7 +1688,7 @@ bool csl_port_listen_busy(void) {
  * during an exchange): about 3.3 ms dark, too short to see. A beacon not
  * sent leaves it off until the end of this task loop pass, which sets it
  * as the window says. */
-static void beacon_answer(uint32_t fall_us, bool own_end) {
+void beacon_answer(uint32_t fall_us, bool own_end) {
     size_t         len      = 0;
     const uint8_t *answered = NULL;
     const uint8_t *b        = link_beacon(&len, &answered);
@@ -1822,7 +1764,7 @@ static void beacon_answer(uint32_t fall_us, bool own_end) {
  * then holds no path to network_create() or link_pair_open(). Returns
  * PAIR_REMOTE_OPENED or why not (src/pair_remote.h); logs only the
  * creation of a network. */
-static bool flash_ready; /* flash_boot() succeeded: the records may be read and written */
+bool flash_ready; /* flash_boot() succeeded: the records may be read and written */
 
 /* The one test for a target named in the build: radio_pair_target_named()
  * for the boot banner (src/main.c) and the session (src/session.c), and
@@ -1892,7 +1834,7 @@ static enum pair_remote_rc pairing_open(uint32_t window_ms) {
 
 /* The pair button (#19): open a window of PAIR_WINDOW_MS, or close the one
  * that is open (whoever opened it). */
-static void pairing_trigger(uint32_t now_ms) {
+void pairing_trigger(uint32_t now_ms) {
     if (link_pair_active(now_ms)) {
         link_pair_close();
         LOG("pair: window closed by the pair button");
@@ -1922,7 +1864,7 @@ static void pairing_trigger(uint32_t now_ms) {
  * flash_quiet(), as the button. The outcome goes back to the net task,
  * which answers the request and writes its one log line; nothing is logged
  * here except a network's creation. */
-static void pairing_remote(uint32_t now_ms) {
+void pairing_remote(uint32_t now_ms) {
     bool     open;
     uint32_t window_ms, secs = 0;
     if (!pair_remote_claim(&open, &window_ms)) {
@@ -1946,8 +1888,8 @@ static void pairing_remote(uint32_t now_ms) {
 }
 
 void radio_request_remote_pairing(void) {
-    if (self) {
-        xTaskNotify(self, NOTE_PAIR_REMOTE, eSetBits);
+    if (radio_self) {
+        xTaskNotify(radio_self, NOTE_PAIR_REMOTE, eSetBits);
     }
 }
 
@@ -1959,7 +1901,7 @@ void radio_request_remote_pairing(void) {
  * ("network: no network record"), or whatever survived a failed one. */
 #define FACTORY_LOG_MS 200u /* time for the debugger to read the last RTT lines */
 
-static void factory_reset(void) {
+void factory_reset(void) {
     if (!flash_ready) {
         LOG("factory reset: flash not ready at boot: nothing erased");
         return;
@@ -1980,7 +1922,7 @@ static void factory_reset(void) {
  * the loop runs csl_step() before the update task (lower priority) can
  * post the next one, so the coordinator gets a transaction in between
  * (tests/host/test_csl.c, test_update_windows_under_traffic()). */
-static void update_op_run(void) {
+void update_op_run(void) {
     struct fwupd_op *op = handoff_claim();
     if (op == NULL) {
         return; /* withdrawn by the update task a moment ago (src/handoff.h) */
@@ -2036,9 +1978,7 @@ void csl_port_report(const struct csl_report *r) {
 /* --- The receiver's share of a task loop pass -------------------------------
  * Run by the task loop, and from inside flash work (#22, below). bits: the
  * notifications just taken. */
-#define RX_SERVICE_BITS (NOTE_GDO0 | NOTE_CRCOK | NOTE_SYNC | NOTE_ACK_CHECK | NOTE_ACK_REARM)
-
-static void rx_service(uint32_t bits) {
+void rx_service(uint32_t bits) {
     /* The ACK interrupt failed after it had made the chip IDLE: back to
      * RX now, not at the next health check. CHECK: the interrupt strobed
      * SRX and kept the RX FIFO, so the frame can still be read if the
@@ -2056,8 +1996,8 @@ static void rx_service(uint32_t bits) {
     }
 
     if (bits & NOTE_SYNC) {
-        rx.in_packet = true;
-        rx.sync_us   = timebase_us();
+        radio_rx.in_packet = true;
+        radio_rx.sync_us   = timebase_us();
     }
     rx_pump();
     if (bits & NOTE_SYNC) {
@@ -2081,7 +2021,7 @@ static void rx_service(uint32_t bits) {
  * flash work), the quiet-moment work, and the notifications for it, which
  * stay in pending_bits for the loop. A flash access made from here would
  * nest: there is none, and `serving` stops the nesting anyway. */
-static bool radio_running; /* bring-up done, the task loop runs */
+bool        radio_running; /* bring-up done, the task loop runs */
 static bool serving;
 
 bool mx25r_port_radio_busy(void) {
@@ -2100,7 +2040,7 @@ void mx25r_port_radio_serve(void) {
     }
     serving         = true;
     uint32_t bits   = 0;
-    uint32_t frames = total.frames, acks = total.ack_sent;
+    uint32_t frames = radio_total.frames, acks = radio_total.ack_sent;
     /* As the loop: wake on a GDO interrupt, else at the next tick. */
     (void)xTaskNotifyWait(0, UINT32_MAX, &bits, 1);
     watchdog_checkin(WDG_RADIO);
@@ -2109,10 +2049,10 @@ void mx25r_port_radio_serve(void) {
     rx_service(bits);
     pending_bits |= bits & ~RX_SERVICE_BITS;
     COUNT(flash_serve);
-    minute.flash_frames += total.frames - frames;
-    total.flash_frames += total.frames - frames;
-    minute.flash_acks += total.ack_sent - acks;
-    total.flash_acks += total.ack_sent - acks;
+    radio_minute.flash_frames += radio_total.frames - frames;
+    radio_total.flash_frames += radio_total.frames - frames;
+    radio_minute.flash_acks += radio_total.ack_sent - acks;
+    radio_total.flash_acks += radio_total.ack_sent - acks;
     (void)cc110l_tx_expected();
     if (!tx_watch()) {
         radio_reinit();
@@ -2168,7 +2108,7 @@ static void link_start(void) {
 }
 
 void radio_task_run(void) {
-    self = xTaskGetCurrentTaskHandle();
+    radio_self = xTaskGetCurrentTaskHandle();
     LOG("spi1: SCK %lu Hz, mode 0", (unsigned long)spi1_sck_hz());
 
     watchdog_checkin(WDG_RADIO);
@@ -2178,7 +2118,7 @@ void radio_task_run(void) {
      * the net task sets the Ethernet MAC (#39, src/net.c mac_choose()). */
     identity_boot(flash_ok);
     link_start();
-    freqoff_init(&fo);
+    freqoff_init(&radio_fo);
     if (flash_ok) {
         network_boot(); /* key and counter reservation from flash, before the radio (#37) */
     } else {
@@ -2227,7 +2167,7 @@ void radio_task_run(void) {
             /* The quick flash of the pairing LED (100 ms halves) needs a pass every 20 ms. */
             wait = 20;
         }
-        if (wait > 1 && (rx.assembling || rx.in_packet)) {
+        if (wait > 1 && (radio_rx.assembling || radio_rx.in_packet)) {
             wait = 1; /* a frame is arriving: pump the FIFO every tick */
         }
         if (pending_bits) {
