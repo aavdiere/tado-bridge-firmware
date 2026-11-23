@@ -20,6 +20,7 @@
 #include "bl_hw.h"
 
 #include "bootctl.h"
+#include "fault_led.h"
 #include "flash_layout.h"
 #include "fwimg.h"
 #include "mx25r_ops.h"
@@ -117,23 +118,25 @@ void fwimg_port_progress(void) {
 }
 
 /* N short flashes, then dark, every 2.5 s, as the application's fault codes
- * (docs/hardware.md "LED roles"); kicks the IWDG, so it stays here until a
- * power cycle or SWD. */
+ * (src/fault_led.h; docs/hardware.md "LED roles"); kicks the IWDG, so it
+ * stays here until a power cycle or SWD. */
+_Static_assert(BL_LED_NO_APP <= FAULT_LED_CODE_MAX && BL_LED_GUARD <= FAULT_LED_CODE_MAX,
+               "the flashes fit the cycle");
 __attribute__((noreturn)) void bl_halt(unsigned code) {
     for (;;) {
         for (unsigned i = 0; i < code; i++) {
             led(true);
-            for (unsigned t = 0; t < 150u; t++) {
+            for (unsigned t = 0; t < FAULT_LED_ON_MS; t++) {
                 delay_ms(1);
                 IWDG_KR = IWDG_KR_RESET;
             }
             led(false);
-            for (unsigned t = 0; t < 250u; t++) {
+            for (unsigned t = 0; t < FAULT_LED_OFF_MS; t++) {
                 delay_ms(1);
                 IWDG_KR = IWDG_KR_RESET;
             }
         }
-        for (unsigned t = 400u * code; t < 2500u; t++) {
+        for (unsigned t = FAULT_LED_FLASH_MS * code; t < FAULT_LED_CYCLE_MS; t++) {
             delay_ms(1);
             IWDG_KR = IWDG_KR_RESET;
         }

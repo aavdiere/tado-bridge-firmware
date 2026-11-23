@@ -9,6 +9,7 @@
 
 #include "board.h"
 #include "enc28j60.h"
+#include "fault_led.h"
 #include "identity.h"
 #include "link.h"
 #include "log.h"
@@ -118,21 +119,19 @@ static void idle_ms(uint32_t ms) {
 }
 
 /* Latched fault with the scheduler running: the power LED shows `code` short
- * flashes and a pause, repeating for ms (docs/hardware.md, "LED roles"). The
- * LED is off between the flashes, so the code stands out from steady on. */
-#define FLASH_ON_MS    150u
-#define FLASH_OFF_MS   250u
-#define FLASH_CYCLE_MS 2500u
+ * flashes and a pause, repeating for ms (src/fault_led.h; docs/hardware.md,
+ * "LED roles"). The LED is off between the flashes, so the code stands out
+ * from steady on. */
 static void fault_flash_ms(unsigned code, uint32_t ms) {
-    for (uint32_t t = 0; t < ms; t += FLASH_CYCLE_MS) {
+    for (uint32_t t = 0; t < ms; t += FAULT_LED_CYCLE_MS) {
         for (unsigned i = 0; i < code; i++) {
             board_led(LED_POWER, true);
-            vTaskDelay(pdMS_TO_TICKS(FLASH_ON_MS));
+            vTaskDelay(pdMS_TO_TICKS(FAULT_LED_ON_MS));
             board_led(LED_POWER, false);
             watchdog_checkin(WDG_NET);
-            vTaskDelay(pdMS_TO_TICKS(FLASH_OFF_MS));
+            vTaskDelay(pdMS_TO_TICKS(FAULT_LED_OFF_MS));
         }
-        idle_ms(FLASH_CYCLE_MS - code * (FLASH_ON_MS + FLASH_OFF_MS));
+        idle_ms(FAULT_LED_PAUSE_MS(code));
     }
 }
 

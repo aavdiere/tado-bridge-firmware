@@ -1,6 +1,7 @@
 #include "log.h"
 
 #include "board.h"
+#include "fault_led.h"
 #include "rtt.h"
 #include "timebase.h"
 #include "watchdog.h"
@@ -54,11 +55,9 @@ void log_printf(const char *fmt, ...) {
  * counter (timebase_us) and writes the LED pin by register. The IWDG is kicked
  * for the first PANIC_KICK_CYCLES flash cycles (about 10 s at most) so the
  * code can be read, then not kicked: the board resets 2-5.6 s later (the IWDG
- * timeout), so a panic never hangs for good and the reset cause logs IWDG. */
-#define PANIC_FLASH_ON_MS  150u
-#define PANIC_FLASH_OFF_MS 250u
-#define PANIC_CYCLE_MS     2500u
-#define PANIC_KICK_CYCLES  4u
+ * timeout), so a panic never hangs for good and the reset cause logs IWDG.
+ * The pattern: src/fault_led.h. */
+#define PANIC_KICK_CYCLES 4u
 
 static void panic_wait_ms(uint32_t ms, bool kick) {
     uint32_t t0 = timebase_us();
@@ -75,11 +74,11 @@ __attribute__((noreturn)) static void panic_flash(unsigned code) {
         bool kick = cycle < PANIC_KICK_CYCLES;
         for (unsigned i = 0; i < code; i++) {
             board_led(LED_POWER, true);
-            panic_wait_ms(PANIC_FLASH_ON_MS, kick);
+            panic_wait_ms(FAULT_LED_ON_MS, kick);
             board_led(LED_POWER, false);
-            panic_wait_ms(PANIC_FLASH_OFF_MS, kick);
+            panic_wait_ms(FAULT_LED_OFF_MS, kick);
         }
-        panic_wait_ms(PANIC_CYCLE_MS - code * (PANIC_FLASH_ON_MS + PANIC_FLASH_OFF_MS), kick);
+        panic_wait_ms(FAULT_LED_PAUSE_MS(code), kick);
     }
 }
 

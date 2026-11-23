@@ -18,6 +18,7 @@
 
 #include "board.h"
 #include "coap.h"
+#include "fault_led.h"
 #include "fwupd_task.h"
 #include "identity.h"
 #include "link.h"
@@ -879,25 +880,19 @@ static void leds(void) {
 }
 
 /* No identity record (#21): the power LED shows FAULT_IDENTITY, short
- * flashes and a pause every 2.5 s, as fault_flash_ms() in src/net.c does
- * for the entropy code (docs/hardware.md, "LED roles"), but without
- * blocking: this task keeps its watchdog check-in and the Ethernet side.
- * The net task drives the power LED only after the entropy check passed,
- * so the two codes never mix. At the tick counter's wrap one cycle is cut
- * short. */
-#define ID_FLASH_ON_MS    150u
-#define ID_FLASH_OFF_MS   250u
-#define ID_FLASH_CYCLE_MS 2500u
-_Static_assert(FAULT_IDENTITY *(ID_FLASH_ON_MS + ID_FLASH_OFF_MS) < ID_FLASH_CYCLE_MS,
-               "the flashes fit the cycle");
+ * flashes and a pause every 2.5 s (src/fault_led.h), as fault_flash_ms() in
+ * src/net.c does for the entropy code (docs/hardware.md, "LED roles"), but
+ * without blocking: this task keeps its watchdog check-in and the Ethernet
+ * side. The net task drives the power LED only after the entropy check
+ * passed, so the two codes never mix. At the tick counter's wrap one cycle
+ * is cut short. */
+_Static_assert(FAULT_IDENTITY <= FAULT_LED_CODE_MAX, "the flashes fit the cycle");
 static void identity_led(void) {
     if (identity_state() != IDENTITY_NONE) {
         return; /* TLS setup failed instead: tls.c logged it; LED stays steady */
     }
-    uint32_t t  = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS) % ID_FLASH_CYCLE_MS;
-    uint32_t k  = t / (ID_FLASH_ON_MS + ID_FLASH_OFF_MS);
-    bool     on = k < FAULT_IDENTITY && t % (ID_FLASH_ON_MS + ID_FLASH_OFF_MS) < ID_FLASH_ON_MS;
-    board_led(LED_POWER, on);
+    board_led(LED_POWER,
+              fault_led_on(FAULT_IDENTITY, (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS)));
 }
 
 /* Uplinks from devices, queued by the radio task: to the server while the
