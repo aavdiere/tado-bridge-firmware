@@ -118,7 +118,7 @@ Follow freedo and tanoclo (project decision).
 7. Use tag `0x12` (network key, length 16). Tag `0x07` needs the cloud-only per-device key (`:630-633`).
 8. Device answers 2.04 under the new network key within 30 ms, then `auth/token`, RS, `time`, config, and starts reporting (`:635-637`, `tanoclo/docs/pairing.md:102-112`).
 
-**Implemented (#19, 2026-11-17), on air 2026-11-17 (`test-bench.md`, "Pairing test (#19) result"):** `src/pair.c` and its use in `src/link.c` and `src/radio.c`; the window is opened by the pair button for one device named at build time. **Since #40 (2026-11-20, host-tested, not on air yet) the server can open it too**, for the same device and with the same guards, for its duration up to 10 minutes, and close it (`radio-runtime.md`, "Remote trigger (#40)"). Beacon answer timing (preamble about 3.9-4.0 ms after the request, designed) and the guards: `radio-runtime.md`, "Pairing (#19)".
+**Implemented (#19, 2026-11-17), on air 2026-11-17 (`test-bench.md`, "Pairing test (#19) result"):** `src/pair.c` and its use in `src/link.c` and `src/radio_pair.c`; the window is opened by the pair button for one device named at build time. **Since #40 (2026-11-20, host-tested, not on air yet) the server can open it too**, for the same device and with the same guards, for its duration up to 10 minutes, and close it (`radio-runtime.md`, "Remote trigger (#40)"). Beacon answer timing (preamble about 3.9-4.0 ms after the request, designed) and the guards: `radio-runtime.md`, "Pairing (#19)".
 
 **Exposure:** the network key crosses the air under a key every valve shares, so keep windows short and the band quiet (`freedo/docs/PROTOCOL.md:737-738`).
 
