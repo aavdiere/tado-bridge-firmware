@@ -68,6 +68,7 @@ The backup shows the bench IB01 is configured for **channel 26**, the same chann
 - `tools/sdr/burstscan.py`: power-versus-time scan of a whole capture; every energy burst per channel must be a decoded frame, spill-over from a stronger channel, or is listed with duration, centroid, width and symbol rate. Used to confirm that a receive-only image emits nothing.
 - `tools/sdr/ackgap.py`: Data end to Enhanced ACK preamble per frame from a `demod.py --csv` file, uplinks and downlinks apart, unanswered uplinks listed, each pair on host time and tagged when it falls in a TLS handshake from the RTT log (#18). Usage and results: "ACK timing (#18)".
 - `tools/sdr/stockscore.py`: the stock network's delivery per 10-minute block from a `demod.py --csv` file of the stock channel (#20, abort rule 2 of "P7.1 channel 26, plan"): coordinator Data frames ACKed by their device, device uplinks ACKed by the coordinator, retransmissions, CRC failures (overlapping any frame, and overlapping one of ours), busy share and the listen-window busy rate LBT sees; our frames (bridge, spare device, 4048 us trains) apart from stock; the short-address check by hash; `--save-baseline` and `--baseline` for scoring a run against the baseline. No address is printed. Usage and result: "P7.1 step 1 baseline result".
+- `tools/sdr/p71ours.py`: our frames on the stock channel from a `demod.py --csv` file (#20, rule 3 of "P7.1 channel 26, plan"): wake-up trains and their step, ACK gaps both ways between the bridge and the spare device, beacons after Beacon Requests (`--beacons`), and any frame with the bridge's ACK fingerprint after a stock Data frame (`suspect answers`); receive-only, prints no address. Result: "P7.1 runs A1 and B result".
 - `tools/sdr/timedcap.py`: writes `rtl_sdr`'s output to a file plus `<file>.times.csv` (host time per byte offset, about every 0.1 s), for a capture without hopping.
 - `tools/sdr/rttlog.py`: the RTT stream from OpenOCD's port 19021 with a host-time prefix per line; read-only.
 - `tools/sdr/hs18place.py`: for the temporary #18 test image, places each bridge ACK inside a TLS handshake step, between steps or outside, from the RTT `rx: t` and `hs18:` ticks, and checks the tick against the air time. Usage and result: "ACK during a TLS handshake (#18)".
@@ -1111,7 +1112,7 @@ The firmware half of #41 works: each pairing was reported once, right after `PAI
 
 ## P7.1 channel 26, plan [I]
 
-**Step 1 done 2026-11-21 ("P7.1 step 1 baseline result" below); steps 2-7 not run.** Stage P7.1 (#20, milestone "P7.1"; `prototype-plan.md`, "P7.1"): the test network moves from channel 16 to channel 26, next to the owner's live stock network, and #20 measures our delivery there with listen-before-transmit (LBT) on and off. It runs under the P7.1 exception to the channel-26 hard rule (`CLAUDE.md`, owner 2026-11-20). The owner accepted the abort rules below and approved run B (LBT off) on 2026-11-21 (`README.md`, "Project decisions", "P7.1 abort rules and run B"); the same day the owner accepted the cost of the broadcast wake trains for the P7.1 runs only, set the 10-minute owner check of each run, and decided that run B is built from its own branch `p71-lbt-off`, never from main (`README.md`, "Project decisions").
+**Steps 1-5 done (step 1 on 2026-11-21, steps 2-5 on 2026-11-23; "P7.1 step 1 baseline result" and "P7.1 runs A1 and B result" below). Run B went over abort rule 2, so run A2 (step 6) did not start and the bench went back to the channel-16 image; the re-pair on channel 16 and the SDR check after it are still to do.** Stage P7.1 (#20, milestone "P7.1"; `prototype-plan.md`, "P7.1"): the test network moves from channel 16 to channel 26, next to the owner's live stock network, and #20 measures our delivery there with listen-before-transmit (LBT) on and off. It runs under the P7.1 exception to the channel-26 hard rule (`CLAUDE.md`, owner 2026-11-20). The owner accepted the abort rules below and approved run B (LBT off) on 2026-11-21 (`README.md`, "Project decisions", "P7.1 abort rules and run B"); the same day the owner accepted the cost of the broadcast wake trains for the P7.1 runs only, set the 10-minute owner check of each run, and decided that run B is built from its own branch `p71-lbt-off`, never from main (`README.md`, "Project decisions").
 
 **Rules of "The other tado network" that this plan suspends or changes.** Only these; every other rule there stays in force.
 - **Rule 2 (protected channel):** channel 26 itself is allowed, only in an image built with both opt-ins (`src/txgate.h` rule 1, `TXGATE_NET_ON_PROTECTED`). Its neighbours, within 5 channels, stay refused in every build.
@@ -1237,3 +1238,47 @@ python3 -I tools/sdr/stockscore.py --csv ~/ib01-captures/p71/runA1.frames.csv \
 ```
 
 Each block line ends in `ok` or in the names of the thresholds it is over (`DOWN-ACK`, `UP-ACK`, `RETX`, `CRC-OURS`). The block lines also give our frames, our trains and our `ff ff` trains per block, for rule 3 and the wake-train count. The tail gives the run pooled against the baseline, a `RETX-RUN` line if the run's retransmissions are over, and a verdict line. Decoding takes about a quarter of real time, about 8 minutes for a 32-minute capture.
+
+## P7.1 runs A1 and B result (2026-11-23) [V]
+
+Steps 2-5 of "P7.1 channel 26, plan" above. Captures, CSV files, score outputs and RTT logs are in `~/ib01-captures/p71/` (`pair26.*`, `runA1.*`, `runB.*`, `runA.rtt.log`, `runB.rtt.log`), outside git. Senders by role or hash only. The owner checked the tado app at each 10-minute mark; no trouble was reported. Owner rule of 2026-11-23: no reply within 5 minutes of a reminder counts as ok.
+
+**Step 2, image A.** Flashed over SWD and verified, `bfdd3a97` (the reviewed hash). RTT lost the radio task's boot lines twice; the re-pair below logged `replacing the record seq 1 for channel 16`, and before it the minute lines showed `tx frames 0` and `RA 0` (`runA.rtt.log`).
+
+**Step 3, re-pair on channel 26 (10:18 UTC).** The window was opened from the server (localhost route, as in #41), and the spare device paired about 30 s later: `PAIRED: the target took the network key, acked`; `POST found` answered 2.03. The window was closed by DELETE after about 35 s. The spare's device row stayed as it was (home 1, zone 1, VA02). SDR (`pair26.ours.txt`): 2 Enhanced Beacons, each 4057-4058 us after a Beacon Request of the spare (rule: 2.4-7.4 ms); 10 stock Beacon Requests after the window closed got nothing.
+
+**Scores against the baseline** (`stockscore.py`, owner's retransmission rule of 2026-11-23; per 10-minute block):
+
+| Run | Block | Coordinator Data ACKed by device | Device uplinks ACKed | Retransmissions | CRC fails over ours | Stock busy | Result |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Baseline | pooled | 91.3 % | 98.2 % | 1.94 per block | - | 2.39 % | - |
+| A1, LBT on | 0 | 45/48 93.8 % | 61/61 100 % | 0 | 0 | 2.09 % | ok |
+| A1 | 1 | 49/53 92.5 % | 79/81 97.5 % | 2 | 0 | 2.03 % | ok |
+| A1 | 2 | 46/53 86.8 % | 70/74 94.6 % | 4 | 0 | 2.10 % | ok |
+| A1 | run | 91.4 % | 97.4 % | 6 (limit 12.4) | | | **within** |
+| B, LBT off | 0 | 63/65 96.9 % | 89/98 90.8 % | 9 | 0 | 2.49 % | RETX |
+| B | 1 | 97/100 97.0 % | 130/137 94.9 % | 7 | 0 | 3.21 % | RETX |
+| B | 2 | 212/231 91.8 % | 291/297 98.0 % | 24 | 1 | 7.08 % | RETX |
+| B | run | 93.9 % | 95.9 % | 40 (limit 11.7) | | | **OVER (RETX-RUN)** |
+
+Sources: `runA1.score.txt` lines 4-13, `runA1.score.tail.txt` (the last 118 s, ok), `runB.score.txt` lines 4-14.
+
+**Our side.**
+
+| | A1 (LBT on) | B (LBT off) |
+| :--- | :--- | :--- |
+| Overlay PUTs (60 s apart, all 200; read back MANUAL 21.0 °C) | 30 | 30 |
+| Downlinks to the spare (RTT `tx: datagram`) | 44, all delivered: 37 first attempt, 6 second, 1 third | 85, all delivered: 83 first attempt, 2 second |
+| Spare's ACK to our Data, gap | 40 of 48, median 385.2 us (the 8 without are the RTT's `no ack`, nothing on air in their ACK windows) | 81, median 372.9 us |
+| Our ACK to the spare's uplinks, gap | 40 of 40, median 223.3 us (222.7-223.6) | 81, median 223.3 us (222.8-233.8) |
+| Wake-up trains, per-train median step | 52, 4049.7 us | 89, 4049.2 us |
+| `ff ff` (broadcast RA) trains | 4 | 5 |
+| Busy listens | 0 (`listens busy by rssi 0`) | 4 ignored (`busy listens ignored ... total 4`) |
+| Highest airtime in the window | 22.0 s of 30 s, none refused | 15.5 s of 30 s, none refused |
+| Answers to stock frames, rule-3 breaches | 0, 0 | 0, 0 |
+
+Sources: `runA1.ours.txt`, `runA1.ackgap.ours.txt`, `runB.ours.txt`, `runA.rtt.log`, `runB.rtt.log`, `runA1.puts.log`, `runB.puts.log`. Channels 20-25, 27 and 28 in A1: no frame of ours. The RTT's `mic fail` count (about 1280 in A1) is the stock network's `49 e8` broadcasts under the stock key, from two senders about every 3 s each; our network shares PAN `0xABCD` (#43).
+
+**Reading [I].** Run B trips on retransmissions only; the ACK shares and the CRC-over-ours test stay well inside. Stock traffic in B's block 2 was about four times the usual (231 coordinator Data frames, busy 7.1 %), so part of B's count follows the load. Per stock Data frame, though, B's retransmission rate is about 3-5 % in every block, against about 1.3 % in the baseline and in A1, so the excess very probably comes from transmitting without listening first. With LBT on, A1 shows no measurable effect on the stock network. Per abort rule 2, run A2 did not start.
+
+**Bench state after the runs (12:36 UTC).** Image D (channel 16, `3d08cf92`, the reviewed hash, rebuilt from a clean export of `29510a9`) flashed over SWD and verified. Boot: `network: record seq 2 is for channel 26, this image for channel 16 only: not used, no key, nothing sent`; first minute line `tx frames 0`. The channel-26 record stays in flash: run A2, if the owner wants it, needs only image A again. Still to do for the end of P7.1: re-pair the spare device on channel 16 (owner: pairing mode), then 10 minutes of SDR on channel 26 ("Back to channel 16", steps 2-3).
