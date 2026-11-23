@@ -172,4 +172,17 @@ So our fixed mbedTLS suite, curve and SHA-256 signature match the cloud **[I]**;
 - So the cloud accepts the connection and keeps it open but never answers a serial-only `auth/key`, within at least 190 s. It does not close an unknown or unauthenticated serial either; the connection just idles **[V]**. Why (serial unknown to the cloud, a credential missing in the frame, or the answer being sent elsewhere) is unknown **[I]**. The 10 s give-up of our bridge was therefore not the cause.
 - **Gate result: STOP.** No `auth/token`, `GET time`, `d/fw`, `fw/rq`, keepalive timing or `field_a/b/c` could be observed. No other serial or credential was tried. The firmware's own WebSocket ping (30 s idle) would be answered by the cloud's server layer, so a direct-mode session would stay up, but with no CoAP answers it cannot reach `ready`.
 
+**Three changed probes [V] (2026-11-23, owner-approved, host-side, bench unit's own serial, one fresh connection each, 120 s, WebSocket ping every 20 s).** Same 28-byte bridge header and TLV payload as above; only the CoAP options changed. Raw logs in `~/ib01-captures/cloud0/probe2-*.log`, outside git. Path shape from `tanoclo/ws-server/lib/handlers/path-classifier.js:72-84` (`auth` plus `key`, device id taken from the path).
+
+| Probe | CoAP change | Result |
+| :--- | :--- | :--- |
+| A | option 12 (Content-Format) = 42 added | upgrade 101 in 0.2 s; 6 pings, 6 pongs; **0 data frames**; no close |
+| B | Uri-Path `d/<serial>/auth/key` instead of `auth/key` | same: **0 data frames**, no close |
+| C | A and B together | same: **0 data frames**, no close |
+
+- In all three, the cloud kept the socket open, answered every ping with a pong in about 40 ms, and sent nothing, exactly as with the unchanged frame **[V]**. We closed with 1000 each time.
+- None of the three variants changes the cloud's behaviour. Content-Format and a device path in the URI are therefore not what the cloud waits for **[I]**. What stays unknown: the serial is not known to or not active at the cloud, a credential or session token is missing from the frame (the stock frame may carry more than the 61 bytes our bridge sends), or the answer depends on the source (stock bridge identity, IP) **[I]**.
+- **Gate result (second): STOP.** No other variant was tried (no other serial, header, HTTP/1.0 or SNI). `auth/token`, `GET time`, pushed commands, keepalive timing and `field_a/b/c` remain unobserved.
+- **For stage 1:** a direct cloud mode cannot be developed against the cloud from a serial-only `auth/key`. Stage 1 can only proceed on the transport (TLS 1.2, WebSocket, ping keepalive: all verified) with the CoAP session logic unproven; the next evidence would have to come from a stock bridge's own first frames (needs the owner), not from more probes **[I]**.
+
 **Bench side effects [V].** The first proxy start created a local state snapshot (empty, no cloud data). Bridge back on local tanoclo: `ready` with auth/token accepted. The bench override now mounts the four patched tanoclo files from `~/tanoclo-bench/prev-files/` (the found-register worktree was rebased onto upstream during the run and its new `handlers.js` needs a module the image lacks).
