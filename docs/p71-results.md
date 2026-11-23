@@ -13,7 +13,7 @@ Step 1 of `test-bench.md`, "P7.1 channel 26, plan", run by `rf-bench`. Receive-o
 - Downlinks, which a device ACKs: 349-396 µs, median 379 µs (n=199).
 - The coordinator's carrier and bit rate disagree as before: +4.5 kHz against -32 ppm.
 
-Timing resolution: frame times come from `demod.py`'s least-squares sync fit at 600 kS/s (1.667 µs per sample), good to well under 1 µs ("Demodulator" above). Busy shares and listen windows are built from frame intervals (preamble start to last CRC bit), so they carry the same resolution. Energy that `demod.py` does not decode is not included (see the limits below).
+Timing resolution: frame times come from `demod.py`'s least-squares sync fit at 600 kS/s (1.667 µs per sample), good to well under 1 µs (`test-bench.md`, "Demodulator"). Busy shares and listen windows are built from frame intervals (preamble start to last CRC bit), so they carry the same resolution. Energy that `demod.py` does not decode is not included (see the limits below).
 
 **Scoring.** `tools/sdr/stockscore.py` (new, receive-only, prints no address) works per 10-minute block from capture start. It finds the coordinator as the most frequent source of Data frames after a rendezvous-0 wake-up (`tools/sdr/stockscore.py:286-289`). It counts the following:
 - **down:** coordinator Data frames, ACKed when an Enhanced ACK with the same seq comes from the addressed device within 20 ms (`:331-339`).
@@ -58,7 +58,7 @@ Over sliding 10-minute windows (30 s steps), the downlink share ranges from 86.1
   - About 0.2 % of attempts end BUSY after 10 busy listens. Nearly all of these fall inside the stock `ff ff` trains: 1 s of wake-ups 4 ms apart, longer than the 10 retries take (about 0.25 s).
   - So in runs A1 and A2 expect `listens busy` in about 3 % of listens and BUSY ends rarely, about 1 in 450 attempts. Run B's `busy listens ignored` should come out at about the same 3 %.
   - The real listen also flags RSSI at or above -85 dBm from energy that `demod.py` does not decode. The SDR cannot place that threshold (dBFS is uncalibrated), so the bridge's `listens busy by rssi` count is the check.
-- Our 30 s per hour budget (0.83 %) is about a third of the stock network's 2.4 % busy share in this baseline (2.5-6.1 % in shorter earlier runs, "Step 3 baseline" above).
+- Our 30 s per hour budget (0.83 %) is about a third of the stock network's 2.4 % busy share in this baseline (2.5-6.1 % in shorter earlier runs, `test-bench.md`, "Step 3 baseline").
 - **Limits.** `demod.py` does not look for a sync word inside a frame it has already decoded. A stock frame that starts during one of ours is therefore missed, not counted as a collision (`tools/sdr/demod.py:162`). In the runs, the "CRC failures overlapping ours" count is a lower bound. The ACK shares are as heard at the SDR, so a damaged ACK ("dmg") counts as unACKed in the baseline and in the runs alike. The `tado` app's state during the baseline is for the owner to note; it is not part of this record.
 
 **Scoring a later run (A1, B, A2) against this baseline.** Capture as above for at least the run's 30 minutes, then decode the same way. Score with the run's start time from the RTT log, a Unix time (`--start-host`), so the blocks line up with the owner's checks:
