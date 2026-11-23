@@ -228,7 +228,7 @@ Restructured in the 2026-11-16 review. The steps run in this order, because each
 
 ### P7.1: Channel 26, listen-before-transmit and full check
 
-Owner decision 2026-11-20 (`docs/README.md`, "Project decisions"). Milestone "P7.1", issue #20. Runs after P7 and before P8. **Status: planned. Until it starts, the channel-26 hard rule (`CLAUDE.md`, `test-bench.md`) stays exactly as it is: nothing transmits on channel 26.**
+Owner decision 2026-11-20 (`docs/README.md`, "Project decisions"). Milestone "P7.1", issue #20. Runs after P7 and before P8. **Status: done 2026-11-23, closed by the owner on runs A1 and B (A2 not run; `README.md`, "Project decisions", "P7.1 closed"; results in `p71-results.md`, "P7.1 runs A1 and B result"). The P7.1 exception has ended: the channel-26 hard rule (`CLAUDE.md`, `test-bench.md`) applies in full again, and nothing of ours transmits on channel 26.**
 
 Plan:
 
