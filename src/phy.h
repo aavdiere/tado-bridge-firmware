@@ -15,7 +15,7 @@
  * "PHY", "Stock CC110L register table"): FREQ = 0x213276 (863.125 MHz),
  * CHANSPC_E = 2 and CHANSPC_M = 0xF8 (199.951 kHz), so channel n is at
  * 863.125 MHz + n x 199.951 kHz, n = 0..49. The register table in
- * src/radio.c stays a copy of the stock capture and is checked against
+ * src/radio_bringup.c stays a copy of the stock capture and is checked against
  * these at build time; the transmit gate refuses a carrier programmed with
  * any other base or spacing (src/txgate.c, TXGATE_OFF_PLAN). */
 #define PHY_FREQ_WORD 0x213276l
@@ -32,8 +32,9 @@ _Static_assert(PHY_CARRIER_HZ(0) > 863124000ll && PHY_CARRIER_HZ(0) < 863126000l
 _Static_assert(PHY_CARRIER_HZ(26) > 868322700ll && PHY_CARRIER_HZ(26) < 868324700ll,
                "channel plan: channel 26, the protected channel, at 868.3237 MHz");
 
-/* Bit rate, 49.988 kBaud (docs/radio.md "PHY": 49,987.79 bps; src/radio.c
- * checks MDMCFG4/MDMCFG3 against it): a byte takes 160.04 us. */
+/* Bit rate, 49.988 kBaud (docs/radio.md "PHY": 49,987.79 bps;
+ * src/radio_bringup.c checks MDMCFG4/MDMCFG3 against it): a byte takes
+ * 160.04 us. */
 #define PHY_BAUD 49987u
 
 /* On air around the MAC frame: 4 preamble bytes, 4 sync bytes, the length

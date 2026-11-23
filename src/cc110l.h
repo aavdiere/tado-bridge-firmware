@@ -199,7 +199,7 @@ enum cc110l_cal { CC_CAL_LOCKED, CC_CAL_NO_LOCK, CC_CAL_ERROR };
 enum cc110l_cal cc110l_calibrate(uint8_t fscal[3], unsigned *tries);
 
 /* A calibration older than this does not count: the radio task
- * recalibrates every 5 minutes (src/radio.c, RECAL_PERIOD_MS) and, with its
+ * recalibrates every 5 minutes (src/radio_bringup.c, RECAL_PERIOD_MS) and, with its
  * 64-bit clock, calls cc110l_cal_expire() past this age, which the 32-bit
  * check here cannot see after a timer wrap (71 minutes). */
 #define CC_CAL_MAX_AGE_US (12u * 60u * 1000000u)

@@ -34,7 +34,7 @@
 #error "test_txgate covers the channel 16 and channel 26 builds"
 #endif
 
-/* The register values of src/radio.c's table, on channel ch. */
+/* The register values of src/radio_bringup.c's table, on channel ch. */
 static struct txgate_radio plan(unsigned ch) {
     struct txgate_radio r = {0x21, 0x32, 0x76, (uint8_t)ch, 0x22, 0xF8, 0x00};
     return r;

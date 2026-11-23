@@ -144,7 +144,7 @@ void rx_service(uint32_t bits);
 /* Write the log line of the wake-up train in progress, if any. */
 void wake_flush(void);
 
-/* --- Bring-up, calibration, health ------------------------------------------------ */
+/* --- Bring-up, calibration, health: src/radio_bringup.c --------------------------- */
 /* Last calibration attempt, and last calibration with lock, on now64(). */
 extern uint64_t cal_at, cal_good_at;
 /* Recalibration period (#11), with its policy in the bring-up. */

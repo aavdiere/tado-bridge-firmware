@@ -49,7 +49,7 @@ static const uint8_t another[8] = {0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xC5, 0x1B, 0x0
 static const uint8_t key_bytes[CCM_KEY_LEN] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 static struct ccm_key key;
 
-/* The carrier registers of src/radio.c's table, on channel ch; MCSM1 and
+/* The carrier registers of src/radio_bringup.c's table, on channel ch; MCSM1 and
  * PKTCTRL0 as there, because the driver's guard looks at them. */
 static uint8_t table[CC_NUM_CONFIG_REGS];
 
