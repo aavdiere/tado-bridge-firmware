@@ -35,6 +35,7 @@ Citations such as `freedo/docs/PROTOCOL.md:1305` are relative to a working folde
 | [`test-bench.md`](test-bench.md) | Bench setup (ST-Link, Ethernet, RTL-SDR), what Claude may do on hardware, protecting the stock network. |
 | [`p71-results.md`](p71-results.md) | Stage P7.1 (#20) results on channel 26: receive-only baseline, runs A1 (LBT on) and B (LBT off), the move back to channel 16. |
 | [`pan43-results.md`](pan43-results.md) | Own PAN ID (#43) bench results: the spare accepts only PAN `0xABCD`; what stays in the code. |
+| [`direct-cloud-plan.md`](direct-cloud-plan.md) | Plan (owner): build option to connect directly to the tado cloud instead of tanoclo; capture first, staged, not started. |
 | [`prototype-plan.md`](prototype-plan.md) | Staged prototype plan P0-P8 based on `stm-template`, with GitHub progress tracking. |
 | [`build.md`](build.md) | Build, flash (OpenOCD) and RTT log commands. |
 | [`design.md`](design.md) | Firmware design proposals. Persistent storage, entropy, software stack, self-update and first flash. |
