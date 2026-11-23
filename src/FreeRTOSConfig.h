@@ -53,7 +53,7 @@ void            fw_panic(const char *what, const char *file, int line);
 #define configENABLE_MPU 0
 
 /* Cortex-M4 on STM32F4: 4 priority bits. Interrupts that call FromISR APIs
- * (the radio's GDO0 and GDO2 in src/radio.c, the ENC28J60's INT in
+ * (the radio's GDO0 and GDO2 in src/radio_rx.c, the ENC28J60's INT in
  * src/enc28j60.c) must use a numeric priority >= 5 (0x50 and less urgent).
  * The kernel (PendSV, SysTick) runs at the lowest priority. */
 #define configPRIO_BITS                              4

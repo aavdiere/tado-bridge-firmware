@@ -4,7 +4,7 @@
 /* Frequency offset of our own network's frames, and the drift warning (#11,
  * owner decision 2026-11-20: no per-unit trim, a run-time warning instead).
  * Hardware independent (tests/host/test_freqoff.c); the radio task feeds it
- * and logs (src/radio.c frame_done() and log_minute()).
+ * and logs (frame_done() in src/radio_rx.c, log_minute() in src/radio.c).
  *
  * Input: the in-packet FREQEST sample (signed units of fXOSC / 2^14 =
  * 203125 / 128 Hz = 1586.9 Hz, datasheets/cc110l.txt:4429-4434) of frames

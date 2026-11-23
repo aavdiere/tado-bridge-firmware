@@ -19,7 +19,7 @@ void identity_boot(bool flash_ok) {
     } else if (store_id_load(&id, &seq, &version)) {
         s = IDENTITY_OK;
         /* The serial, as the session logs it; the EUI-64 and the MAC are not
-         * logged (no device address in the log, as in src/radio.c). */
+         * logged (no device address in the log, as in src/radio_rx.c). */
         LOG("identity: record seq %lu, version %u: serial %s, EUI-64 set, %s",
             (unsigned long)seq,
             (unsigned)version,

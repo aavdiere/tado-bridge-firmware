@@ -107,7 +107,7 @@ static void select_checked(enum spi1_dev dev) {
 /* From select to deselect the radio's GDO interrupts are held off
  * (BASEPRI at configMAX_SYSCALL_INTERRUPT_PRIORITY, their priority), because
  * the Enhanced ACK is sent from that interrupt over this bus (#17,
- * src/radio.c): it must find the bus between two accesses, never inside
+ * src/radio_rx.c): it must find the bus between two accesses, never inside
  * one. An access is a few bytes, at most a 64-byte FIFO burst (about
  * 0.1 ms at 6 MHz); nothing between select and deselect may block. */
 void spi1_select(enum spi1_dev dev) {

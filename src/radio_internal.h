@@ -70,7 +70,7 @@ extern struct counters radio_minute, radio_total;
         radio_total.field++;  \
     } while (0)
 
-/* --- Clock and formatting helpers --------------------------------------------- */
+/* --- Clock (src/radio.c) and formatting helpers (src/radio_rx.c) --------------- */
 /* Microseconds since boot that do not wrap: TIM2's 32 bits extended. */
 uint64_t now64(void);
 /* x2 in half dB as text ("-72.5"); returns b. */
@@ -80,7 +80,7 @@ const char *tenths(char *b, size_t sz, int32_t x10);
 /* An RSSI register or status byte in half dB. */
 int rssi_x2(uint8_t raw);
 
-/* --- GDO interrupts --------------------------------------------------------------
+/* --- GDO interrupts: src/radio_rx.c --------------------------------------------
  * Interrupt storm guard: more than STORM_MAX_EDGES edges within
  * STORM_WINDOW_US turn both GDO interrupts off (gdo_edge_from_isr()). */
 #define STORM_WINDOW_US 1000u
@@ -97,7 +97,7 @@ extern volatile uint32_t acks_failed;
 void gdo_irq_setup(void);
 void gdo_irq_enable(bool on);
 
-/* --- Receive and Enhanced ACK, task side ----------------------------------------- */
+/* --- Receive and Enhanced ACK, task side: src/radio_rx.c ------------------------- */
 #define PKTLEN_MAX 0x80u /* variable length: max length byte (cc110l.txt:3607-3612) */
 #define RX_BUF_MAX (1u + PKTLEN_MAX + 2u) /* length byte, payload, RSSI, CRC_OK */
 

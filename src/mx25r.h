@@ -19,7 +19,7 @@
  * Flash work while frames arrive (#22). The CC110L and this chip share
  * SPI1, and the Enhanced ACK depends on the radio task reading a Data
  * frame's header out of the RX FIFO while the frame is still arriving
- * (src/radio.c, ack_consider()). So the driver never holds the radio up:
+ * (src/radio_rx.c, ack_consider()). So the driver never holds the radio up:
  *   - no bus transaction starts while mx25r_port_radio_busy() (a frame
  *     arriving, or a frame of ours on the air): the driver serves the
  *     radio instead (gate); after MX25R_GATE_MAX_US of continuous busy it
@@ -34,7 +34,7 @@
 #define MX25R_JEDEC_ID 0xC22815u /* C2 28 15, mx25r1635f.txt:1123-1125 */
 
 /* Longest wait for a quiet radio before a bus transaction: longer than the
- * radio's own stale-frame limit (RX_STALE_US, 60 ms, src/radio.c) plus an
+ * radio's own stale-frame limit (RX_STALE_US, 60 ms, src/radio_rx.c) plus an
  * Enhanced ACK on the air (8.5 ms with its margin, src/cc110l.c). */
 #define MX25R_GATE_MAX_US 100000u
 

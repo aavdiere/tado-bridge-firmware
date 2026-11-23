@@ -176,7 +176,7 @@ static void test_guards(void) {
     struct freqoff        s;
     struct freqoff_report r;
     freqoff_init(&s);
-    /* Not a FREQEST value (src/radio.c FE_NONE is 0x7FFF): not counted. */
+    /* Not a FREQEST value (src/radio_rx.c FE_NONE is 0x7FFF): not counted. */
     freqoff_add(&s, 0x7FFF);
     freqoff_add(&s, 128);
     freqoff_add(&s, -129);

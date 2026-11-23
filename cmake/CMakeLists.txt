@@ -307,6 +307,7 @@ add_executable(${BINARY}
     ../src/radio_csl.c
     ../src/radio_flash.c
     ../src/radio_pair.c
+    ../src/radio_rx.c
     ../src/enc28j60.c
     ../src/net.c
     ../src/lwip_port.c
