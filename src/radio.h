@@ -46,7 +46,7 @@ void radio_request_pairing(void);
 
 /* The net task posted the server's pair request (#40,
  * pair_remote_post(), src/pair_remote.h): wake the radio task, which acts
- * on it at its next quiet moment (pairing_remote(), src/radio.c) and
+ * on it at its next quiet moment (pairing_remote(), src/radio_pair.c) and
  * leaves the outcome for pair_remote_result(). Any task. */
 void radio_request_remote_pairing(void);
 

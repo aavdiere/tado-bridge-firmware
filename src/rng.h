@@ -20,7 +20,7 @@
  * random (#19, #37) need full-strength output at a moment without radio
  * deadlines: call rng_bytes() from the net task, or accept the wait, as the
  * radio task does when the pair button opens a window (pairing_trigger() in
- * src/radio.c; docs/radio-runtime.md "Pairing (#19)"). */
+ * src/radio_pair.c; docs/radio-runtime.md "Pairing (#19)"). */
 
 /* Start-up health test, then the first seed. Logs the result. False if the
  * test or the seed failed: no random numbers are available then. */

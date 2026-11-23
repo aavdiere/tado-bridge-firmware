@@ -8,7 +8,7 @@
  * independent: the request's checks, the CoAP code of each outcome, the
  * duplicate cache and the hand-over from the net task to the radio task
  * (tests/host/test_pair_remote.c). src/session.c answers the request,
- * src/radio.c opens or closes the window, with every guard of the button
+ * src/radio_pair.c opens or closes the window, with every guard of the button
  * (test channel only, the target named in the build only, airtime budget,
  * identity).
  *
@@ -86,7 +86,7 @@ uint32_t pair_remote_window_ms(uint32_t dur_s);
 
 uint8_t pair_remote_code(enum pair_remote_rc rc);
 /* A short text for the log ("no identity", ...); the button's log lines
- * use the same texts (src/radio.c). */
+ * use the same texts (src/radio_pair.c). */
 const char *pair_remote_text(enum pair_remote_rc rc);
 
 /* --- Duplicates (RFC 7252 4.5) --------------------------------------------- */

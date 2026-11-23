@@ -11,7 +11,7 @@
  *   2. The bridge answers the target's request with an Enhanced Beacon,
  *      2.4-7.4 ms after the request ends, with no wake-up train
  *      (pair_check_request(), pair_build_beacon(); the timing is the radio
- *      task's, src/radio.c).
+ *      task's, src/radio_pair.c).
  *   3. While the window is open every Router Advertisement goes twice: under
  *      the network key with Frame Pending, then under the pairing key; a
  *      Router Solicitation of the target under the pairing key asks for

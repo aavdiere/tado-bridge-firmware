@@ -13,7 +13,7 @@
  * Without a valid network record the link keeps no key: nothing is
  * decrypted, acknowledged or sent, and nothing is written to the flash. A
  * network is only created by an explicit network_create(), which the
- * pairing trigger (src/radio.c, #19) calls before it opens a window, and
+ * pairing trigger (src/radio_pair.c, #19) calls before it opens a window, and
  * only where no network record has ever been (network_absent()). */
 
 /* Boot, before the radio starts, and only if the flash is ready
@@ -68,7 +68,7 @@ bool network_absent(void);
  * RADIO_NET_CHANNEL, and nothing has been written since. This image never
  * uses it (no key, nothing sent, receiving goes on) and never retunes to
  * it; network_create(), asked for by pairing (the button or the server's
- * request, pairing_open() in src/radio.c), may replace it with a new
+ * request, pairing_open() in src/radio_pair.c), may replace it with a new
  * network on this image's channel. *channel (if not NULL): the record's
  * channel. A damaged or unreadable record still blocks network_create(). */
 bool network_replaceable(uint8_t *channel);

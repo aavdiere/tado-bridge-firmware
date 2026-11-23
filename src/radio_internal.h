@@ -188,7 +188,7 @@ bool send_frame(const uint8_t *frame,
                 bool           mark,
                 uint32_t      *stx_us);
 
-/* --- Pairing (#19, #40) -------------------------------------------------------------- */
+/* --- Pairing (#19, #40): src/radio_pair.c ---------------------------------------- */
 /* Send the Enhanced Beacon that answers the target's Beacon Request just
  * taken, on time or not at all. */
 void beacon_answer(uint32_t fall_us, bool own_end);

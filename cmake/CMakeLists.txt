@@ -124,7 +124,7 @@ string(APPEND PROVISION "#ifndef PROVISION_H\n#define PROVISION_H\n")
 # to, named by its EUI-64 in stored order (00 1b c5 first, as the identity
 # record holds the bridge's own). Without it the pair button opens no
 # window. The firmware refuses a target equal to its own EUI-64
-# (pairing_trigger() in src/radio.c). Device value: never into git
+# (pairing_open() in src/radio_pair.c). Device value: never into git
 # (CLAUDE.md, docs/test-bench.md rule 7).
 if(DEFINED PAIR_TARGET_EUI64)
     string(TOLOWER "${PAIR_TARGET_EUI64}" peui)
@@ -303,6 +303,7 @@ add_executable(${BINARY}
     ../src/identity.c
     ../src/network.c
     ../src/radio.c
+    ../src/radio_pair.c
     ../src/enc28j60.c
     ../src/net.c
     ../src/lwip_port.c
