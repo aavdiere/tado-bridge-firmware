@@ -2,6 +2,7 @@
 #include "fwimg.h"
 
 #include "flash_layout.h"
+#include "le.h"
 #include "store.h"
 
 #include "mbedtls/sha256.h"
@@ -13,23 +14,6 @@ _Static_assert(FWIMG_HDR_LEN <= FLASH_SLOT_IMAGE, "header before the image");
 _Static_assert(FLASH_SLOT_IMAGE + FWIMG_APP_MAX <= FLASH_SLOT_SIZE, "a full image fits a slot");
 _Static_assert(FWIMG_BOOT_LEN <= STORE_REC_PAYLOAD, "boot state fits a record");
 _Static_assert(FWIMG_DESC_OFFSET % 4u == 0, "descriptor word aligned");
-
-static uint32_t get32(const uint8_t *p) {
-    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-static uint16_t get16(const uint8_t *p) {
-    return (uint16_t)(p[0] | p[1] << 8);
-}
-static void put32(uint8_t *p, uint32_t v) {
-    p[0] = (uint8_t)v;
-    p[1] = (uint8_t)(v >> 8);
-    p[2] = (uint8_t)(v >> 16);
-    p[3] = (uint8_t)(v >> 24);
-}
-static void put16(uint8_t *p, uint16_t v) {
-    p[0] = (uint8_t)v;
-    p[1] = (uint8_t)(v >> 8);
-}
 
 /* Internal flash sectors of the application (rm0383.txt:2028-2031): sector 4
  * is 64 KB at FWIMG_APP_BASE, sectors 5, 6 and 7 are 128 KB each from
@@ -65,16 +49,16 @@ _Static_assert(offsetof(struct fwimg_desc, magic) == 0u
 
 bool fwimg_app_check(const uint8_t head[FWIMG_HEAD_LEN], uint32_t *size) {
     const uint8_t *d       = head + FWIMG_DESC_OFFSET;
-    uint32_t       end     = get32(d + offsetof(struct fwimg_desc, image_end));
+    uint32_t       end     = le_get32(d + offsetof(struct fwimg_desc, image_end));
     uint32_t       min_end = FWIMG_APP_BASE + FWIMG_HEAD_LEN;
-    if (get32(d + offsetof(struct fwimg_desc, magic)) != FWIMG_DESC_MAGIC
-        || get16(d + offsetof(struct fwimg_desc, version)) != FWIMG_DESC_VERSION
-        || get16(d + offsetof(struct fwimg_desc, len)) != FWIMG_DESC_LEN || end <= min_end
+    if (le_get32(d + offsetof(struct fwimg_desc, magic)) != FWIMG_DESC_MAGIC
+        || le_get16(d + offsetof(struct fwimg_desc, version)) != FWIMG_DESC_VERSION
+        || le_get16(d + offsetof(struct fwimg_desc, len)) != FWIMG_DESC_LEN || end <= min_end
         || end > FWIMG_APP_BASE + FWIMG_APP_MAX || end % 4u != 0) {
         return false;
     }
-    uint32_t sp = get32(head + VT_OFF_SP);
-    uint32_t pc = get32(head + VT_OFF_RESET);
+    uint32_t sp = le_get32(head + VT_OFF_SP);
+    uint32_t pc = le_get32(head + VT_OFF_RESET);
     if (sp <= FWIMG_RAM_BASE || sp > FWIMG_RAM_BASE + FWIMG_RAM_SIZE || sp % 4u != 0) {
         return false;
     }
@@ -100,22 +84,22 @@ _Static_assert(HDR_OFF_RESERVED == 52u && HDR_OFF_CRC + 4u == FWIMG_HDR_LEN, "sl
 
 void fwimg_hdr_build(const struct fwimg_hdr *h, uint8_t raw[FWIMG_HDR_LEN]) {
     memset(raw, 0, FWIMG_HDR_LEN);
-    put32(raw + HDR_OFF_MAGIC, FWIMG_HDR_MAGIC);
-    put16(raw + HDR_OFF_VERSION, FWIMG_HDR_VERSION);
-    put16(raw + HDR_OFF_LEN, FWIMG_HDR_LEN);
-    put32(raw + HDR_OFF_SIZE, h->size);
-    put32(raw + HDR_OFF_FW_VERSION, h->fw_version);
-    put32(raw + HDR_OFF_LOAD_ADDR, FWIMG_APP_BASE);
+    le_put32(raw + HDR_OFF_MAGIC, FWIMG_HDR_MAGIC);
+    le_put16(raw + HDR_OFF_VERSION, FWIMG_HDR_VERSION);
+    le_put16(raw + HDR_OFF_LEN, FWIMG_HDR_LEN);
+    le_put32(raw + HDR_OFF_SIZE, h->size);
+    le_put32(raw + HDR_OFF_FW_VERSION, h->fw_version);
+    le_put32(raw + HDR_OFF_LOAD_ADDR, FWIMG_APP_BASE);
     memcpy(raw + HDR_OFF_SHA, h->sha256, FWIMG_SHA_LEN);
-    put32(raw + HDR_OFF_CRC, store_crc32(raw, HDR_OFF_CRC));
+    le_put32(raw + HDR_OFF_CRC, store_crc32(raw, HDR_OFF_CRC));
 }
 
 bool fwimg_hdr_parse(const uint8_t raw[FWIMG_HDR_LEN], struct fwimg_hdr *out) {
-    if (get32(raw + HDR_OFF_MAGIC) != FWIMG_HDR_MAGIC
-        || get16(raw + HDR_OFF_VERSION) != FWIMG_HDR_VERSION
-        || get16(raw + HDR_OFF_LEN) != FWIMG_HDR_LEN
-        || get32(raw + HDR_OFF_CRC) != store_crc32(raw, HDR_OFF_CRC)
-        || get32(raw + HDR_OFF_LOAD_ADDR) != FWIMG_APP_BASE) {
+    if (le_get32(raw + HDR_OFF_MAGIC) != FWIMG_HDR_MAGIC
+        || le_get16(raw + HDR_OFF_VERSION) != FWIMG_HDR_VERSION
+        || le_get16(raw + HDR_OFF_LEN) != FWIMG_HDR_LEN
+        || le_get32(raw + HDR_OFF_CRC) != store_crc32(raw, HDR_OFF_CRC)
+        || le_get32(raw + HDR_OFF_LOAD_ADDR) != FWIMG_APP_BASE) {
         return false;
     }
     for (unsigned i = HDR_OFF_RESERVED; i < HDR_OFF_CRC; i++) {
@@ -123,12 +107,12 @@ bool fwimg_hdr_parse(const uint8_t raw[FWIMG_HDR_LEN], struct fwimg_hdr *out) {
             return false;
         }
     }
-    uint32_t size = get32(raw + HDR_OFF_SIZE);
+    uint32_t size = le_get32(raw + HDR_OFF_SIZE);
     if (size <= FWIMG_HEAD_LEN || size > FWIMG_APP_MAX || size % 4u != 0) {
         return false;
     }
     out->size       = size;
-    out->fw_version = get32(raw + HDR_OFF_FW_VERSION);
+    out->fw_version = le_get32(raw + HDR_OFF_FW_VERSION);
     memcpy(out->sha256, raw + HDR_OFF_SHA, FWIMG_SHA_LEN);
     return true;
 }

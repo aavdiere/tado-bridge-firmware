@@ -6,6 +6,7 @@
 #include "store.h"
 
 #include "flash_layout.h"
+#include "le.h"
 #include "mac.h"
 #include "txgate.h"
 
@@ -23,21 +24,6 @@ static void wipe(void *p, size_t n) {
     while (n--) {
         *v++ = 0;
     }
-}
-
-static void put16(uint8_t *p, uint16_t v) {
-    p[0] = (uint8_t)v;
-    p[1] = (uint8_t)(v >> 8);
-}
-static void put32(uint8_t *p, uint32_t v) {
-    put16(p, (uint16_t)v);
-    put16(p + 2, (uint16_t)(v >> 16));
-}
-static uint16_t get16(const uint8_t *p) {
-    return (uint16_t)(p[0] | p[1] << 8);
-}
-static uint32_t get32(const uint8_t *p) {
-    return (uint32_t)get16(p) | (uint32_t)get16(p + 2) << 16;
 }
 
 uint32_t store_crc32(const uint8_t *p, size_t n) {
@@ -101,15 +87,15 @@ static bool slot_read(uint32_t  addr,
                       uint16_t  len,
                       uint32_t *seq) {
     uint8_t m[4];
-    if (!store_port_read(addr, m, sizeof m) || get32(m) != magic) {
+    if (!store_port_read(addr, m, sizeof m) || le_get32(m) != magic) {
         return false; /* not ours: read nothing more */
     }
     size_t total = STORE_REC_HDR + len + 4u;
-    bool ok = store_port_read(addr, rec, total) && get32(rec) == magic && get16(rec + 4) == version
-              && get16(rec + 6) == len
-              && get32(rec + STORE_REC_HDR + len) == store_crc32(rec, STORE_REC_HDR + len);
+    bool   ok    = store_port_read(addr, rec, total) && le_get32(rec) == magic
+                   && le_get16(rec + 4) == version && le_get16(rec + 6) == len
+                   && le_get32(rec + STORE_REC_HDR + len) == store_crc32(rec, STORE_REC_HDR + len);
     if (ok) {
-        *seq = get32(rec + 8);
+        *seq = le_get32(rec + 8);
         memcpy(payload, rec + STORE_REC_HDR, len);
     }
     wipe(rec, sizeof rec);
@@ -162,12 +148,12 @@ bool store_slot_write(uint32_t       slot_a,
     }
 
     size_t total = STORE_REC_HDR + len + 4u;
-    put32(rec, magic);
-    put16(rec + 4, version);
-    put16(rec + 6, len);
-    put32(rec + 8, newest + 1u);
+    le_put32(rec, magic);
+    le_put16(rec + 4, version);
+    le_put16(rec + 6, len);
+    le_put32(rec + 8, newest + 1u);
     memcpy(rec + STORE_REC_HDR, payload, len);
-    put32(rec + STORE_REC_HDR + len, store_crc32(rec, STORE_REC_HDR + len));
+    le_put32(rec + STORE_REC_HDR + len, store_crc32(rec, STORE_REC_HDR + len));
 
     /* Write new, verify, then mark: the magic goes in last. */
     bool ok = erase_verified(target) && program_verified(target + 4u, rec + 4, total - 4u)
@@ -343,12 +329,12 @@ bool store_id_write(const struct store_id *id, uint32_t *seq) {
     }
 
     size_t total = STORE_REC_HDR + len + 4u;
-    put32(rec, STORE_ID_MAGIC);
-    put16(rec + 4, version);
-    put16(rec + 6, len);
-    put32(rec + 8, newest + 1u);
+    le_put32(rec, STORE_ID_MAGIC);
+    le_put16(rec + 4, version);
+    le_put16(rec + 6, len);
+    le_put32(rec + 8, newest + 1u);
     memcpy(rec + STORE_REC_HDR, p, len);
-    put32(rec + STORE_REC_HDR + len, store_crc32(rec, STORE_REC_HDR + len));
+    le_put32(rec + STORE_REC_HDR + len, store_crc32(rec, STORE_REC_HDR + len));
 
     /* Write new, verify, then mark: the magic goes in last. */
     bool ok = erase_verified(target) && program_verified(target + 4u, rec + 4, total - 4u)
@@ -381,10 +367,10 @@ bool store_net_load(struct store_net *out, uint32_t *seq) {
     uint8_t p[STORE_NET_LEN];
     bool    ok = store_slot_load(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, seq);
     if (ok) {
-        out->pan_id  = get16(p);
+        out->pan_id  = le_get16(p);
         out->channel = p[2];
         memcpy(out->key, p + 4, CCM_KEY_LEN);
-        out->counter_floor = get32(p + 4 + CCM_KEY_LEN);
+        out->counter_floor = le_get32(p + 4 + CCM_KEY_LEN);
         ok                 = p[3] == 0 && store_net_allowed(out);
         if (!ok) {
             wipe(out, sizeof *out);
@@ -410,9 +396,9 @@ bool store_net_other_channel(uint8_t *channel, uint32_t *seq) {
         uint32_t s = 0;
         if (!store_port_read(addr, m, sizeof m)) {
             ok = false;
-        } else if (get32(m) == STORE_NET_MAGIC) {
+        } else if (le_get32(m) == STORE_NET_MAGIC) {
             ok = slot_read(addr, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, &s)
-                 && mac_pan_usable(get16(p)) && p[3] == 0 && p[2] <= TXGATE_MAX_CHANNEL;
+                 && mac_pan_usable(le_get16(p)) && p[3] == 0 && p[2] <= TXGATE_MAX_CHANNEL;
             if (ok && (!any || s > newest)) {
                 newest = s;
                 ch     = p[2];
@@ -434,7 +420,7 @@ bool store_net_probe(bool *any) {
     if (!store_port_read(FLASH_NET_A, a, sizeof a) || !store_port_read(FLASH_NET_B, b, sizeof b)) {
         return false;
     }
-    *any = get32(a) == STORE_NET_MAGIC || get32(b) == STORE_NET_MAGIC;
+    *any = le_get32(a) == STORE_NET_MAGIC || le_get32(b) == STORE_NET_MAGIC;
     return true;
 }
 
@@ -443,11 +429,11 @@ bool store_net_write(const struct store_net *n, uint32_t *seq) {
         return false;
     }
     uint8_t p[STORE_NET_LEN];
-    put16(p, n->pan_id);
+    le_put16(p, n->pan_id);
     p[2] = n->channel;
     p[3] = 0;
     memcpy(p + 4, n->key, CCM_KEY_LEN);
-    put32(p + 4 + CCM_KEY_LEN, n->counter_floor);
+    le_put32(p + 4 + CCM_KEY_LEN, n->counter_floor);
     bool ok = store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, seq);
     wipe(p, sizeof p);
     return ok;
@@ -490,8 +476,8 @@ static bool ctr_scan(void) {
                 return false;
             }
             for (unsigned k = 0; k < sizeof buf / STORE_CTR_ENTRY; k++) {
-                uint32_t v = get32(buf + k * STORE_CTR_ENTRY);
-                uint32_t w = get32(buf + k * STORE_CTR_ENTRY + 4);
+                uint32_t v = le_get32(buf + k * STORE_CTR_ENTRY);
+                uint32_t w = le_get32(buf + k * STORE_CTR_ENTRY + 4);
                 if (v == 0xFFFFFFFFu && w == 0xFFFFFFFFu) {
                     continue;
                 }
@@ -546,8 +532,8 @@ static bool ctr_append(uint32_t value) {
         ctr.next = 0;
     }
     uint8_t e[STORE_CTR_ENTRY];
-    put32(e, value);
-    put32(e + 4, ~value);
+    le_put32(e, value);
+    le_put32(e + 4, ~value);
     uint32_t addr = ctr_sector[ctr.cur] + ctr.next * STORE_CTR_ENTRY;
     ctr.next++; /* used even if the write fails: never program a slot twice */
     if (!program_verified(addr, e, sizeof e)) {

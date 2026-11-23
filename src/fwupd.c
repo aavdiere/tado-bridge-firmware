@@ -3,6 +3,7 @@
 #include "fwupd.h"
 
 #include "flash_layout.h"
+#include "le.h"
 #include "store.h"
 
 #include "mbedtls/sha256.h"
@@ -308,10 +309,6 @@ void fwupd_init(const uint8_t *image, uint32_t size, uint32_t fw_version, uint32
 }
 
 /* --- Transfer --------------------------------------------------------------- */
-static uint32_t get32(const uint8_t *p) {
-    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
 static enum fwupd_rc fail(enum fwupd_rc rc, const char *why) {
     set_why(why);
     if (rc == FWUPD_FAILED) {
@@ -327,7 +324,7 @@ start(const uint8_t *data, size_t len, bool more, bool session_ok, uint32_t now_
     if (len != FWUPD_BLOCK || !more) {
         return fail(FWUPD_BAD, "block 0 must be 1024 bytes, more to follow");
     }
-    if (get32(data) == FWIMG_HDR_MAGIC && get32(data + 8) > FWIMG_APP_MAX) {
+    if (le_get32(data) == FWIMG_HDR_MAGIC && le_get32(data + 8) > FWIMG_APP_MAX) {
         return fail(FWUPD_TOO_LARGE, "image larger than 448 KB");
     }
     if (!fwimg_hdr_parse(data, &h)) {

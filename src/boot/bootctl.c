@@ -4,6 +4,7 @@
 
 #include "flash_layout.h"
 #include "fwimg.h"
+#include "le.h"
 #include "store.h"
 
 #include "mbedtls/sha256.h"
@@ -19,13 +20,6 @@ _Static_assert(FWIMG_HEAD_LEN <= CHUNK * 3u, "head fits the buffers");
 static uint8_t                buf[CHUNK];
 static uint8_t                back[CHUNK];
 static struct bootctl_report *rep;
-
-static void put32(uint8_t *p, uint32_t v) {
-    p[0] = (uint8_t)v;
-    p[1] = (uint8_t)(v >> 8);
-    p[2] = (uint8_t)(v >> 16);
-    p[3] = (uint8_t)(v >> 24);
-}
 
 /* --- Internal flash ----------------------------------------------------------- */
 /* Is there a valid application in internal flash? *size from its descriptor. */
@@ -46,7 +40,7 @@ static bool int_sha(uint32_t size, bool assume_magic, uint8_t out[FWIMG_SHA_LEN]
         uint32_t n = size - off < CHUNK ? size - off : CHUNK;
         bl_port_int_read(FWIMG_APP_BASE + off, buf, n);
         if (assume_magic && off == FWIMG_DESC_OFFSET) {
-            put32(buf, FWIMG_DESC_MAGIC);
+            le_put32(buf, FWIMG_DESC_MAGIC);
         }
         ok = mbedtls_sha256_update(&c, buf, n) == 0;
         if ((off & 0xFFFu) == 0) {
@@ -117,7 +111,7 @@ static bool install(uint32_t slot, const struct fwimg_hdr *h) {
         return false;
     }
     uint8_t m[4];
-    put32(m, FWIMG_DESC_MAGIC);
+    le_put32(m, FWIMG_DESC_MAGIC);
     uint32_t size = 0;
     if (!bl_port_int_program(FWIMG_APP_BASE + FWIMG_DESC_OFFSET, m, sizeof m) || !int_app(&size)
         || size != h->size) {
