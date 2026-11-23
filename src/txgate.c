@@ -165,7 +165,7 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
             if (len != MAC_WAKE_LEN || !mac_parse_wakeup(f, len, &w)) {
                 return TXGATE_BAD_LENGTH;
             }
-            mac_build_wakeup(again, w.seq, w.dst_short, w.rendezvous);
+            mac_build_wakeup(again, MAC_PAN_TADO, w.seq, w.dst_short, w.rendezvous);
             if (memcmp(again, f, MAC_WAKE_LEN) != 0) {
                 return TXGATE_MALFORMED;
             }
@@ -233,7 +233,7 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
              * sealed with the frame counter. Pairing only; the caller (#19)
              * also checks that the joiner is the device named for the
              * window (src/pair.c). */
-            static const uint8_t pan[2]   = {(uint8_t)MAC_PAN_ID, (uint8_t)(MAC_PAN_ID >> 8)};
+            static const uint8_t pan[2]   = {(uint8_t)MAC_PAN_TADO, (uint8_t)(MAC_PAN_TADO >> 8)};
             static const uint8_t bcast[4] = {0xFF, 0xFF, 0xFF, 0xFF};
             if (len != BEACON_LEN) {
                 return TXGATE_BAD_LENGTH;

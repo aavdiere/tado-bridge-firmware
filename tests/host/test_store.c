@@ -234,7 +234,7 @@ static uint32_t outside_sum(void) {
 
 /* --- Helpers ------------------------------------------------------------------ */
 static struct store_net make_net(uint8_t tag, uint32_t floor) {
-    struct store_net n = {.pan_id = MAC_PAN_ID, .channel = TXGATE_TEST_CHANNEL};
+    struct store_net n = {.pan_id = MAC_PAN_TADO, .channel = TXGATE_TEST_CHANNEL};
     for (unsigned i = 0; i < CCM_KEY_LEN; i++) {
         n.key[i] = (uint8_t)(tag * 17u + i);
     }
@@ -1084,18 +1084,18 @@ static void test_record_other_channel(void) {
     flash_stock();
     reboot();
     CHECK(!store_net_other_channel(&ch, &seq)); /* stock data in slot A: no record */
-    raw_net(REFUSED_CH, MAC_PAN_ID, 1);
+    raw_net(REFUSED_CH, MAC_PAN_TADO, 1);
     struct store_net got;
     CHECK(!store_net_load(&got, &seq));
     CHECK(store_net_other_channel(&ch, &seq));
     CHECK_EQ(ch, REFUSED_CH);
     CHECK_EQ(seq, 1);
     /* Only the newest counts: ours on top of it is a record of ours. */
-    raw_net(TXGATE_TEST_CHANNEL, MAC_PAN_ID, 2);
+    raw_net(TXGATE_TEST_CHANNEL, MAC_PAN_TADO, 2);
     CHECK(store_net_load(&got, &seq));
     CHECK(!store_net_other_channel(&ch, &seq));
     /* Another channel again on top of ours (seq 3), the older one ours. */
-    raw_net(10u, MAC_PAN_ID, 3);
+    raw_net(10u, MAC_PAN_TADO, 3);
     CHECK(store_net_other_channel(&ch, &seq));
     CHECK_EQ(ch, 10u);
     CHECK_EQ(seq, 3);
@@ -1114,7 +1114,7 @@ static void test_record_other_channel(void) {
     CHECK(!store_net_other_channel(&ch, &seq));
     flash_stock();
     reboot();
-    raw_net(50u, MAC_PAN_ID, 5);
+    raw_net(50u, MAC_PAN_TADO, 5);
     CHECK(!store_net_other_channel(&ch, &seq));
 
     /* The replacement, cut at every step. */
@@ -1122,7 +1122,7 @@ static void test_record_other_channel(void) {
     for (unsigned k = 1;; k++) {
         flash_stock();
         reboot();
-        raw_net(REFUSED_CH, MAC_PAN_ID, 6);
+        raw_net(REFUSED_CH, MAC_PAN_TADO, 6);
         struct store_net neu = make_net(12, 99);
         fm.cut_in            = k;
         bool ok              = store_net_write(&neu, NULL);

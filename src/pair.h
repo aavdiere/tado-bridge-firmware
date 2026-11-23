@@ -195,10 +195,12 @@ enum pair_req pair_check_request(const uint8_t *req, size_t len, uint32_t now_ms
 void pair_beacon_sent(uint32_t now_ms);
 
 /* The Enhanced Beacon that answers dst from own under the pairing key:
- * 18 ec seq | cd ab | dst(8) | own(8) | 04 | counter(4 LE) | FCS | MIC
- * (freedo tado/beacon.go:70-98). Returns PAIR_BEACON_LEN, or 0 if the
- * window is closed. */
+ * 18 ec seq | pan(2 LE) | dst(8) | own(8) | 04 | counter(4 LE) | FCS | MIC
+ * (freedo tado/beacon.go:70-98, where the PAN is always cd ab). pan is the
+ * network's (#43). Returns PAIR_BEACON_LEN, or 0 if the window is closed
+ * or pan is not mac_pan_usable(). */
 size_t pair_build_beacon(uint8_t       out[PAIR_BEACON_LEN],
+                         uint16_t      pan,
                          uint8_t       seq,
                          const uint8_t dst[MAC_EUI_LEN],
                          const uint8_t own[MAC_EUI_LEN],

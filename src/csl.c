@@ -24,6 +24,8 @@
  * - The wake-up frame cap is a runaway limit only (freedo: 253), so a train
  *   has no gap before its last frame however short the radio's turnaround
  *   is.
+ * - The wake-up frame's PAN is the network record's (csl_config.pan, #43),
+ *   not freedo's constant.
  * - Pairing (#19): a broadcast may carry Frame Pending (CSL_JOB_PENDING),
  *   and the body of a pairing job (a d/pair carries the network key in the
  *   clear) and the frame sealed from it are wiped as soon as they are no
@@ -577,7 +579,7 @@ static bool send_wake(const struct neighbor *n, const struct job *j, uint16_t re
     /* The short address is the first two address bytes swapped (freedo
      * tado/net.go:57-64, cslParseTx :1696); ff ff wakes every device. */
     uint8_t dst_short[2] = {n->dst[1], n->dst[0]};
-    mac_build_wakeup(w, j->seq, dst_short, rendezvous);
+    mac_build_wakeup(w, g.cfg.pan, j->seq, dst_short, rendezvous);
     return csl_port_send(w, sizeof w, tx_flags(j));
 }
 

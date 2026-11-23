@@ -21,6 +21,7 @@ static struct msgq up_q, down_q;
 
 static struct relay   relay;
 static struct ccm_key net_key;
+static uint16_t       net_pan = MAC_PAN_NONE; /* with net_key: the network record's (#43) */
 static uint8_t        own[MAC_EUI_LEN];
 static bool           have_own;
 
@@ -86,13 +87,21 @@ static void csl_restart(uint32_t counter, uint32_t limit) {
     /* The pairing key's schedule is set only while a window is open; jobs
      * that need it fail as "no key" otherwise. */
     struct csl_config cfg = {
-        .key = {&net_key, pair_key()}, .counter = counter, .counter_limit = limit};
+        .pan = net_pan, .key = {&net_key, pair_key()}, .counter = counter, .counter_limit = limit};
     memcpy(cfg.own, own, MAC_EUI_LEN);
     csl_init(&cfg);
 }
 
-void link_set_key(const uint8_t key[CCM_KEY_LEN], uint32_t first_counter, uint32_t counter_limit) {
+void link_set_key(uint16_t      pan,
+                  const uint8_t key[CCM_KEY_LEN],
+                  uint32_t      first_counter,
+                  uint32_t      counter_limit) {
     pair_close(); /* a window would hand out the key it was opened with */
+    if (!mac_pan_usable(pan)) {
+        link_clear_key();
+        return;
+    }
+    net_pan = pan;
     ccm_set_key(&net_key, key);
     csl_restart(first_counter, counter_limit);
     ra_armed = false;
@@ -105,6 +114,7 @@ void link_set_counter_limit(uint32_t counter_limit) {
 void link_clear_key(void) {
     pair_close(); /* a window hands out the key in use: no key, no window */
     ccm_clear_key(&net_key);
+    net_pan = MAC_PAN_NONE;
     csl_restart(0, 0);
     ra_armed = false;
 }
@@ -252,7 +262,7 @@ static enum link_rx on_beacon_request(const uint8_t *frame, size_t len, uint32_t
         || !csl_take_seq_counter(&seq, &ctr)) {
         return LINK_RX_BEACON_REQ;
     }
-    beacon_len = pair_build_beacon(beacon, seq, frame + 7, own, ctr);
+    beacon_len = pair_build_beacon(beacon, net_pan, seq, frame + 7, own, ctr);
     if (beacon_len == 0) {
         return LINK_RX_BEACON_REQ;
     }

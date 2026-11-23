@@ -46,7 +46,7 @@ int main(void) {
 
     /* A wake-up frame and a Data frame of ours: refused as "disabled". */
     uint8_t w[MAC_WAKE_LEN], dst_short[2] = {device[1], device[0]};
-    mac_build_wakeup(w, 1, dst_short, 10);
+    mac_build_wakeup(w, MAC_PAN_TADO, 1, dst_short, 10);
     CHECK_EQ(cc110l_tx_start(w, sizeof w, 0), CC_TX_DISABLED);
     uint8_t f[MAC_FRAME_MAX], body[10] = {0};
     size_t  n = mac_build_data(&key, f, sizeof f, false, 2, device, own, 1, body, sizeof body);

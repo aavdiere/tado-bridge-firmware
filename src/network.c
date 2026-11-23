@@ -64,7 +64,7 @@ static bool activate(const struct store_net *n, uint32_t seq) {
         LOG("network: counter reservation not written: no key, nothing sent");
         return false;
     }
-    link_set_key(n->key, first, lim);
+    link_set_key(n->pan_id, n->key, first, lim);
     limit      = lim;
     active     = true;
     active_seq = seq;
@@ -162,7 +162,7 @@ bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]) {
         LOG("network: create failed: counter log unreadable");
         return false;
     }
-    struct store_net n = {.pan_id = MAC_PAN_ID, .channel = channel, .counter_floor = max};
+    struct store_net n = {.pan_id = MAC_PAN_TADO, .channel = channel, .counter_floor = max};
     struct store_net got;
     uint32_t         seq = 0;
     if (rng_random(NULL, n.key, sizeof n.key) != 0) {

@@ -534,7 +534,7 @@ static void test_store_traffic(void) {
     memset(mem, 0xFF, sizeof mem);
     radio_reset(true);
     traffic(now_ns, 400ull * 1000000000u);
-    struct store_net n = {.pan_id = MAC_PAN_ID, .channel = TXGATE_TEST_CHANNEL};
+    struct store_net n = {.pan_id = MAC_PAN_TADO, .channel = TXGATE_TEST_CHANNEL};
     for (unsigned i = 0; i < CCM_KEY_LEN; i++) {
         n.key[i] = (uint8_t)(i + 1u);
     }

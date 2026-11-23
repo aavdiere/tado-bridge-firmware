@@ -17,8 +17,23 @@
 #include <stdint.h>
 
 #define MAC_EUI_LEN   8u
-#define MAC_PAN_ID    0xABCDu /* wake-up frames (freedo tado/mac.go:23) */
-#define MAC_CSL_UNITS 3125u   /* CSL period in 320 us units: 1.000 s (mac.go:24) */
+#define MAC_CSL_UNITS 3125u /* CSL period in 320 us units: 1.000 s (freedo tado/mac.go:24) */
+
+/* PAN ID (#43). Every tado network observed uses 0xABCD (freedo
+ * tado/mac.go:23; Tado_Hardware_Teardown.wiki/Tado-868-MHz-Link-Protocol.md:
+ * 229-232), and so does every network the bridge has formed so far. The
+ * PAN of the bridge's own network is the one its network record holds
+ * (src/store.h, pan_id): every wake-up frame and the Enhanced Beacon carry
+ * it. Data frames, broadcasts and the Enhanced ACK carry no PAN
+ * (docs/radio.md:141). */
+#define MAC_PAN_TADO 0xABCDu
+#define MAC_PAN_NONE 0xFFFFu /* the broadcast PAN: never a network's own */
+/* A PAN a network may have: not the broadcast PAN 0xffff, and not 0xfffe,
+ * which 802.15.4 keeps for "no short address" and the owner's plan
+ * (docs/open-questions.md row 33) leaves out as well. */
+static inline bool mac_pan_usable(uint16_t pan) {
+    return pan != 0xFFFFu && pan != 0xFFFEu;
+}
 
 #define MAC_HDR_LEN   16u /* sealed frames: nonce = hdr[0:13], AAD = hdr[0:16] */
 #define MAC_MIC_LEN   CCM_MIC_LEN
@@ -55,8 +70,10 @@ extern const uint8_t mac_eui_suffix[3];
 
 /* --- Wake-up -------------------------------------------------------------- */
 /* 25 seq | PAN(2 LE) | dst short(2) | 82 0e | rendezvous(2 LE) | 80 3f.
+ * pan is the network's (MAC_PAN_TADO in freedo, tado/build_mac.go:43);
  * rendezvous counts 320 us units until the Data frame. */
 void mac_build_wakeup(uint8_t       out[MAC_WAKE_LEN],
+                      uint16_t      pan,
                       uint8_t       seq,
                       const uint8_t dst_short[2],
                       uint16_t      rendezvous);

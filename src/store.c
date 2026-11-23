@@ -374,7 +374,7 @@ _Static_assert(STORE_NET_LEN <= STORE_REC_PAYLOAD, "network payload fits");
 bool store_net_allowed(const struct store_net *n) {
     return n->channel == TXGATE_TEST_CHANNEL
            && (n->channel != TXGATE_PROTECTED_CHANNEL || TXGATE_NET_ON_PROTECTED)
-           && n->pan_id == MAC_PAN_ID;
+           && n->pan_id == MAC_PAN_TADO;
 }
 
 bool store_net_load(struct store_net *out, uint32_t *seq) {
@@ -412,7 +412,7 @@ bool store_net_other_channel(uint8_t *channel, uint32_t *seq) {
             ok = false;
         } else if (get32(m) == STORE_NET_MAGIC) {
             ok = slot_read(addr, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, &s)
-                 && get16(p) == MAC_PAN_ID && p[3] == 0 && p[2] <= TXGATE_MAX_CHANNEL;
+                 && get16(p) == MAC_PAN_TADO && p[3] == 0 && p[2] <= TXGATE_MAX_CHANNEL;
             if (ok && (!any || s > newest)) {
                 newest = s;
                 ch     = p[2];

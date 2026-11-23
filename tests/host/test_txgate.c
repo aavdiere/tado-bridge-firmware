@@ -252,7 +252,7 @@ static void test_frame_rules(void) {
     /* Wake-up (to the joiner's short address, its first two wire bytes
      * swapped as src/csl.c send_wake() builds it). */
     static const uint8_t short_addr[2] = {0xb1, 0x0b};
-    mac_build_wakeup(f, 7, short_addr, 100);
+    mac_build_wakeup(f, MAC_PAN_TADO, 7, short_addr, 100);
     CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_OK);
     CHECK_EQ(txgate_check_frame(&prot, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_PROTECTED);
     CHECK_EQ(txgate_check_frame(&r, zero, f, MAC_WAKE_LEN, NULL, 0), TXGATE_NO_IDENTITY);
@@ -409,9 +409,9 @@ static void test_peer_rule(void) {
     /* Wake-up: the joiner's short address and ff ff (a broadcast's train)
      * pass; any other short address is a stock device's. */
     static const uint8_t mine[2] = {0xb1, 0x0b}, bcast[2] = {0xFF, 0xFF};
-    mac_build_wakeup(f, 7, mine, 100);
+    mac_build_wakeup(f, MAC_PAN_TADO, 7, mine, 100);
     CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_OK);
-    mac_build_wakeup(f, 7, bcast, 0);
+    mac_build_wakeup(f, MAC_PAN_TADO, 7, bcast, 0);
     CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, TXGATE_PAIRING), TXGATE_OK);
     static const uint8_t others[][2] = {
         {0x0b, 0xb1}, /* the joiner's bytes in the other order */
@@ -422,12 +422,12 @@ static void test_peer_rule(void) {
         {0x00, 0x00},
     };
     for (size_t k = 0; k < N(others); k++) {
-        mac_build_wakeup(f, 7, others[k], 100);
+        mac_build_wakeup(f, MAC_PAN_TADO, 7, others[k], 100);
         CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), other);
     }
     /* The device of the freedo vectors: its short address as csl.c builds it. */
     uint8_t ps[2] = {peer[1], peer[0]};
-    mac_build_wakeup(f, 7, ps, 100);
+    mac_build_wakeup(f, MAC_PAN_TADO, 7, ps, 100);
     CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), other);
 
     /* Beacon: freedo's request from the joiner passes (test_frame_rules);

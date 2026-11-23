@@ -19,7 +19,9 @@
  *   datagrams) and stops at fixed limits (pair.h).
  * - The window lasts 10 minutes and holds any number of exchanges with its
  *   target; a 2.04 ends an exchange, not the window (owner spec
- *   2026-11-17). */
+ *   2026-11-17).
+ * - The beacon carries the network record's PAN (#43), not freedo's
+ *   constant cd ab. */
 #include "pair.h"
 
 #include <string.h>
@@ -247,14 +249,15 @@ enum pair_req pair_check_request(const uint8_t *req, size_t len, uint32_t now_ms
 }
 
 size_t pair_build_beacon(uint8_t       out[PAIR_BEACON_LEN],
+                         uint16_t      pan,
                          uint8_t       seq,
                          const uint8_t dst[MAC_EUI_LEN],
                          const uint8_t own[MAC_EUI_LEN],
                          uint32_t      counter) {
-    if (!w.open) {
+    if (!w.open || !mac_pan_usable(pan)) {
         return 0;
     }
-    uint8_t hdr[MAC_HDR_LEN] = {0x18, 0xEC, seq, (uint8_t)MAC_PAN_ID, (uint8_t)(MAC_PAN_ID >> 8)};
+    uint8_t hdr[MAC_HDR_LEN] = {0x18, 0xEC, seq, (uint8_t)pan, (uint8_t)(pan >> 8)};
     memcpy(hdr + 5, dst, MAC_EUI_LEN);
     memcpy(hdr + 13, own, 3);
     uint8_t body[10];

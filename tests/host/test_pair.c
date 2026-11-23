@@ -42,7 +42,7 @@ static void test_key_and_vectors(void) {
     pair_init();
     CHECK_EQ(pair_check_request(request, sizeof request, 0), PAIR_REQ_CLOSED);
     uint8_t out[PAIR_BEACON_LEN];
-    CHECK_EQ(pair_build_beacon(out, 0x59, joiner, bridge, 13537), 0); /* closed */
+    CHECK_EQ(pair_build_beacon(out, MAC_PAN_TADO, 0x59, joiner, bridge, 13537), 0); /* closed */
 
     CHECK(pair_open(joiner, net_key, rnd, 1000, PAIR_WINDOW_MS));
     CHECK(pair_active(1000));
@@ -50,9 +50,23 @@ static void test_key_and_vectors(void) {
     CHECK(pair_is_target(joiner));
     CHECK(!pair_is_target(other));
     CHECK_EQ(pair_check_request(request, sizeof request, 1500), PAIR_REQ_OK);
-    CHECK_EQ(pair_build_beacon(out, 0x59, joiner, bridge, 13537), PAIR_BEACON_LEN);
+    CHECK_EQ(pair_build_beacon(out, MAC_PAN_TADO, 0x59, joiner, bridge, 13537), PAIR_BEACON_LEN);
     CHECK_MEM(out, beacon, sizeof beacon);
     CHECK_EQ(mac_classify(out, sizeof out), MAC_BEACON);
+
+    /* Another network's PAN (#43): in the clear header, and sealed with it
+     * (the header is the AAD); no beacon without a usable PAN. */
+    uint8_t other_pan[PAIR_BEACON_LEN], body[16];
+    size_t  n = 0;
+    CHECK_EQ(pair_build_beacon(other_pan, 0x4E43u, 0x59, joiner, bridge, 13537), PAIR_BEACON_LEN);
+    CHECK_EQ(other_pan[3], 0x43);
+    CHECK_EQ(other_pan[4], 0x4E);
+    CHECK_MEM(other_pan, beacon, 3);
+    CHECK_MEM(other_pan + 5, beacon + 5, MAC_HDR_LEN - 5);
+    CHECK(memcmp(other_pan + MAC_HDR_LEN, beacon + MAC_HDR_LEN, PAIR_BEACON_LEN - MAC_HDR_LEN) != 0);
+    CHECK_EQ(mac_open(pair_key(), other_pan, sizeof other_pan, body, sizeof body, &n), MAC_OPEN_OK);
+    CHECK_EQ(pair_build_beacon(out, 0xFFFFu, 0x59, joiner, bridge, 13537), 0);
+    CHECK_EQ(pair_build_beacon(out, 0xFFFEu, 0x59, joiner, bridge, 13537), 0);
 }
 
 static void test_requests_refused(void) {

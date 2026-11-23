@@ -137,7 +137,7 @@ static void test_pairing(uint32_t *now_ms) {
     /* No key, no window; never for ourselves. */
     link_init(own);
     CHECK(!link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
-    link_set_key(v_key.p, 2000, UINT32_MAX);
+    link_set_key(MAC_PAN_TADO, v_key.p, 2000, UINT32_MAX);
     CHECK(!link_pair_open(own, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     CHECK(!link_pair_active(*now_ms));
 
@@ -322,7 +322,7 @@ static void test_pairing(uint32_t *now_ms) {
     static const uint8_t other[] = {0x7B, 0x3B, 58, 0x02, 134, 0, 0, 0, 0, 0, 0, 0};
     unsigned             pairs   = link_stats()->ra_pairs_queued;
     uint32_t             ras     = link_stats()->ra_queued;
-    link_set_key(v_key.p, link_counter(), link_counter());
+    link_set_key(MAC_PAN_TADO, v_key.p, link_counter(), link_counter());
     CHECK(csl_enqueue_broadcast(other, sizeof other, 7, 0, CSL_KEY_NETWORK));
     CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     from = n_bcast_log;
@@ -398,7 +398,7 @@ static void test_pairing(uint32_t *now_ms) {
 
     /* A new key (a new network) closes a window. */
     CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
-    link_set_key(v_key2.p, 1, UINT32_MAX);
+    link_set_key(MAC_PAN_TADO, v_key2.p, 1, UINT32_MAX);
     CHECK(!link_pair_active(*now_ms));
     CHECK(!pair_key()->set);
     CHECK(link_pair_open(joiner, v_key2.p, rnd, *now_ms, PAIR_WINDOW_MS));
@@ -463,8 +463,15 @@ int main(void) {
     CHECK_EQ(csl_free_jobs(), CSL_JOB_POOL);
     CHECK_EQ(n_wake + n_data + n_bcast, 0);
 
+    /* A record's PAN that no network may have (#43): no key is set. */
+    link_set_key(0xFFFFu, v_key.p, 500, UINT32_MAX);
+    CHECK(!link_ready());
+    CHECK_EQ(link_on_frame(f, n, true, now_us, now_ms), LINK_RX_NO_KEY);
+    link_set_key(0xFFFEu, v_key.p, 500, UINT32_MAX);
+    CHECK(!link_ready());
+
     /* With the key: the uplink is queued for the server with its header. */
-    link_set_key(v_key.p, 500, UINT32_MAX);
+    link_set_key(MAC_PAN_TADO, v_key.p, 500, UINT32_MAX);
     CHECK(link_ready());
     CHECK_EQ(link_counter(), 500);
     CHECK(link_uplink_room());
@@ -538,7 +545,7 @@ int main(void) {
 
     /* Router Advertisement: after a Router Solicitation, with the gateway
      * and DNS addresses the net task gave. A new key drops what was queued. */
-    link_set_key(v_key.p, 900, UINT32_MAX);
+    link_set_key(MAC_PAN_TADO, v_key.p, 900, UINT32_MAX);
     CHECK_EQ(csl_free_jobs(), CSL_JOB_POOL);
     n_bcast = 0;
     link_set_router(0x0101A8C0u, 0x0101A8C0u); /* 192.168.1.1 as stored in memory */

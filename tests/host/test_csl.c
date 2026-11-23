@@ -12,6 +12,8 @@
 #include <stdlib.h>
 
 /* --- Simulated radio --------------------------------------------------------- */
+/* The network's PAN in every configuration here (#43). */
+#define TEST_PAN    MAC_PAN_TADO
 #define BYTE_US     160u /* 50 kbps */
 #define TX_SETUP_US 250u /* strobes, FIFO write, IDLE to TX */
 #define ACK_TURN_US 370u /* a device answers 0.35-0.39 ms after the Data frame */
@@ -185,7 +187,7 @@ static void run_until(uint64_t until_us) {
 }
 
 static void reset(void) {
-    struct csl_config cfg = {.key = {&key, NULL}, .counter = 1000, .counter_limit = UINT32_MAX, .seq = 0x40};
+    struct csl_config cfg = {.pan = TEST_PAN, .key = {&key, NULL}, .counter = 1000, .counter_limit = UINT32_MAX, .seq = 0x40};
     memcpy(cfg.own, own, 8);
     csl_init(&cfg);
     now_us       = 5000000;
@@ -255,7 +257,7 @@ static void test_bootstrap_then_anchored(void) {
         struct mac_wakeup w;
         CHECK(mac_parse_wakeup(sent[i].frame, sent[i].len, &w));
         CHECK_EQ(w.seq, data->frame[2]);
-        CHECK_EQ(w.pan, MAC_PAN_ID);
+        CHECK_EQ(w.pan, TEST_PAN);
         CHECK_EQ(w.dst_short[0], d.eui[1]);
         CHECK_EQ(w.dst_short[1], d.eui[0]);
         CHECK(w.rendezvous < prev);
@@ -646,7 +648,7 @@ static void test_pairing_flag(void) {
     add_device(&d, 0xA0, 250000, 0);
     static struct ccm_key pair;
     ccm_set_key(&pair, v_key2.p);
-    struct csl_config cfg = {.key = {&key, &pair}, .counter = 5, .counter_limit = UINT32_MAX, .seq = 1};
+    struct csl_config cfg = {.pan = TEST_PAN, .key = {&key, &pair}, .counter = 5, .counter_limit = UINT32_MAX, .seq = 1};
     memcpy(cfg.own, own, 8);
     csl_init(&cfg);
     CHECK(csl_enqueue_broadcast(body, sizeof body, 1, CSL_JOB_PAIRING, CSL_KEY_PAIRING));
@@ -667,7 +669,7 @@ static void test_pairing_flag(void) {
  * only moves up. */
 static void test_counter_limit(void) {
     reset();
-    struct csl_config cfg = {.key = {&key, NULL}, .counter = 1000, .counter_limit = 1000, .seq = 1};
+    struct csl_config cfg = {.pan = TEST_PAN, .key = {&key, NULL}, .counter = 1000, .counter_limit = 1000, .seq = 1};
     memcpy(cfg.own, own, 8);
     csl_init(&cfg);
     uint8_t pkt[20] = {0x7B, 0x3B, 58, 1, 134};
@@ -706,7 +708,7 @@ static void test_ra_pair(void) {
     reset();
     static struct ccm_key pair;
     ccm_set_key(&pair, v_key2.p);
-    struct csl_config cfg = {.key = {&key, &pair}, .counter = 70, .counter_limit = UINT32_MAX, .seq = 9};
+    struct csl_config cfg = {.pan = TEST_PAN, .key = {&key, &pair}, .counter = 70, .counter_limit = UINT32_MAX, .seq = 9};
     memcpy(cfg.own, own, 8);
     csl_init(&cfg);
     uint8_t pkt[84] = {0x7B, 0x3B, 58, 1, 134};
@@ -758,7 +760,7 @@ static void test_ra_pair(void) {
  * is taken at the reservation limit. */
 static void test_take_seq_counter(void) {
     reset();
-    struct csl_config cfg = {.key = {&key, NULL}, .counter = 300, .counter_limit = 303, .seq = 0x20};
+    struct csl_config cfg = {.pan = TEST_PAN, .key = {&key, NULL}, .counter = 300, .counter_limit = 303, .seq = 0x20};
     memcpy(cfg.own, own, 8);
     csl_init(&cfg);
     uint8_t  seq = 0;
@@ -1092,8 +1094,11 @@ static void test_counter_reservation_under_traffic(void) {
     struct device a, b;
     for (int hold = 1; hold >= 0; hold--) {
         reset();
-        struct csl_config cfg = {
-            .key = {&key, NULL}, .counter = 1000, .counter_limit = 1000 + CTR_AHEAD, .seq = 1};
+        struct csl_config cfg = {.pan           = TEST_PAN,
+                                 .key           = {&key, NULL},
+                                 .counter       = 1000,
+                                 .counter_limit = 1000 + CTR_AHEAD,
+                                 .seq           = 1};
         memcpy(cfg.own, own, 8);
         csl_init(&cfg);
         traffic_dev[0]    = add_device(&a, 0xA0, 100000, 0);

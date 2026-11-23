@@ -108,7 +108,7 @@ static void check_clean(void) {
 
 static size_t wake_frame(uint8_t *out) {
     uint8_t dst_short[2] = {device[1], device[0]};
-    mac_build_wakeup(out, 7, dst_short, 100);
+    mac_build_wakeup(out, MAC_PAN_TADO, 7, dst_short, 100);
     return MAC_WAKE_LEN;
 }
 
@@ -376,7 +376,7 @@ static void test_frames(void) {
     CHECK_EQ(cc110l_tx_verdict(), TXGATE_NOT_PEER);
     CHECK_EQ(chip.stx_count, stx);
     uint8_t other_short[2] = {another[1], another[0]};
-    mac_build_wakeup(f, 7, other_short, 100);
+    mac_build_wakeup(f, MAC_PAN_TADO, 7, other_short, 100);
     CHECK_EQ(cc110l_tx_start(f, MAC_WAKE_LEN, 0), CC_TX_REFUSED);
     CHECK_EQ(cc110l_tx_verdict(), TXGATE_NOT_PEER);
     CHECK_EQ(chip.stx_count, stx);

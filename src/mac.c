@@ -7,7 +7,8 @@
  * Copyright 2026 The freedo contributors. Licensed under the Apache License,
  * Version 2.0; see https://www.apache.org/licenses/LICENSE-2.0. Changes for
  * this project: C, caller-provided buffers, one sealed-frame routine shared
- * by Data and broadcast frames. */
+ * by Data and broadcast frames, the wake-up frame's PAN from the caller
+ * (the network record's, #43) instead of freedo's constant. */
 #include "mac.h"
 
 #include <string.h>
@@ -60,13 +61,14 @@ uint16_t mac_fcs(uint16_t crc, const uint8_t *p, size_t n) {
 
 /* --- Wake-up -------------------------------------------------------------- */
 void mac_build_wakeup(uint8_t       out[MAC_WAKE_LEN],
+                      uint16_t      pan,
                       uint8_t       seq,
                       const uint8_t dst_short[2],
                       uint16_t      rendezvous) {
     out[0] = 0x25;
     out[1] = seq;
-    out[2] = (uint8_t)MAC_PAN_ID;
-    out[3] = (uint8_t)(MAC_PAN_ID >> 8);
+    out[2] = (uint8_t)pan;
+    out[3] = (uint8_t)(pan >> 8);
     out[4] = dst_short[0];
     out[5] = dst_short[1];
     memcpy(out + 6, ie_rendezvous, 2);

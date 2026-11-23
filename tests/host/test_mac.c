@@ -30,20 +30,37 @@ static void test_classify(void) {
 static void test_wakeup(void) {
     for (size_t i = 0; i < N(v_wake); i++) {
         uint8_t f[MAC_WAKE_LEN];
-        mac_build_wakeup(f, v_wake[i].seq, v_wake[i].dst, v_wake[i].rendezvous);
+        mac_build_wakeup(f, MAC_PAN_TADO, v_wake[i].seq, v_wake[i].dst, v_wake[i].rendezvous);
         CHECK_EQ(v_wake[i].frame.n, MAC_WAKE_LEN);
         CHECK_MEM(f, v_wake[i].frame.p, MAC_WAKE_LEN);
 
         struct mac_wakeup w;
         CHECK(mac_parse_wakeup(v_wake[i].frame.p, v_wake[i].frame.n, &w));
         CHECK_EQ(w.seq, v_wake[i].seq);
-        CHECK_EQ(w.pan, MAC_PAN_ID);
+        CHECK_EQ(w.pan, MAC_PAN_TADO);
         CHECK_MEM(w.dst_short, v_wake[i].dst, 2);
         CHECK_EQ(w.rendezvous, v_wake[i].rendezvous);
         CHECK_EQ(mac_classify(f, sizeof f), MAC_WAKEUP);
     }
     struct mac_wakeup w;
     CHECK(!mac_parse_wakeup(v_wake[0].frame.p, MAC_WAKE_LEN - 1, &w));
+
+    /* Another network's PAN (#43): only bytes 2-3 change. */
+    uint8_t f[MAC_WAKE_LEN];
+    mac_build_wakeup(f, 0x4E43u, v_wake[0].seq, v_wake[0].dst, v_wake[0].rendezvous);
+    CHECK_EQ(f[2], 0x43);
+    CHECK_EQ(f[3], 0x4E);
+    CHECK_MEM(f, v_wake[0].frame.p, 2);
+    CHECK_MEM(f + 4, v_wake[0].frame.p + 4, MAC_WAKE_LEN - 4);
+    CHECK(mac_parse_wakeup(f, sizeof f, &w));
+    CHECK_EQ(w.pan, 0x4E43u);
+
+    CHECK(mac_pan_usable(MAC_PAN_TADO));
+    CHECK(mac_pan_usable(0x0000u));
+    CHECK(mac_pan_usable(0x4E43u));
+    CHECK(!mac_pan_usable(0xFFFFu));
+    CHECK(!mac_pan_usable(0xFFFEu));
+    CHECK(!mac_pan_usable(MAC_PAN_NONE));
 }
 
 static void test_enh_ack(void) {

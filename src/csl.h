@@ -55,7 +55,8 @@
 enum csl_key { CSL_KEY_NETWORK, CSL_KEY_PAIRING, CSL_KEY_COUNT };
 
 struct csl_config {
-    uint8_t own[MAC_EUI_LEN];
+    uint8_t  own[MAC_EUI_LEN];
+    uint16_t pan; /* the network's PAN, in every wake-up frame (#43) */
     /* Keys by enum csl_key; a NULL or unset key fails the jobs that need
      * it. The pairing key is for #19. */
     const struct ccm_key *key[CSL_KEY_COUNT];
