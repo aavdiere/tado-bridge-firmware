@@ -30,7 +30,7 @@ Built from a clean export of `6462644` with the owner's `config/local.cmake` (no
 3. **Bootloader:** `src/boot/*`, `src/fwimg.c`, `src/store.c` and the headers they include are linked into the bootloader, which is written once over SWD and never updated over the network (`src/boot/main.c:1-5`). None of them uses `__LINE__`, so for every commit that touches them the bootloader `.bin` SHA-256 must stay exactly as in the baseline. If it changes, the step is not a #33 step: it goes to #34.
 4. **Reviewer:** since 2026-11-17 every default image counts as radio-transmit code (`CLAUDE.md`, "Bench permission"), so no P8 image goes onto the bench bridge without a `fw-reviewer` "safe to flash" verdict, whatever the commit touched. Plan one review and one flash per batch of commits, not one per commit. Rows marked **R** touch radio timing, the transmit gate or the storage format and need that review even before they are merged.
 5. **Bench check after a flash:** the existing checks in `test-bench.md` (boot log, session ready, Enhanced ACK gap with the SDR on the test channel 16 only). Nothing is transmitted on channel 26.
-6. **Keep the layout of `struct ctr` in `src/store.c:431-437`:** `tools/bench/flash22_force.py:6,287` writes `ctr.next` at offset 16 over SWD.
+6. **Keep the layout of `struct ctr` in `src/store.c:450-456`** (`static struct {...} ctr`; line numbers as of `c8994d1`): `tools/bench/flash22_force.py:6,287` writes `ctr.next` at offset 16 over SWD.
 
 ## Ordered commit list for #33
 
@@ -100,10 +100,10 @@ Built as for rows 1-10: a clean export of each commit outside the working tree, 
 
 These look redundant but are defence in depth; P8 leaves them as they are:
 
-- `store_net_allowed()` checks both "test channel" and "not the protected channel" (`store.c:371`), as does `network_create()` (`network.c:99`).
-- `radio_strobe()` checks the strobe before `guard_header()` checks it again (`cc110l.c:377`).
+- `store_net_allowed()` checks both "test channel" and "not the protected channel" (`store.c:350`), as does `network_create()` (`network.c:99`).
+- `radio_strobe()` checks the strobe before `guard_header()` checks it again (`cc110l.c:379`).
 - Rule 5 of the transmit gate stays separate although rule 2 implies it (`txgate.c:99-104`).
-- `store_id_write()` repeats the commit steps of `store_slot_write()` on purpose, so that the bootloader image stayed the same with #39 (`store.c:316-323`). Merging them is proposal 8 below.
+- ~~`store_id_write()` repeats the commit steps of `store_slot_write()` on purpose~~: obsolete since proposal 8 (`92dc698`): both writers now share `slot_pick()` and `slot_commit()` (`store.c:130,144`), and the bootloader was reflashed with it (batch C, below).
 
 ## Proposals for #34
 
@@ -112,13 +112,13 @@ These look redundant but are defence in depth; P8 leaves them as they are:
 | # | Status | Kind | Proposal | Sources | Effect |
 | ---: | :--- | :--- | :--- | :--- | :--- |
 | 1 | done `6305e8a`..`6ab1941` | architecture | Split `src/radio.c` (2244 lines; `radio_task_run()` 203 lines from `radio.c:2041`) into the task loop, receive and ACK task side (`radio.c:588-1032`), bring-up (`:1033-1304`), flash on the shared bus and update operations (`:1305-1344`, `:1829-1886`, `:1940-2012`) and pairing (`:1648-1828`). | function list of `radio.c` | no size change expected; review of the whole radio path |
-| 2 | batch C | module | One little-endian helper header for `get16/get32/put16/put32`, now in four files. | `fwimg.c:17-32`, `store.c:24-37`, `fwupd.c:303-305`, `boot/bootctl.c:23` | bootloader `.bin` changes: needs a reflash decision |
-| 3 | batch C | module | One secure wipe helper; five local copies next to `mbedtls_platform_zeroize()` elsewhere. | `store.c:17`, `csl.c:186`, `pair.c:82`, `link.c:64`, `cc110l.c:690`; `network.c:84` | boot `.bin` changes (store.c) |
-| 4 | batch C | module | One fault-code LED pattern (code and time to level); four copies of 150/250/2500 ms. | `log.c:58-83`, `net.c:123-137`, `session.c:589-602`, `boot/bl_hw.c:125-135` | bootloader copy may stay |
+| 2 | done `3ab4a70` (batch C) | module | One little-endian helper header for `get16/get32/put16/put32`, now in four files. | `fwimg.c:17-32`, `store.c:24-37`, `fwupd.c:303-305`, `boot/bootctl.c:23` | bootloader `.bin` changes: needs a reflash decision |
+| 3 | done `bee5d7b` (batch C) | module | One secure wipe helper; five local copies next to `mbedtls_platform_zeroize()` elsewhere. | `store.c:17`, `csl.c:186`, `pair.c:82`, `link.c:64`, `cc110l.c:690`; `network.c:84` | boot `.bin` changes (store.c) |
+| 4 | done `c8994d1` (batch C) | module | One fault-code LED pattern (code and time to level); four copies of 150/250/2500 ms. | `log.c:58-83`, `net.c:123-137`, `session.c:589-602`, `boot/bl_hw.c:125-135` | bootloader copy may stay |
 | 5 | done `798f464` | API | Export the hex formatter of the update module; two copies. | `fwupd.c:569-576`, `fwupd_task.c:135-142` | small |
 | 6 | done `91d6f96` | API | One home for the channel plan and radio timing constants: fXOSC and the frequency word in two files; IDLE to TX 75 us in two places; the airtime charge (161 us per byte, 100 us ramp) and the TX watch window (160 us, 75 us) differ on purpose and should say so in one place. Values unchanged. | `radio.c:197-198`, `txgate.c:11-14`, `cc110l.c:237`, `radio.c:1732`, `airtime.h:45-49` | R; `airtime.h` only after the local edit is gone |
 | 7 | done `c8e8ea4` | rename | `radio_strobe()` to `cc110l_strobe()`; `RADIO_PA_BRINGUP` to a name without "bring-up"; drop the alias `RADIO_PROTECTED_CHANNEL` for `TXGATE_PROTECTED_CHANNEL`. | `cc110l.h:47,146`, `radio.h:25`, `radio.c:112,207-208`; tests `test_cc110l.c:52-73`, `test_cc110l_off.c:38-85` | R |
-| 8 | batch C | storage code | Merge the commit steps of `store_id_write()` into a helper shared with `store_slot_write()`, and the slot choice repeated in both. | `store.c:139-184`, `store.c:324-364`, `store.c:154-155`, `store.c:335-336` | bootloader `.bin` changes; R |
+| 8 | done `c6f7e34`, `92dc698` (batch C) | storage code | Merge the commit steps of `store_id_write()` into a helper shared with `store_slot_write()`, and the slot choice repeated in both. | `store.c:139-184`, `store.c:324-364`, `store.c:154-155`, `store.c:335-336` | bootloader `.bin` changes; R |
 | 9 | done `7a3f1ea` | module | One MX25R opcode header for the driver and the bootloader. | `mx25r.c:32-44`, `boot/bl_hw.c:189-196` | boot hash should stay (defines only) |
 | 10 | done `860d7cf` | API | One test for "a pairing target is named in the build" instead of two. | `main.c:26-31`, `radio.c:1764` | small |
 | 11 | done `89af422` | API | `mx25r_read_id()` and `mx25r_read_status()` return `bool` but always return true. | `mx25r.c:186-196` | small |
@@ -148,6 +148,14 @@ Proposals 7 (`c8e8ea4`), 6 (`91d6f96`, `src/phy.h`) and 1, the split of `radio.c
 - **Side effects of the move [I]:** `fw_panic()` and `configASSERT` sites pass `__FILE__`, so a panic log now names the file the code moved to (for example `src/radio_bringup.c`) instead of `src/radio.c`. Addresses moved too: `exti1_isr` is now at `0x08016c24`; look it up in the map file of the image rather than in older notes. Line numbers cited in other docs for `radio.c` were updated to the new files on 2026-11-23 (`design.md`, `radio-runtime.md`, `test-bench.md`); older results that cite `radio.c` lines of earlier commits are left as they were.
 - **Left for batch C:** proposals 2, 3, 8 and 4 change the bootloader `.bin`: one reviewed SWD reflash of the bootloader and a recovery rehearsal, which Claude runs itself (owner, 2026-11-23: no need for the owner at the bench; the owner is asked only if a failed write leaves SWD unable to attach and the board needs a power cycle).
 
+### Batch C: result (#34, 2026-11-23) [V]
+
+Proposals 2 (`3ab4a70`, `src/le.h`), 3 (`bee5d7b`, `mbedtls_platform_zeroize()`), 8 (`c6f7e34` pins the record write traces in the host tests, then `92dc698`: `slot_pick()` and `slot_commit()` shared by both record writers) and 4 (`c8994d1`, `src/fault_led.h`), one commit each, pushed. Bootloader text 6120 to 6096 bytes, `.bin` 6124 to **6100 bytes**; application text 177932 to 177916, `.bin` 178072 to 178056 bytes. Details per commit in the commit messages.
+
+- **Review (rule 4):** `fw-reviewer` gave "safe to flash" on 2026-11-23 for exactly bootloader `.bin` `ed7fce090c22237554810f14a32ce71d1026c8d46b58320b824cc31c320868f7` and application `.bin` `daf346f41a02d1d5a8869d49cab81ae80df8de429755d8b9129b47d67f772fd2`, from a clean `git archive c8994d1` with the bench `config/local.cmake` and default options.
+- **Bench (rule 5), 2026-11-23 [V]:** rebuilt as reviewed, both hashes matched. The bootloader went on by a sector-0-only SWD write (`Verified OK`; sectors 1-7 unchanged), the old application `9fdc538a` booted under it, then `daf346f4` installed over the air and confirmed. Rehearsed: two interrupted installs (resets), and the sector 4 erase, which the bootloader now repairs by reinstalling from the slot. Enhanced ACK 225.3-226.1 us, median 225.9 us (n=6), too late 0, stale 0. Full record: `test-bench.md`, "Batch C reflash and rehearsal result (#34)".
+- **Bench state:** bootloader `ed7fce09…`, application `daf346f4…` `CONFIRMED`, prev `9fdc538a`.
+
 ## Progress by module
 
 Status: **todo** (rows above), **done** (all its rows landed), **none** (nothing found by the survey; detailed read at #33 time), **proposal** (only #34 items), **out** (not in scope).
@@ -156,25 +164,25 @@ Status: **todo** (rows above), **done** (all its rows landed), **none** (nothing
 | :--- | :--- | :--- | :--- | :--- |
 | Startup, tasks | `main.c`, `app.c/.h`, `hooks.c`, `syscalls.c`, `faults.c/.h` | full | done | 6 done; P10, P12 done |
 | Board | `board.c/.h` | full | done | 6, 20 done |
-| Log, RTT | `log.c/.h`, `rtt.c/.h` | full | proposal | P4 |
+| Log, RTT | `log.c/.h`, `rtt.c/.h` | full | done | P4 done |
 | Time, clock, watchdog | `timebase.c/.h`, `clock.c/.h`, `watchdog.c/.h` | full | done | 6, 11, 19 done |
 | Buttons, pairing LED | `button.c/.h`, `pair_led.c/.h` | full | none | |
 | Config headers | `FreeRTOSConfig.h`, `lwipopts.h`, `tado_mbedtls_config.h`, `arch/cc.h`, `lwip_port.c` | full | done | 1 done |
 | Entropy, DRBG | `pa3_adc.c/.h`, `entropy.c/.h`, `rng.c/.h` | full | done | 1, 7 done |
 | SPI1 | `spi1.c/.h` | full | done | 18 done |
-| CC110L driver | `cc110l.c/.h` | full | done | 3, 13 done; P6, P7 |
+| CC110L driver | `cc110l.c/.h` | full | done | 3, 13 done; P3, P6, P7 done |
 | Airtime | `airtime.c/.h` | full | out (local edit) | P6 later |
 | Transmit gate | `txgate.c/.h` | full | done | 15 done |
 | Radio task | `radio.c/.h`, `radio_internal.h`, `radio_pair.c`, `radio_csl.c`, `radio_flash.c`, `radio_bringup.c`, `radio_rx.c`, `phy.h` | full (#33 row 2) | done | 2, 14 done; P1; 1, 6, 7 done (batch B); P10 done |
 | MAC, CCM | `mac.c/.h`, `ccm.c/.h` | ccm full, mac skimmed | none | |
-| Link, 6LoWPAN, CSL, relay, msgq | `link.c/.h`, `lowpan.c/.h`, `csl.c/.h`, `relay.c/.h`, `msgq.c/.h` | msgq full, rest skimmed | proposal | P3 |
-| Pairing | `pair.c/.h` | skimmed | proposal | P3 |
+| Link, 6LoWPAN, CSL, relay, msgq | `link.c/.h`, `lowpan.c/.h`, `csl.c/.h`, `relay.c/.h`, `msgq.c/.h` | msgq full, rest skimmed | done | P3 done |
+| Pairing | `pair.c/.h` | skimmed | done | P3 done |
 | External flash driver | `mx25r.c/.h`, `mx25r_ops.h`, `flash_layout.h` | full | done | P9, P11 done |
-| Store, identity, network | `store.c/.h`, `store_port.c`, `identity.c/.h`, `network.c/.h` | full | done | 4, 5, 17 done; P8 |
-| Images, update | `fwimg.c/.h`, `image_desc.c/.h`, `fwupd.c/.h`, `fwupd_task.c/.h`, `handoff.c/.h` | full | done | 7, 12, 16 done; P2; P5 done |
-| Bootloader | `boot/main.c`, `boot/bootctl.c/.h`, `boot/bl_hw.c/.h`, `boot/bl_mbedtls_config.h` | `bootctl.h` full, rest skimmed | done | 9 done; P2, P4; P9 done |
-| Ethernet, lwIP, net task | `enc28j60.c/.h`, `net.c/.h` | `enc28j60.h`, `net.c` full; `enc28j60.c` part | done | 8 done; P4 |
-| TLS, WebSocket, CoAP, session | `tls.c/.h`, `ws.c/.h`, `coap.c/.h`, `session.c/.h` | skimmed | proposal | P4 |
+| Store, identity, network | `store.c/.h`, `store_port.c`, `identity.c/.h`, `network.c/.h` | full | done | 4, 5, 17 done; P2, P3, P8 done |
+| Images, update | `fwimg.c/.h`, `image_desc.c/.h`, `fwupd.c/.h`, `fwupd_task.c/.h`, `handoff.c/.h` | full | done | 7, 12, 16 done; P2, P5 done |
+| Bootloader | `boot/main.c`, `boot/bootctl.c/.h`, `boot/bl_hw.c/.h`, `boot/bl_mbedtls_config.h` | `bootctl.h` full, rest skimmed | done | 9 done; P2, P4, P9 done |
+| Ethernet, lwIP, net task | `enc28j60.c/.h`, `net.c/.h` | `enc28j60.h`, `net.c` full; `enc28j60.c` part | done | 8 done; P4 done |
+| TLS, WebSocket, CoAP, session | `tls.c/.h`, `ws.c/.h`, `coap.c/.h`, `session.c/.h` | skimmed | done | P4 done |
 | Host tests | `tests/host/*` | Makefile full, rest skimmed | done | 10 done; 22 skipped |
 | Tools | `tools/sdr`, `tools/bench`, `tools/entropy`, `tools/identity`, `tools/update`, scripts | headers | done | 23 kept; rule 6 |
 | Build | `Makefile`, `cmake/*` | skimmed | done (owner skipped) | 21 skipped |

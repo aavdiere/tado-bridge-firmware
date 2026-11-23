@@ -22,8 +22,8 @@ Timing resolution: frame times come from `demod.py`'s least-squares sync fit at 
 - **retransmissions:** the same source, destination and seq within 30 s (`:358-364`). Every repeat in the capture fell either at 1.2-3.0 s or at 661 s or more, which is broadcast sequence-number wrap.
 - **CRC failures**, and those that overlap a CRC-OK frame.
 - **busy share.**
-- **LBT busy rate:** the share of backoff-plus-listen windows `[T - (3.968 ms + k x 640 us), T]`, k uniform 0-6, that hold any part of a frame (exact over T, `:415-419`). It also gives the 3.968 ms listen alone (k = 0), the only part `src/csl.c:516,627-631` actually listens to.
-- **LBT loop Monte Carlo:** busy means retry 20 ms later with a new backoff, and 10 busy listens in a row end the attempt (`src/csl.c:428-434`, `src/csl.h:38-43`; `tools/sdr/stockscore.py:180-206`).
+- **LBT busy rate:** the share of backoff-plus-listen windows `[T - (3.968 ms + k x 640 us), T]`, k uniform 0-6, that hold any part of a frame (exact over T, `:415-419`). It also gives the 3.968 ms listen alone (k = 0), the only part `src/csl.c:511,622-626` actually listens to.
+- **LBT loop Monte Carlo:** busy means retry 20 ms later with a new backoff, and 10 busy listens in a row end the attempt (`src/csl.c:423-429`, `src/csl.h:38-43`; `tools/sdr/stockscore.py:180-206`).
 
 | Block (stream s) | Coordinator Data ACKed by device | Device uplinks ACKed by coordinator | Retransmissions | CRC failures (overlapping a frame) | Busy | LBT windows busy (listen alone) | LBT attempts ended BUSY |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -47,7 +47,7 @@ Over sliding 10-minute windows (30 s steps), the downlink share ranges from 86.1
 - **Stock wake-up trains:** 253 in 36 min, median 85 ms long, 1.25 % of the time. Six of them are `ff ff` broadcast trains of about 1.0 s each (about 10 an hour).
 - **CRC failures:** 77 % of them are weak, below -50 dBFS (median -58.9 dBFS, SNR about 5 dB). That points to distant senders or noise sync hits rather than collisions **[I]**.
 - **Anything of ours on channel 26: none.** No frame carries the bridge's address (learned from the channel-16 capture `~/ib01-captures/found41/run.A.frames.csv`, the source of the Data frames that follow its trains). No frame carries the spare device's address. No wake-up train has the bridge's step (4048 µs ± 15 µs; the stock steps are 3.94-3.99 ms and 4.40-4.45 ms). No sender has an unknown carrier offset.
-- **Short-address check (D7): PASS.** None of the 6 stock short addresses (8972 occurrences, from wake-up frames and from every address in Data, ACK and Beacon Request frames) has the same SHA-256 as the spare device's short address. The spare's short address is bytes 6 and 7 of the stored `PAIR_TARGET_EUI64`, i.e. wire bytes 1 and 0 (`src/csl.c:577-579`, `cmake/CMakeLists.txt:129-136`, `tools/sdr/stockscore.py:123-136,502-520`). Neither value is printed.
+- **Short-address check (D7): PASS.** None of the 6 stock short addresses (8972 occurrences, from wake-up frames and from every address in Data, ACK and Beacon Request frames) has the same SHA-256 as the spare device's short address. The spare's short address is bytes 6 and 7 of the stored `PAIR_TARGET_EUI64`, i.e. wire bytes 1 and 0 (`src/csl.c:572-574`, `cmake/CMakeLists.txt:129-136`, `tools/sdr/stockscore.py:123-136,502-520`). Neither value is printed.
 - **A side finding** from the 2026-11-11 capture behind "Stock network reference" (`~/ib01-captures/ch26_300s.frames.csv`): the spare device's address was then on channel 26 as the source of 100 broadcasts in 300 s (one every 3 s). That capture had 6 devices; today's has 5 and no frame of the spare. **[I]** The spare was probably a member of the stock network until it was set aside as the spare (owner, 2026-11-16). The stock coordinator sent it nothing in these 36 min.
 
 **What this means [I].**

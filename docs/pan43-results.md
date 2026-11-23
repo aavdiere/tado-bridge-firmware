@@ -49,7 +49,7 @@ Keep fixed PAN `0xABCD` (plan step 2); the random PAN of step 3 is not built. Ke
 
 - `7fc5f13`: wake-up frames and the beacon take the PAN from the network record (`src/mac.h`, `src/mac.c`, `src/csl.c`, `src/pair.c`, `src/link.c`).
 - `3222b87`: transmit gate rule 7, `TXGATE_BAD_PAN`: a wake-up frame or Enhanced Beacon must carry our network's PAN, none goes out without a network (`src/txgate.c:174,255`, `src/txgate.h:35-38,122`). Data, ACK and broadcast-data frames have no PAN field (`radio.md:141`).
-- `90ad9dc`: the store accepts any usable PAN, that is not `0xFFFF` or `0xFFFE` (`mac_pan_usable()`, `src/store.c:377,415`, `src/store.h:143`); `network.c` hands the PAN to the gate (`src/network.c:69`). New networks are always formed with `0xABCD` (`src/network.c:169`).
+- `90ad9dc`: the store accepts any usable PAN, that is not `0xFFFF` or `0xFFFE` (`mac_pan_usable()`, `src/store.c:356,394`, `src/store.h:143`); `network.c` hands the PAN to the gate (`src/network.c:69`). New networks are always formed with `0xABCD` (`src/network.c:169`).
 
 ## Effect on the C2 finding (P7.1 review)
 
