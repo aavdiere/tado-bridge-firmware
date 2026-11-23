@@ -111,13 +111,13 @@ These look redundant but are defence in depth; P8 leaves them as they are:
 
 | # | Status | Kind | Proposal | Sources | Effect |
 | ---: | :--- | :--- | :--- | :--- | :--- |
-| 1 | batch B | architecture | Split `src/radio.c` (2244 lines; `radio_task_run()` 203 lines from `radio.c:2041`) into the task loop, receive and ACK task side (`radio.c:588-1032`), bring-up (`:1033-1304`), flash on the shared bus and update operations (`:1305-1344`, `:1829-1886`, `:1940-2012`) and pairing (`:1648-1828`). | function list of `radio.c` | no size change expected; review of the whole radio path |
+| 1 | done `6305e8a`..`6ab1941` | architecture | Split `src/radio.c` (2244 lines; `radio_task_run()` 203 lines from `radio.c:2041`) into the task loop, receive and ACK task side (`radio.c:588-1032`), bring-up (`:1033-1304`), flash on the shared bus and update operations (`:1305-1344`, `:1829-1886`, `:1940-2012`) and pairing (`:1648-1828`). | function list of `radio.c` | no size change expected; review of the whole radio path |
 | 2 | batch C | module | One little-endian helper header for `get16/get32/put16/put32`, now in four files. | `fwimg.c:17-32`, `store.c:24-37`, `fwupd.c:303-305`, `boot/bootctl.c:23` | bootloader `.bin` changes: needs a reflash decision |
 | 3 | batch C | module | One secure wipe helper; five local copies next to `mbedtls_platform_zeroize()` elsewhere. | `store.c:17`, `csl.c:186`, `pair.c:82`, `link.c:64`, `cc110l.c:690`; `network.c:84` | boot `.bin` changes (store.c) |
 | 4 | batch C | module | One fault-code LED pattern (code and time to level); four copies of 150/250/2500 ms. | `log.c:58-83`, `net.c:123-137`, `session.c:589-602`, `boot/bl_hw.c:125-135` | bootloader copy may stay |
 | 5 | done `798f464` | API | Export the hex formatter of the update module; two copies. | `fwupd.c:569-576`, `fwupd_task.c:135-142` | small |
-| 6 | batch B | API | One home for the channel plan and radio timing constants: fXOSC and the frequency word in two files; IDLE to TX 75 us in two places; the airtime charge (161 us per byte, 100 us ramp) and the TX watch window (160 us, 75 us) differ on purpose and should say so in one place. Values unchanged. | `radio.c:197-198`, `txgate.c:11-14`, `cc110l.c:237`, `radio.c:1732`, `airtime.h:45-49` | R; `airtime.h` only after the local edit is gone |
-| 7 | batch B | rename | `radio_strobe()` to `cc110l_strobe()`; `RADIO_PA_BRINGUP` to a name without "bring-up"; drop the alias `RADIO_PROTECTED_CHANNEL` for `TXGATE_PROTECTED_CHANNEL`. | `cc110l.h:47,146`, `radio.h:25`, `radio.c:112,207-208`; tests `test_cc110l.c:52-73`, `test_cc110l_off.c:38-85` | R |
+| 6 | done `91d6f96` | API | One home for the channel plan and radio timing constants: fXOSC and the frequency word in two files; IDLE to TX 75 us in two places; the airtime charge (161 us per byte, 100 us ramp) and the TX watch window (160 us, 75 us) differ on purpose and should say so in one place. Values unchanged. | `radio.c:197-198`, `txgate.c:11-14`, `cc110l.c:237`, `radio.c:1732`, `airtime.h:45-49` | R; `airtime.h` only after the local edit is gone |
+| 7 | done `c8e8ea4` | rename | `radio_strobe()` to `cc110l_strobe()`; `RADIO_PA_BRINGUP` to a name without "bring-up"; drop the alias `RADIO_PROTECTED_CHANNEL` for `TXGATE_PROTECTED_CHANNEL`. | `cc110l.h:47,146`, `radio.h:25`, `radio.c:112,207-208`; tests `test_cc110l.c:52-73`, `test_cc110l_off.c:38-85` | R |
 | 8 | batch C | storage code | Merge the commit steps of `store_id_write()` into a helper shared with `store_slot_write()`, and the slot choice repeated in both. | `store.c:139-184`, `store.c:324-364`, `store.c:154-155`, `store.c:335-336` | bootloader `.bin` changes; R |
 | 9 | done `7a3f1ea` | module | One MX25R opcode header for the driver and the bootloader. | `mx25r.c:32-44`, `boot/bl_hw.c:189-196` | boot hash should stay (defines only) |
 | 10 | done `860d7cf` | API | One test for "a pairing target is named in the build" instead of two. | `main.c:26-31`, `radio.c:1764` | small |
@@ -139,6 +139,15 @@ Built as for the #33 rows: a clean export of each commit outside the working tre
 - **Total:** text 175348 to 175268 (-80 B), data and bss unchanged. Application `.bin` after proposal 12 (`FW_VERSION=0`): `ada70bd7…f594`. Receive-only (`RADIO_TX_ALLOWED=0`): 169512 to 169432 (-80 B), `.bin` `8093a646…88d3`.
 - **Review:** the batch needs one `fw-reviewer` verdict before it is flashed (rule 4). Proposal 11 changes the code of `radio_task`, so the bench check (rule 5) should include the Enhanced ACK gap on channel 16.
 
+### Batch B: result (#34, 2026-11-23) [V]
+
+Proposals 7 (`c8e8ea4`), 6 (`91d6f96`, `src/phy.h`) and 1, the split of `radio.c` (`6305e8a`, `c18d1d7`, `1d1f48d`, `1d62b18`, `47cbdec`, `6ab1941`), landed and are pushed. `src/radio.c` (2244 lines before) is now 544 lines (the task loop, the minute log, `quiet()`, `flash_quiet()`), with `src/radio_internal.h` for the shared state and the new files `src/radio_pair.c` (pairing, `beacon_answer()`), `src/radio_csl.c` (the coordinator's radio), `src/radio_flash.c` (flash work, update operations, factory reset), `src/radio_bringup.c` (bring-up) and `src/radio_rx.c` (receive, the ACK's task side, `exti0_isr()`, `exti1_isr()`, `rx_service()`).
+
+- **Review (rule 4):** `fw-reviewer` gave "safe to flash" on 2026-11-23: the code is identical to `origin/main` instruction for instruction, text 177920 to 177932 (+12 B), the bootloader `.bin` unchanged.
+- **Bench (rule 5), 2026-11-23 [V]:** the image (`.bin` SHA-256 `9fdc538a...`) was flashed and verified: boots clean, uplink ACKed, downlink delivered, stale 0, overflow 0, acks too late 0, radio task stack 532 of 840 words unused.
+- **Side effects of the move [I]:** `fw_panic()` and `configASSERT` sites pass `__FILE__`, so a panic log now names the file the code moved to (for example `src/radio_bringup.c`) instead of `src/radio.c`. Addresses moved too: `exti1_isr` is now at `0x08016c24`; look it up in the map file of the image rather than in older notes. Line numbers cited in other docs for `radio.c` were updated to the new files on 2026-11-23 (`design.md`, `radio-runtime.md`, `test-bench.md`); older results that cite `radio.c` lines of earlier commits are left as they were.
+- **Left for batch C:** proposals 2, 3, 8 and 4 change the bootloader `.bin`: one reviewed SWD reflash of the bootloader and a recovery rehearsal, which needs the owner at the bench.
+
 ## Progress by module
 
 Status: **todo** (rows above), **done** (all its rows landed), **none** (nothing found by the survey; detailed read at #33 time), **proposal** (only #34 items), **out** (not in scope).
@@ -156,7 +165,7 @@ Status: **todo** (rows above), **done** (all its rows landed), **none** (nothing
 | CC110L driver | `cc110l.c/.h` | full | done | 3, 13 done; P6, P7 |
 | Airtime | `airtime.c/.h` | full | out (local edit) | P6 later |
 | Transmit gate | `txgate.c/.h` | full | done | 15 done |
-| Radio task | `radio.c/.h` | full (#33 row 2) | done | 2, 14 done; P1, P6, P7; P10 done |
+| Radio task | `radio.c/.h`, `radio_internal.h`, `radio_pair.c`, `radio_csl.c`, `radio_flash.c`, `radio_bringup.c`, `radio_rx.c`, `phy.h` | full (#33 row 2) | done | 2, 14 done; P1; 1, 6, 7 done (batch B); P10 done |
 | MAC, CCM | `mac.c/.h`, `ccm.c/.h` | ccm full, mac skimmed | none | |
 | Link, 6LoWPAN, CSL, relay, msgq | `link.c/.h`, `lowpan.c/.h`, `csl.c/.h`, `relay.c/.h`, `msgq.c/.h` | msgq full, rest skimmed | proposal | P3 |
 | Pairing | `pair.c/.h` | skimmed | proposal | P3 |
