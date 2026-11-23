@@ -63,7 +63,7 @@ bool network_active(void);
 bool network_absent(void);
 
 /* The other state (stage P7.1): at boot the newest network record was a
- * sound one (store_net_other_channel(): every slot empty or valid, tado
+ * sound one (store_net_other_channel(): every slot empty or valid, usable
  * PAN) for another channel, written by an image built for another
  * RADIO_NET_CHANNEL, and nothing has been written since. This image never
  * uses it (no key, nothing sent, receiving goes on) and never retunes to

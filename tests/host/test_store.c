@@ -354,7 +354,36 @@ static void test_record_policy(void) {
     unsigned ops0 = fm.ops;
     CHECK(!store_net_write(&n, NULL));
     CHECK_EQ(fm.ops, ops0); /* refused before touching the flash */
+    n.pan_id = 0xFFFE;
+    CHECK(!store_net_write(&n, NULL));
     CHECK_EQ(fm.ops, ops_start);
+    CHECK(!store_net_allowed(&n));
+    /* Any other PAN is the network's own (#43). */
+    static const uint16_t pans[] = {0x0000u, 0x4E43u, MAC_PAN_TADO, 0xFFFDu};
+    for (size_t i = 0; i < sizeof pans / sizeof pans[0]; i++) {
+        n.pan_id = pans[i];
+        CHECK(store_net_allowed(&n));
+    }
+
+    /* A record for another PAN goes in and comes back as it was. */
+    n.pan_id = 0x4E43u;
+    uint32_t wseq = 0;
+    CHECK(store_net_commit(&n, &got, &seq));
+    CHECK_EQ(got.pan_id, 0x4E43u);
+    CHECK(same_net(&got, &n));
+    wseq = seq;
+    reboot();
+    CHECK(store_net_load(&got, &seq));
+    CHECK_EQ(seq, wseq);
+    CHECK_EQ(got.pan_id, 0x4E43u);
+    CHECK(same_net(&got, &n));
+    /* The same payload with PAN 0xffff, written around the policy: never
+     * loaded, so no image ever runs it. */
+    uint8_t q[STORE_NET_LEN] = {0xFF, 0xFF, TXGATE_TEST_CHANNEL, 0};
+    CHECK(store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, q, sizeof q, NULL));
+    CHECK(!store_net_load(&got, &seq));
+    flash_stock();
+    reboot();
 
     /* A well-formed record for channel 26 (written around the policy) is
      * never loaded (channel-26 build: one for channel 16). */
@@ -1107,10 +1136,20 @@ static void test_record_other_channel(void) {
     CHECK(!store_net_other_channel(&ch, &seq));
     mem[old_slot + STORE_REC_HDR + 6] ^= 0x01;
     CHECK(store_net_other_channel(&ch, &seq));
-    /* Another PAN, a channel off the plan, a non-zero reserved byte: no. */
+    /* Another usable PAN (#43): a network of ours as well. */
     flash_stock();
     reboot();
     raw_net(REFUSED_CH, 0x1234, 4);
+    CHECK(store_net_other_channel(&ch, &seq));
+    CHECK_EQ(ch, REFUSED_CH);
+    /* An unusable PAN, a channel off the plan, a non-zero reserved byte: no. */
+    flash_stock();
+    reboot();
+    raw_net(REFUSED_CH, 0xFFFF, 4);
+    CHECK(!store_net_other_channel(&ch, &seq));
+    flash_stock();
+    reboot();
+    raw_net(REFUSED_CH, 0xFFFE, 4);
     CHECK(!store_net_other_channel(&ch, &seq));
     flash_stock();
     reboot();

@@ -137,19 +137,22 @@ struct store_net {
 };
 
 /* Is this a network the bridge may run? For now only the test channel (the
- * build's RADIO_NET_CHANNEL, src/txgate.h) and the tado PAN
- * (docs/test-bench.md; never the protected channel 26, except in a
- * channel-26 build with the opt-in RADIO_ALLOW_CH26, stage P7.1). */
+ * build's RADIO_NET_CHANNEL, src/txgate.h; docs/test-bench.md; never the
+ * protected channel 26, except in a channel-26 build with the opt-in
+ * RADIO_ALLOW_CH26, stage P7.1), and a PAN a network may have
+ * (mac_pan_usable(): not 0xffff or 0xfffe). The PAN need not be tado's
+ * 0xABCD (#43): the bridge uses the record's PAN in its wake-up frames and
+ * beacon (src/network.c, src/txgate.h rule 7). */
 bool store_net_allowed(const struct store_net *n);
 
 /* The newest valid network record that store_net_allowed() accepts. */
 bool store_net_load(struct store_net *out, uint32_t *seq);
-/* The newest valid network record is one for the tado PAN on a channel of
- * the plan other than this image's (written by an image built for another
- * RADIO_NET_CHANNEL, stage P7.1): true, with its channel and seq. False
- * for no record, a damaged or unreadable one, one store_net_allowed()
- * accepts, or one for another PAN or off the plan. Its key is never
- * returned. */
+/* The newest valid network record is one for a usable PAN
+ * (mac_pan_usable()) on a channel of the plan other than this image's
+ * (written by an image built for another RADIO_NET_CHANNEL, stage P7.1):
+ * true, with its channel and seq. False for no record, a damaged or
+ * unreadable one, one store_net_allowed() accepts, or one for an unusable
+ * PAN or off the plan. Its key is never returned. */
 bool store_net_other_channel(uint8_t *channel, uint32_t *seq);
 /* Is there any network record at all, valid or not? Reads the first four
  * bytes of both slots: *any is true if either holds the record's magic,
