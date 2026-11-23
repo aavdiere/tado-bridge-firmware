@@ -8,6 +8,8 @@
 #include "pair_found.h"
 #include "relay.h"
 
+#include "mbedtls/platform_util.h"
+
 #include <string.h>
 
 /* Queues between the radio task and the net task, in static RAM
@@ -62,13 +64,6 @@ _Static_assert(ID_DPAIR > RELAY_ID_LAST, "d/pair id not used by the relay");
  * target, and that request's header. */
 static uint8_t beacon[PAIR_BEACON_LEN], beacon_req[MAC_HDR_LEN];
 static size_t  beacon_len;
-
-static void wipe(void *p, size_t n) {
-    volatile uint8_t *v = p;
-    while (n--) {
-        *v++ = 0;
-    }
-}
 
 void link_init(const uint8_t own_wire[MAC_EUI_LEN]) {
     msgq_init(&up_q, up_store, sizeof up_store);
@@ -414,8 +409,8 @@ static void pair_downlink(uint32_t now_ms) {
         lowpan_build_udp_ll(dg, sizeof dg, own, target, RELAY_PORT_COAP, RELAY_PORT_COAP, coap, n);
     bool ok =
         dl != 0 && csl_enqueue_data(target, dg, dl, ID_DPAIR, CSL_JOB_PAIRING, CSL_KEY_PAIRING);
-    wipe(coap, sizeof coap); /* both hold the network key */
-    wipe(dg, sizeof dg);
+    mbedtls_platform_zeroize(coap, sizeof coap); /* both hold the network key */
+    mbedtls_platform_zeroize(dg, sizeof dg);
     if (ok) {
         stats.dpair_queued++;
     } else {

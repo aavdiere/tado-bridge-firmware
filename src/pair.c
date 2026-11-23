@@ -24,6 +24,8 @@
  *   constant cd ab. */
 #include "pair.h"
 
+#include "mbedtls/platform_util.h"
+
 #include <string.h>
 
 const uint8_t pair_static_key[CCM_KEY_LEN] = {
@@ -81,13 +83,6 @@ static struct {
 
 static struct pair_stats stats;
 
-static void wipe(void *p, size_t n) {
-    volatile uint8_t *v = p;
-    while (n--) {
-        *v++ = 0;
-    }
-}
-
 void pair_init(void) {
     pair_close();
     w.have_target = false;
@@ -130,8 +125,8 @@ bool pair_open(const uint8_t target[MAC_EUI_LEN],
 
 void pair_close(void) {
     ccm_clear_key(&w.key);
-    wipe(w.net_key, sizeof w.net_key);
-    wipe(w.rnd, sizeof w.rnd);
+    mbedtls_platform_zeroize(w.net_key, sizeof w.net_key);
+    mbedtls_platform_zeroize(w.rnd, sizeof w.rnd);
     w.open     = false;
     w.engaged  = false;
     w.armed    = false;
@@ -231,7 +226,7 @@ static enum pair_req check_request(const uint8_t *req, size_t len, uint32_t now_
     size_t  n = 0;
     bool ok = mac_open(&w.key, req, len, body, sizeof body, &n) == MAC_OPEN_OK && n == REQ_BODY_LEN;
     uint8_t cmd = body[4];
-    wipe(body, sizeof body);
+    mbedtls_platform_zeroize(body, sizeof body);
     if (!ok) {
         return PAIR_REQ_MIC;
     }

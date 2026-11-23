@@ -65,6 +65,8 @@
 #include "spi1.h"
 #include "timebase.h"
 
+#include "mbedtls/platform_util.h"
+
 #include <string.h>
 
 #define HDR_READ  0x80
@@ -705,10 +707,7 @@ static bool txfifo_write(const uint8_t *p, size_t n) {
  * transmission was abandoned: a d/pair carries the network key under the
  * public pairing key (#19). */
 static void tx_wipe(void) {
-    volatile uint8_t *v = tx.buf;
-    for (size_t i = 0; i < sizeof tx.buf; i++) {
-        v[i] = 0;
-    }
+    mbedtls_platform_zeroize(tx.buf, sizeof tx.buf);
 }
 
 /* cc110l_tx_start() and cc110l_tx_answer(): answered is the received

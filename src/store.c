@@ -10,6 +10,8 @@
 #include "mac.h"
 #include "txgate.h"
 
+#include "mbedtls/platform_util.h"
+
 #include <string.h>
 
 _Static_assert(STORE_XFER_MAX <= FLASH_PAGE && FLASH_PAGE % STORE_XFER_MAX == 0,
@@ -18,13 +20,6 @@ _Static_assert(STORE_REC_HDR + STORE_REC_PAYLOAD + 4u <= FLASH_SECTOR, "record f
 _Static_assert(STORE_SECTOR == FLASH_SECTOR, "the store's sector is the flash's erase unit");
 _Static_assert(FLASH_SECTOR == STORE_CTR_ENTRIES * STORE_CTR_ENTRY, "log entries fill a sector");
 _Static_assert(STORE_CTR_LOW < STORE_CTR_AHEAD, "extend before the reservation runs out");
-
-static void wipe(void *p, size_t n) {
-    volatile uint8_t *v = p;
-    while (n--) {
-        *v++ = 0;
-    }
-}
 
 uint32_t store_crc32(const uint8_t *p, size_t n) {
     uint32_t c = 0xFFFFFFFFu;
@@ -46,7 +41,7 @@ static bool program_verified(uint32_t addr, const uint8_t *src, size_t n) {
         k           = k < room ? k : room;
         bool ok     = store_port_program(addr, src, k) && store_port_read(addr, back, k)
                       && memcmp(back, src, k) == 0;
-        wipe(back, sizeof back);
+        mbedtls_platform_zeroize(back, sizeof back);
         if (!ok) {
             return false;
         }
@@ -98,7 +93,7 @@ static bool slot_read(uint32_t  addr,
         *seq = le_get32(rec + 8);
         memcpy(payload, rec + STORE_REC_HDR, len);
     }
-    wipe(rec, sizeof rec);
+    mbedtls_platform_zeroize(rec, sizeof rec);
     return ok;
 }
 
@@ -119,7 +114,7 @@ bool store_slot_load(uint32_t  slot_a,
         memcpy(payload, pb, len);
         sa = sb;
     }
-    wipe(pb, sizeof pb);
+    mbedtls_platform_zeroize(pb, sizeof pb);
     if (va || vb) {
         *seq = sa;
     }
@@ -139,7 +134,7 @@ bool store_slot_write(uint32_t       slot_a,
     uint32_t sa = 0, sb = 0;
     bool     va = slot_read(slot_a, magic, version, scratch, len, &sa);
     bool     vb = slot_read(slot_a + FLASH_SECTOR, magic, version, scratch, len, &sb);
-    wipe(scratch, sizeof scratch);
+    mbedtls_platform_zeroize(scratch, sizeof scratch);
     /* The older or invalid slot; the newer valid one stays untouched. */
     uint32_t target = (!va || (vb && sa < sb)) ? slot_a : slot_a + FLASH_SECTOR;
     uint32_t newest = va && vb ? (sa > sb ? sa : sb) : va ? sa : vb ? sb : 0;
@@ -158,7 +153,7 @@ bool store_slot_write(uint32_t       slot_a,
     /* Write new, verify, then mark: the magic goes in last. */
     bool ok = erase_verified(target) && program_verified(target + 4u, rec + 4, total - 4u)
               && program_verified(target, rec, 4u);
-    wipe(rec, sizeof rec);
+    mbedtls_platform_zeroize(rec, sizeof rec);
     if (!ok) {
         return false;
     }
@@ -166,7 +161,7 @@ bool store_slot_write(uint32_t       slot_a,
     uint32_t seq = 0;
     ok           = slot_read(target, magic, version, scratch, len, &seq) && seq == newest + 1u
                    && memcmp(scratch, payload, len) == 0;
-    wipe(scratch, sizeof scratch);
+    mbedtls_platform_zeroize(scratch, sizeof scratch);
     if (ok && written) {
         *written = seq;
     }
@@ -339,7 +334,7 @@ bool store_id_write(const struct store_id *id, uint32_t *seq) {
     /* Write new, verify, then mark: the magic goes in last. */
     bool ok = erase_verified(target) && program_verified(target + 4u, rec + 4, total - 4u)
               && program_verified(target, rec, 4u);
-    wipe(rec, sizeof rec);
+    mbedtls_platform_zeroize(rec, sizeof rec);
     if (!ok) {
         return false;
     }
@@ -373,10 +368,10 @@ bool store_net_load(struct store_net *out, uint32_t *seq) {
         out->counter_floor = le_get32(p + 4 + CCM_KEY_LEN);
         ok                 = p[3] == 0 && store_net_allowed(out);
         if (!ok) {
-            wipe(out, sizeof *out);
+            mbedtls_platform_zeroize(out, sizeof *out);
         }
     }
-    wipe(p, sizeof p);
+    mbedtls_platform_zeroize(p, sizeof p);
     return ok;
 }
 
@@ -406,7 +401,7 @@ bool store_net_other_channel(uint8_t *channel, uint32_t *seq) {
             }
         }
     }
-    wipe(p, sizeof p);
+    mbedtls_platform_zeroize(p, sizeof p);
     ok = ok && any && ch != TXGATE_TEST_CHANNEL;
     if (ok) {
         *channel = ch;
@@ -435,7 +430,7 @@ bool store_net_write(const struct store_net *n, uint32_t *seq) {
     memcpy(p + 4, n->key, CCM_KEY_LEN);
     le_put32(p + 4 + CCM_KEY_LEN, n->counter_floor);
     bool ok = store_slot_write(FLASH_NET_A, STORE_NET_MAGIC, STORE_NET_VERSION, p, sizeof p, seq);
-    wipe(p, sizeof p);
+    mbedtls_platform_zeroize(p, sizeof p);
     return ok;
 }
 
@@ -446,7 +441,7 @@ bool store_net_commit(const struct store_net *n, struct store_net *out, uint32_t
                        && memcmp(out->key, n->key, CCM_KEY_LEN) == 0
                        && out->counter_floor == n->counter_floor;
     if (!ok) {
-        wipe(out, sizeof *out);
+        mbedtls_platform_zeroize(out, sizeof *out);
     }
     return ok;
 }

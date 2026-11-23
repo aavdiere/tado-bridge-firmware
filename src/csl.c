@@ -34,6 +34,8 @@
 
 #include "txgate.h"
 
+#include "mbedtls/platform_util.h"
+
 #include <string.h>
 
 #define JOB_NONE   0xFFu
@@ -185,16 +187,9 @@ static uint64_t anchor_next_sample(const struct anchor *a, uint64_t from, uint32
 }
 
 /* --- Job pool and queues (freedo :1124-1212) -------------------------------- */
-static void wipe(void *p, size_t n) {
-    volatile uint8_t *v = p;
-    while (n--) {
-        *v++ = 0;
-    }
-}
-
 static void pool_init(void) {
     for (unsigned i = 0; i < POOL_SLOTS; i++) {
-        wipe(g.jobs[i].body, sizeof g.jobs[i].body);
+        mbedtls_platform_zeroize(g.jobs[i].body, sizeof g.jobs[i].body);
         g.jobs[i].next = i + 1u < POOL_SLOTS ? (uint8_t)(i + 1u) : JOB_NONE;
     }
     g.free_head  = 0;
@@ -378,7 +373,7 @@ static void nb_pop(struct neighbor *n) {
         n->used = false;
     }
     if (g.jobs[idx].flags & CSL_JOB_PAIRING) {
-        wipe(g.jobs[idx].body, sizeof g.jobs[idx].body);
+        mbedtls_platform_zeroize(g.jobs[idx].body, sizeof g.jobs[idx].body);
     }
     g.jobs[idx].next = g.free_head;
     g.free_head      = idx;
@@ -420,7 +415,7 @@ static void finish(enum csl_outcome outcome) {
     uint64_t         now = csl_port_now();
     g.state              = ST_IDLE;
     if (j->flags & CSL_JOB_PAIRING) {
-        wipe(g.frame, sizeof g.frame); /* a retry seals it again */
+        mbedtls_platform_zeroize(g.frame, sizeof g.frame); /* a retry seals it again */
     }
     if (outcome == CSL_DELIVERED) {
         report(n, j, outcome, true);
