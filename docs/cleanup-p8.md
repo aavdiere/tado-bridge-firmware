@@ -146,7 +146,7 @@ Proposals 7 (`c8e8ea4`), 6 (`91d6f96`, `src/phy.h`) and 1, the split of `radio.c
 - **Review (rule 4):** `fw-reviewer` gave "safe to flash" on 2026-11-23: the code is identical to `origin/main` instruction for instruction, text 177920 to 177932 (+12 B), the bootloader `.bin` unchanged.
 - **Bench (rule 5), 2026-11-23 [V]:** the image (`.bin` SHA-256 `9fdc538a...`) was flashed and verified: boots clean, uplink ACKed, downlink delivered, stale 0, overflow 0, acks too late 0, radio task stack 532 of 840 words unused.
 - **Side effects of the move [I]:** `fw_panic()` and `configASSERT` sites pass `__FILE__`, so a panic log now names the file the code moved to (for example `src/radio_bringup.c`) instead of `src/radio.c`. Addresses moved too: `exti1_isr` is now at `0x08016c24`; look it up in the map file of the image rather than in older notes. Line numbers cited in other docs for `radio.c` were updated to the new files on 2026-11-23 (`design.md`, `radio-runtime.md`, `test-bench.md`); older results that cite `radio.c` lines of earlier commits are left as they were.
-- **Left for batch C:** proposals 2, 3, 8 and 4 change the bootloader `.bin`: one reviewed SWD reflash of the bootloader and a recovery rehearsal, which needs the owner at the bench.
+- **Left for batch C:** proposals 2, 3, 8 and 4 change the bootloader `.bin`: one reviewed SWD reflash of the bootloader and a recovery rehearsal, which Claude runs itself (owner, 2026-11-23: no need for the owner at the bench; the owner is asked only if a failed write leaves SWD unable to attach and the board needs a power cycle).
 
 ## Progress by module
 
