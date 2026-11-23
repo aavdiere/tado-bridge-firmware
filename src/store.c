@@ -121,27 +121,33 @@ bool store_slot_load(uint32_t  slot_a,
     return va || vb;
 }
 
-bool store_slot_write(uint32_t       slot_a,
-                      uint32_t       magic,
-                      uint16_t       version,
-                      const uint8_t *payload,
-                      uint16_t       len,
-                      uint32_t      *written) {
-    if (len > STORE_REC_PAYLOAD || magic == 0xFFFFFFFFu) {
-        return false;
-    }
-    uint8_t  scratch[STORE_REC_PAYLOAD];
-    uint32_t sa = 0, sb = 0;
-    bool     va = slot_read(slot_a, magic, version, scratch, len, &sa);
-    bool     vb = slot_read(slot_a + FLASH_SECTOR, magic, version, scratch, len, &sb);
-    mbedtls_platform_zeroize(scratch, sizeof scratch);
-    /* The older or invalid slot; the newer valid one stays untouched. */
-    uint32_t target = (!va || (vb && sa < sb)) ? slot_a : slot_a + FLASH_SECTOR;
-    uint32_t newest = va && vb ? (sa > sb ? sa : sb) : va ? sa : vb ? sb : 0;
-    if (newest == 0xFFFFFFFEu) {
-        return false; /* seq space used up (never in practice) */
-    }
+/* Where a write goes, from what the two slots hold (va, sa: slot A valid,
+ * its seq; vb, sb: slot B): the older or invalid slot, slot B on equal
+ * seqs, so the newer valid one (slot A on equal seqs, the one
+ * store_slot_load() and store_id_load() take) stays untouched. *newest:
+ * the higher seq of the two, 0 if neither is valid. False if the seq space
+ * is used up (never in practice). */
+static bool slot_pick(uint32_t  slot_a,
+                      bool      va,
+                      uint32_t  sa,
+                      bool      vb,
+                      uint32_t  sb,
+                      uint32_t *target,
+                      uint32_t *newest) {
+    *target = (!va || (vb && sa < sb)) ? slot_a : slot_a + FLASH_SECTOR;
+    *newest = va && vb ? (sa > sb ? sa : sb) : va ? sa : vb ? sb : 0;
+    return *newest != 0xFFFFFFFEu;
+}
 
+/* Write the record (magic, version, payload, seq newest + 1) into the
+ * sector target and read it back. *written: its seq, if not NULL. */
+static bool slot_commit(uint32_t       target,
+                        uint32_t       magic,
+                        uint16_t       version,
+                        const uint8_t *payload,
+                        uint16_t       len,
+                        uint32_t       newest,
+                        uint32_t      *written) {
     size_t total = STORE_REC_HDR + len + 4u;
     le_put32(rec, magic);
     le_put16(rec + 4, version);
@@ -158,6 +164,7 @@ bool store_slot_write(uint32_t       slot_a,
         return false;
     }
     /* The whole record once more, as a boot would read it. */
+    uint8_t  scratch[STORE_REC_PAYLOAD];
     uint32_t seq = 0;
     ok           = slot_read(target, magic, version, scratch, len, &seq) && seq == newest + 1u
                    && memcmp(scratch, payload, len) == 0;
@@ -166,6 +173,28 @@ bool store_slot_write(uint32_t       slot_a,
         *written = seq;
     }
     return ok;
+}
+
+bool store_slot_write(uint32_t       slot_a,
+                      uint32_t       magic,
+                      uint16_t       version,
+                      const uint8_t *payload,
+                      uint16_t       len,
+                      uint32_t      *written) {
+    if (len > STORE_REC_PAYLOAD || magic == 0xFFFFFFFFu) {
+        return false;
+    }
+    uint32_t sa = 0, sb = 0, target, newest;
+    bool     va, vb;
+    {
+        /* Its own scope: slot_commit()'s read-back buffer can take its place. */
+        uint8_t scratch[STORE_REC_PAYLOAD];
+        va = slot_read(slot_a, magic, version, scratch, len, &sa);
+        vb = slot_read(slot_a + FLASH_SECTOR, magic, version, scratch, len, &sb);
+        mbedtls_platform_zeroize(scratch, sizeof scratch);
+    }
+    return slot_pick(slot_a, va, sa, vb, sb, &target, &newest)
+           && slot_commit(target, magic, version, payload, len, newest, written);
 }
 
 /* --- Identity record (#21, #39) -------------------------------------------- */
@@ -302,50 +331,19 @@ bool store_id_load(struct store_id *out, uint32_t *seq, uint16_t *version) {
  * record of either version stays untouched, and the new seq is above both.
  * store_slot_write() itself sees only records of the version it writes, so
  * a version 2 write next to a single version 1 record would erase that one.
- * The commit steps are store_slot_write()'s, repeated here rather than
- * shared so that store_slot_write(), which the bootloader links for the
- * boot state (src/fwimg.c), stays as it is: the bootloader image is the
- * same with and without #39. */
+ * The slot rule and the commit steps are store_slot_write()'s
+ * (slot_pick(), slot_commit()). */
 bool store_id_write(const struct store_id *id, uint32_t *seq) {
     uint8_t  p[STORE_ID_LEN_MAX], scratch[STORE_ID_LEN_MAX];
     uint16_t version, len, ra = 0, rb = 0;
-    uint32_t sa = 0, sb = 0;
+    uint32_t sa = 0, sb = 0, target, newest;
     if (!store_id_pack(id, p, &version, &len)) {
         return false;
     }
     bool va = id_slot(FLASH_ID_A, scratch, &ra, &sa);
     bool vb = id_slot(FLASH_ID_A + FLASH_SECTOR, scratch, &rb, &sb);
-    /* The older or invalid slot: slot B on equal seq, so slot A, which
-     * store_id_load() takes then, stays. */
-    uint32_t target = (!va || (vb && sa < sb)) ? FLASH_ID_A : FLASH_ID_A + FLASH_SECTOR;
-    uint32_t newest = va && vb ? (sa > sb ? sa : sb) : va ? sa : vb ? sb : 0;
-    if (newest == 0xFFFFFFFEu) {
-        return false; /* seq space used up (never in practice) */
-    }
-
-    size_t total = STORE_REC_HDR + len + 4u;
-    le_put32(rec, STORE_ID_MAGIC);
-    le_put16(rec + 4, version);
-    le_put16(rec + 6, len);
-    le_put32(rec + 8, newest + 1u);
-    memcpy(rec + STORE_REC_HDR, p, len);
-    le_put32(rec + STORE_REC_HDR + len, store_crc32(rec, STORE_REC_HDR + len));
-
-    /* Write new, verify, then mark: the magic goes in last. */
-    bool ok = erase_verified(target) && program_verified(target + 4u, rec + 4, total - 4u)
-              && program_verified(target, rec, 4u);
-    mbedtls_platform_zeroize(rec, sizeof rec);
-    if (!ok) {
-        return false;
-    }
-    /* The whole record once more, as a boot would read it. */
-    uint32_t back = 0;
-    ok = slot_read(target, STORE_ID_MAGIC, version, scratch, len, &back) && back == newest + 1u
-         && memcmp(scratch, p, len) == 0;
-    if (ok && seq) {
-        *seq = back;
-    }
-    return ok;
+    return slot_pick(FLASH_ID_A, va, sa, vb, sb, &target, &newest)
+           && slot_commit(target, STORE_ID_MAGIC, version, p, len, newest, seq);
 }
 
 /* --- Network record -------------------------------------------------------- */
