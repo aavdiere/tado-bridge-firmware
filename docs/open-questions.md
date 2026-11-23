@@ -2,7 +2,7 @@
 
 Master list of what is still required. Details and citations are in `hardware.md`, `server-api.md` and `radio.md`. `wiki/` means `Tado_Hardware_Teardown.wiki/`.
 
-## Status (2026-11-23)
+## Status (2026-11-24)
 
 Enough is known to start building. What remains is gathered during the build:
 
@@ -12,7 +12,9 @@ Enough is known to start building. What remains is gathered during the build:
 3b. **Pairing (#19, 2026-11-17):** done on the bench [V]: the spare device paired on channel 16 at the first beacon, and nothing of ours was seen on channel 26 or off channel 16 (`test-bench.md`, "Pairing test (#19) result"). Row 28 answered, 28b answered (no), 28a: the remote trigger is built (#40, 2026-11-20, host-tested, not on air yet); the `found` report is decided in scope (owner, 2026-11-20, #41) and built (host-tested, not on the bench yet; with a local tanoclo patch that registers the device). Committed build: transmitter on since 2026-11-17 (owner decision; `RADIO_TX_ALLOWED` build option, default 1), pairing only with a target named in `config/local.cmake`.
 3a. **P5 link layer (#17, 2026-11-17):** MAC, CCM*, 6LoWPAN, CSL coordinator, relay and Enhanced ACK path ported and host-tested (877202 checks, 0 failed); reviewed (`fw-reviewer` verdict A, 2026-11-17) and flashed; transmit was off in the committed build until 2026-11-17, on by default since (owner decision; `RADIO_TX_ALLOWED=0` builds a receive-only image). **[V]** The TX-on image has run on the bench since 2026-11-17: pairing on channel 16 (#19), downlink and the `d/config` reply (flashed 2026-11-18), ACK gap 226 us median (#18), identity record (#21) done (`test-bench.md`, "Pairing test (#19) result", "ACK timing (#18)"); TX-off image reviewed, flashed and verified earlier; first transmission on channel 10 done (#11, `test-bench.md`, "First transmit test"). Open items from it are rows 17a-17d below and `radio-runtime.md`.
 3e. **Own PAN ID (#43, 2026-11-23):** answered, closed [V]: the spare accepts only PAN `0xABCD`; fixed PAN kept, gate rule 7 and the record-sourced PAN stay; stock devices cannot be spared from our broadcast wake trains this way (row 33, `pan43-results.md`).
-3d. **Crystal offset (#11, row 7):** decided by the owner 2026-11-20: no per-unit trim; a run-time drift warning at 15 kHz instead, built and host-tested, not on the bench yet (`radio-runtime.md`, "Frequency offset warning (#11)").
+3d. **Crystal offset (#11, row 7):** decided by the owner 2026-11-20: no per-unit trim; a run-time drift warning at 15 kHz instead, built and host-tested; closed 2026-11-21. The 60 s report line "our network N frames, mean +H Hz" is verified on the bench [V] (mean about +4.8 kHz, far below 15 kHz); triggering the warning would need test-only code, which the no-test-code rule forbids (`docs/README.md`, 2026-11-11), so it stays host-tested only [D] (`radio-runtime.md`, "Frequency offset warning (#11)").
+3f. **P8 (2026-11-24):** done, #32, #33, #34 closed, milestones P8 and P5 closed.
+3g. **P8.1 (#44, 2026-11-24):** stage 0 stopped at the gate: the tado cloud stayed silent to a serial-only auth/key (four probe variants, 190 s waits; `docs/direct-cloud-plan.md`). Owner decision pending: capture a stock bridge's uplink through the proxy (needs the owner's approval) or drop P8.1. #45-#49 wait.
 4. **Optional:** stock capture (section C); pair button pin at firmware stage.
 
 ## Todo
