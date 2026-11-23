@@ -87,6 +87,7 @@
 #include "pair.h"
 #include "pair_led.h"
 #include "pair_remote.h"
+#include "phy.h"
 #include "provision.h"
 #include "rng.h"
 #include "spi1.h"
@@ -201,19 +202,22 @@ _Static_assert(((MCSM1_VAL >> 2) & 3) == 3 && (MCSM1_VAL & 3) == 3, "MCSM1 must 
 _Static_assert(((PKTCTRL0_VAL >> 4) & 3) == 0, "PKTCTRL0 FIFO mode (no serial or random TX mode)");
 _Static_assert(RADIO_CHANNEL <= 49, "channel plan 0-49 (docs/radio.md)");
 
-/* Frequency plan checks, all from the table above with fXOSC = 26 MHz:
+/* Frequency plan checks, all from the table above with fXOSC = 26 MHz
+ * (PHY_FXOSC_HZ, src/phy.h):
  *   carrier = fXOSC / 2^16 x FREQ (cc110l.txt:3729-3736)
  *   spacing = fXOSC / 2^18 x (256 + CHANSPC_M) x 2^CHANSPC_E (cc110l.txt:3869-3880)
  *   IF      = fXOSC / 2^10 x FREQ_IF (cc110l.txt:3700-3711)
  *   rate    = (256 + DRATE_M) x 2^DRATE_E / 2^28 x fXOSC (cc110l.txt:3768-3778)
  *   BW      = fXOSC / (8 x (4 + CHANBW_M) x 2^CHANBW_E) (cc110l.txt:3755-3763)
  *   dev     = fXOSC / 2^17 x (8 + DEVIATION_M) x 2^DEVIATION_E (cc110l.txt:3882-3906) */
-#define FXOSC_HZ         26000000ull
 #define FREQ_WORD        (FREQ2_VAL * 65536ull + FREQ1_VAL * 256u + FREQ0_VAL)
-#define CH_SPACING_X2_18 (FXOSC_HZ * (256u + MDMCFG0_VAL) * (1u << (MDMCFG1_VAL & 3u)))
-#define CARRIER_HZ(ch)   ((FXOSC_HZ * FREQ_WORD) / 65536u + ((ch) * CH_SPACING_X2_18) / 262144u)
+#define CH_SPACING_X2_18 (PHY_FXOSC_HZ * (256u + MDMCFG0_VAL) * (1u << (MDMCFG1_VAL & 3u)))
+#define CARRIER_HZ(ch)   ((PHY_FXOSC_HZ * FREQ_WORD) / 65536u + ((ch) * CH_SPACING_X2_18) / 262144u)
 _Static_assert(CARRIER_HZ(0) > 863124000ull && CARRIER_HZ(0) < 863126000ull, "base 863.125 MHz");
 _Static_assert(CH_SPACING_X2_18 / 262144u == 199951u, "spacing 199.951 kHz");
+_Static_assert(FREQ_WORD == PHY_FREQ_WORD && (MDMCFG1_VAL & 3u) == PHY_CHANSPC_E
+                   && MDMCFG0_VAL == PHY_CHANSPC_M,
+               "the table programs the channel plan of src/phy.h");
 _Static_assert(CARRIER_HZ(26) > 868322700ull && CARRIER_HZ(26) < 868324700ull,
                "ch 26 = 868.3237 MHz");
 _Static_assert(CARRIER_HZ(16) > 866323500ull && CARRIER_HZ(16) < 866325000ull,
@@ -224,15 +228,16 @@ _Static_assert(CARRIER_HZ(RADIO_CHANNEL) + TXGATE_MIN_DIST_HZ
                           >= CARRIER_HZ(TXGATE_PROTECTED_CHANNEL) + TXGATE_MIN_DIST_HZ
                    || (TXGATE_NET_ON_PROTECTED && RADIO_CHANNEL == TXGATE_PROTECTED_CHANNEL),
                "the bridge's channel is at least 999 kHz from the protected one");
-_Static_assert((FSCTRL1_VAL & 0x1Fu) * FXOSC_HZ / 1024u == 152343u,
+_Static_assert((FSCTRL1_VAL & 0x1Fu) * PHY_FXOSC_HZ / 1024u == 152343u,
                "IF 152 kHz with FSCTRL1 = 0x06");
-_Static_assert((256u + MDMCFG3_VAL) * (1ull << (MDMCFG4_VAL & 0xFu)) * FXOSC_HZ / (1ull << 28)
-                   == 49987u,
+_Static_assert((256u + MDMCFG3_VAL) * (1ull << (MDMCFG4_VAL & 0xFu)) * PHY_FXOSC_HZ / (1ull << 28)
+                   == PHY_BAUD,
                "49.99 kBaud");
-_Static_assert(FXOSC_HZ / (8u * (4u + ((MDMCFG4_VAL >> 4) & 3u)) * (1u << (MDMCFG4_VAL >> 6)))
+_Static_assert(PHY_FXOSC_HZ / (8u * (4u + ((MDMCFG4_VAL >> 4) & 3u)) * (1u << (MDMCFG4_VAL >> 6)))
                    == 135416u,
                "RX BW 135 kHz");
-_Static_assert(FXOSC_HZ * (8u + (DEVIATN_VAL & 7u)) * (1u << ((DEVIATN_VAL >> 4) & 7u)) / (1u << 17)
+_Static_assert(PHY_FXOSC_HZ * (8u + (DEVIATN_VAL & 7u)) * (1u << ((DEVIATN_VAL >> 4) & 7u))
+                       / (1u << 17)
                    == 25390u,
                "deviation 25.39 kHz");
 
@@ -1789,7 +1794,7 @@ static void beacon_answer(uint32_t fall_us, bool own_end) {
             "(preamble about %lu us; window %u-%u us)",
             seq,
             (unsigned long)(stx - fall_us),
-            (unsigned long)(stx - fall_us + CC_IDLE_TO_TX_US),
+            (unsigned long)(stx - fall_us + PHY_IDLE_TO_TX_US),
             PAIR_BEACON_START_MIN_US,
             PAIR_BEACON_START_MAX_US);
     } else {

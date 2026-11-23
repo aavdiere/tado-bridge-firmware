@@ -8,7 +8,7 @@
 struct fwupd_op;
 
 /* Channel plan: f = 863.125 MHz + n x 199.951 kHz, n = 0..49 (docs/radio.md
- * "PHY"). */
+ * "PHY", src/phy.h). */
 
 /* The bridge's channel: the test network's channel 16 (866.3242 MHz), owner
  * decision of 2026-11-17 (channel 10 before; docs/README.md "Project

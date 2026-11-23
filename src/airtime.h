@@ -1,6 +1,8 @@
 #ifndef AIRTIME_H
 #define AIRTIME_H
 
+#include "phy.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -38,15 +40,18 @@
 #define AIRTIME_BUCKETS   61u
 
 /* Charge for a frame of len bytes (the MAC frame without the radio's
- * length byte and CRC): 4 preamble, 4 sync, the length byte and 2 CRC
- * bytes around it (docs/radio.md:24,82), at 161 us per byte (8 bits at
- * 49.99 kBaud is 160.03 us), plus 100 us for the PA ramp from IDLE (IDLE to
- * TX 75 us, cc110l.txt Table 5-11). */
+ * length byte and CRC): the bytes around it (PHY_FRAME_EXTRA_BYTES, 4
+ * preamble, 4 sync, the length byte and 2 CRC), at 161 us per byte (8 bits
+ * at 49.99 kBaud is 160.04 us), plus 100 us for the PA ramp from IDLE
+ * (PHY_IDLE_TO_TX_US, 75.2 us). Both rounded up, on purpose: why this
+ * differs from the TX watch window, src/phy.h "Two estimates". */
 #define AIRTIME_US_PER_BYTE 161u
-#define AIRTIME_FRAME_EXTRA 11u
 #define AIRTIME_RAMP_US     100u
 #define AIRTIME_FRAME_US(len) \
-    ((uint32_t)(AIRTIME_FRAME_EXTRA + (len)) * AIRTIME_US_PER_BYTE + AIRTIME_RAMP_US)
+    ((uint32_t)(PHY_FRAME_EXTRA_BYTES + (len)) * AIRTIME_US_PER_BYTE + AIRTIME_RAMP_US)
+_Static_assert(8000000u <= AIRTIME_US_PER_BYTE * PHY_BAUD,
+               "a byte is charged at least its airtime");
+_Static_assert(AIRTIME_RAMP_US > PHY_IDLE_TO_TX_US, "the ramp is charged at least IDLE to TX");
 
 struct airtime {
     uint32_t last_us; /* clock at the last call */

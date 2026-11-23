@@ -61,6 +61,7 @@
 #include "airtime.h"
 #include "log.h"
 #include "mac.h"
+#include "phy.h"
 #include "spi1.h"
 #include "timebase.h"
 
@@ -236,15 +237,14 @@ static struct {
 static volatile bool     tx_active;
 static volatile uint32_t tx_start_us, tx_len_us;
 
-/* Airtime of a frame of n bytes: 4 preamble, 4 sync, the length byte and 2
- * CRC bytes around it at 160 us per byte, 8 bits at 50 kBaud (docs/radio.md
- * "Data frame plaintext"), plus IDLE to TX (CC_IDLE_TO_TX_US) and a margin
- * for the interrupt and task that watch for it. */
-#define TX_OVERHEAD_BYTES (4u + 4u + 1u + 2u)
-#define TX_BYTE_US        160u
-#define TX_MARGIN_US      2000u
+/* Time on air of a frame of n bytes, nominal (src/phy.h: the bytes around
+ * the frame, 160 us per byte, IDLE to TX), plus a margin for the interrupt
+ * and task that watch for it. Why this differs from the airtime charge:
+ * src/phy.h, "Two estimates". */
+#define TX_MARGIN_US 2000u
 static void tx_expect(size_t n) {
-    tx_len_us   = (uint32_t)(TX_OVERHEAD_BYTES + n) * TX_BYTE_US + CC_IDLE_TO_TX_US + TX_MARGIN_US;
+    tx_len_us =
+        (uint32_t)(PHY_FRAME_EXTRA_BYTES + n) * PHY_BYTE_US + PHY_IDLE_TO_TX_US + TX_MARGIN_US;
     tx_start_us = timebase_us();
     tx_active   = true;
 }

@@ -2,6 +2,7 @@
 #include "txgate.h"
 
 #include "mac.h"
+#include "phy.h"
 
 #include <string.h>
 
@@ -36,13 +37,9 @@ static bool wake_allowed(const uint8_t dst_short[2]) {
 }
 #endif
 
-/* The tado channel plan as the stock register table programs it
- * (docs/radio.md "Stock CC110L register table"): FREQ = 0x213276
- * (863.125 MHz), CHANSPC_E = 2, CHANSPC_M = 0xF8 (199.951 kHz). */
-#define FXOSC_HZ       26000000ll
-#define PLAN_FREQ_WORD 0x213276l
-#define PLAN_CHANSPC_E 2u
-#define PLAN_CHANSPC_M 0xF8u
+/* The tado channel plan as the stock register table programs it, and the
+ * crystal: PHY_FREQ_WORD, PHY_CHANSPC_E, PHY_CHANSPC_M and PHY_FXOSC_HZ
+ * (src/phy.h, which also checks it against 863.125 MHz and 868.3237 MHz). */
 
 /* Rules 1 and 2 cannot both hold for a test channel near the protected one.
  * The one exception is the channel-26 build with its opt-in
@@ -66,17 +63,17 @@ static int64_t carrier_units(const struct txgate_radio *r) {
 }
 
 int64_t txgate_carrier_hz(const struct txgate_radio *r) {
-    return carrier_units(r) * FXOSC_HZ / 262144;
+    return carrier_units(r) * PHY_FXOSC_HZ / 262144;
 }
 
 static int64_t protected_hz(void) {
     static const struct txgate_radio p = {
-        .freq2   = (uint8_t)(PLAN_FREQ_WORD >> 16),
-        .freq1   = (uint8_t)(PLAN_FREQ_WORD >> 8),
-        .freq0   = (uint8_t)PLAN_FREQ_WORD,
+        .freq2   = (uint8_t)(PHY_FREQ_WORD >> 16),
+        .freq1   = (uint8_t)(PHY_FREQ_WORD >> 8),
+        .freq0   = (uint8_t)PHY_FREQ_WORD,
         .channr  = TXGATE_PROTECTED_CHANNEL,
-        .mdmcfg1 = PLAN_CHANSPC_E,
-        .mdmcfg0 = PLAN_CHANSPC_M,
+        .mdmcfg1 = PHY_CHANSPC_E,
+        .mdmcfg0 = PHY_CHANSPC_M,
     };
     return txgate_carrier_hz(&p);
 }
@@ -96,8 +93,8 @@ enum txgate_verdict txgate_check_channel(const struct txgate_radio *r) {
     }
     long freq = (long)r->freq2 << 16 | (long)r->freq1 << 8 | r->freq0;
     int  trim = (int8_t)r->fsctrl0;
-    if (freq != PLAN_FREQ_WORD || (r->mdmcfg1 & 3u) != PLAN_CHANSPC_E
-        || r->mdmcfg0 != PLAN_CHANSPC_M || trim > TXGATE_MAX_TRIM || trim < -TXGATE_MAX_TRIM) {
+    if (freq != PHY_FREQ_WORD || (r->mdmcfg1 & 3u) != PHY_CHANSPC_E || r->mdmcfg0 != PHY_CHANSPC_M
+        || trim > TXGATE_MAX_TRIM || trim < -TXGATE_MAX_TRIM) {
         return TXGATE_OFF_PLAN;
     }
     if (r->channr > TXGATE_MAX_CHANNEL) {

@@ -142,10 +142,6 @@
 #define CC_STATE_FSTXON     3
 #define CC_STATE_TXFIFO_UNF 7
 
-/* IDLE to TX without calibration (MCSM0 FS_AUTOCAL = 0): 75.2 us
- * (cc110l.txt:2542, Table 5-11). */
-#define CC_IDLE_TO_TX_US 75u
-
 /* Manual reset: CSn strobe low/high (>= 40 us high), then SRES with a wait
  * for CHIP_RDYn before and after (cc110l.txt:2398-2408). Leaves the chip in
  * IDLE with reset defaults. False if SO never went low. */
