@@ -142,3 +142,27 @@ Omit `d/dbg/m`, `d/dbg/st` and `d/dbg2/tlvs` (`docs/coap_debug_endpoints.md`): n
 | Token | "Validated on every payload" (`docs/coap_tlv.md:108`) | Mismatch only logged (`ws-server/lib/message-router/index.js:461-467`) |
 
 Because compatibility with tanoclo is the goal, **code wins** over its docs for these.
+
+## Tado cloud, serial-only login (#44)
+
+Stage 0 of `direct-cloud-plan.md` (2026-11-23, owner go-ahead; test channel 16 only, stock network untouched). The bench bridge, running our image, was put behind tanoclo's proxy mode (`tanoclo/ws-server/lib/proxy-manager.js:197-202`); raw logs stay in `~/ib01-captures/cloud0/`, outside git.
+
+**Proxy mode needs no cloud account.** It only needs `homes.is_proxied` set, the tado root CA in `TADO_ROOT_CA_PATH` (as PEM) and the bridge's reconnect (`tanoclo/ws-server/lib/proxy-manager.js:171-198`). The root CA came from the owner's own P0 backup (offset 0x59FF0, 639 bytes, self-signed, valid 2019-2039); the cloud's chain verified against it **[V]**.
+
+**Result [V].** Both attempts (one per bridge retry): TLS and WebSocket upgrade to the cloud succeeded, tanoclo forwarded `POST auth/key` with the bridge serial as the only TLV field, and **the cloud sent nothing** for the 10 s until our bridge closed (close code 1006 on the upstream side because we closed first). Nothing was pushed down either. Whether it would answer after more than 10 s, or closes an unknown serial silently, is unknown **[I]**. Gate reached: proxy mode was turned off. No `auth/token`, `GET time`, `d/fw`, `fw/rq`, keepalive, `field_a/b/c`, `b/fw` or `POST found` could be observed.
+
+**TLS facts [V]** (`openssl s_client`, no bridge data sent):
+
+| Item | Result |
+| :--- | :--- |
+| Port | 443 accepts TLS; port 988 gave no answer in 8 s |
+| Version, suite | TLS 1.2 only (a TLS 1.3 offer fell back); ECDHE-ECDSA-AES128-GCM-SHA256 |
+| Curve | prime256v1 accepted; P-384 and X25519 only offered: refused |
+| Signature | ecdsa_secp256r1_sha256; both certificates ECDSA P-256 with ecdsa-with-SHA256 |
+| Chain | 3 levels: leaf CN ingress.tado.com, "tado Ingress IntermediateCA", "tado RootCA"; the server sends 2 certificates (leaf and intermediate) |
+| SNI | **Not required**: the same suite and chain with and without it, and by IP address |
+| RSA suite | ECDHE-RSA-AES128-GCM-SHA256 refused |
+
+So our fixed mbedTLS suite, curve and SHA-256 signature match the cloud **[I]**; the open points for stage 1 are only the chain size against the heap margin and the Host header.
+
+**Bench side effects [V].** The first proxy start created a local state snapshot (empty, no cloud data). Bridge back on local tanoclo: `ready` with auth/token accepted. The bench override now mounts the four patched tanoclo files from `~/tanoclo-bench/prev-files/` (the found-register worktree was rebased onto upstream during the run and its new `handlers.js` needs a module the image lacks).
