@@ -222,8 +222,8 @@ def main():
     ap.add_argument("--ack-ms", type=float, default=20.0)
     ap.add_argument("--retx-s", type=float, default=30.0)
     ap.add_argument("--bad-cap-ms", type=float, default=25.0)
-    ap.add_argument("--retx-floor", type=float, default=0.0,
-                    help="lowest retransmission threshold per block (abort rule 2 as written: 0)")
+    ap.add_argument("--retx-block", type=float, default=6.0,
+                    help="a block is over at this many retransmissions or more (owner 2026-11-23: 6)")
     ap.add_argument("--lbt-sim", type=int, default=200000, help="Monte Carlo attempts per block")
     ap.add_argument("--save-baseline")
     ap.add_argument("--baseline")
@@ -445,7 +445,7 @@ def main():
             if b["up_share"] is not None and m["up_share"] is not None and \
                     b["up_share"] < m["up_share"] - 0.15:
                 flags.append("UP-ACK")
-            if b["retx"] > max(2 * max(m["retx"], 1.0), a.retx_floor) * (b["t1"] - b["t0"]) / a.block_s:
+            if b["retx"] >= a.retx_block * (b["t1"] - b["t0"]) / a.block_s:
                 flags.append("RETX")
             if b["crc_bad_ours"] > 3:
                 flags.append("CRC-OURS")
@@ -495,9 +495,13 @@ def main():
               + (f"{100 * (m['down_share'] - 0.15):.1f} %" if m["down_share"] is not None else "n/a")
               + ", up ACK share below "
               + (f"{100 * (m['up_share'] - 0.15):.1f} %" if m["up_share"] is not None else "n/a")
-              + f", retransmissions above {max(2 * max(m['retx'], 1.0), a.retx_floor):.1f} per block, "
+              + f", retransmissions {a.retx_block:.0f} or more per block or above "
+              f"{2 * m['retx'] * span / a.block_s:.1f} over the run, "
               "CRC-failed frames over ours above 3 per block")
-        print("# verdict: " + ("OVER a threshold in at least one block" if over_any else "all blocks within the thresholds"))
+        run_retx = tot["retx"] > 2 * m["retx"] * span / a.block_s
+        if run_retx:
+            print("# RETX-RUN: retransmissions over the run above twice the baseline rate")
+        print("# verdict: " + ("OVER a threshold" if over_any or run_retx else "all blocks and the run within the thresholds"))
 
     if spare:
         sh = hsh(short_of_wire(spare))
