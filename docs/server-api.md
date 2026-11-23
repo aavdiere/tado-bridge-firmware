@@ -165,4 +165,11 @@ Stage 0 of `direct-cloud-plan.md` (2026-11-23, owner go-ahead; test channel 16 o
 
 So our fixed mbedTLS suite, curve and SHA-256 signature match the cloud **[I]**; the open points for stage 1 are only the chain size against the heap margin and the Host header.
 
+**Retry with long wait [V] (2026-11-23, owner decision: same bench serial, wait much longer).** A host-side script (no bridge, no radio) opened `wss://ingress.tado.com:443/hw/v2` with `Sec-WebSocket-Protocol: binary` and the root CA from the P0 backup, and sent the same 61-byte `POST auth/key` frame the bridge had sent (taken from the tanoclo log of the first attempt). Raw log stays in `~/ib01-captures/cloud0/probe-*.log`, outside git.
+- Upgrade answered 101 in 0.21 s; response headers `server: tado`, `sec-websocket-extensions: permessage-deflate;client_max_window_bits=15`; the cloud did not echo the `binary` subprotocol **[V]**.
+- Run 1, no keepalive: connection held 190 s, **zero frames received**, no close from the cloud; we closed with 1000 cleanly **[V]**.
+- Run 2, WebSocket ping every 20 s for 150 s: the cloud answered every ping with a pong within about 40 ms, still **zero data frames**, no close **[V]**.
+- So the cloud accepts the connection and keeps it open but never answers a serial-only `auth/key`, within at least 190 s. It does not close an unknown or unauthenticated serial either; the connection just idles **[V]**. Why (serial unknown to the cloud, a credential missing in the frame, or the answer being sent elsewhere) is unknown **[I]**. The 10 s give-up of our bridge was therefore not the cause.
+- **Gate result: STOP.** No `auth/token`, `GET time`, `d/fw`, `fw/rq`, keepalive timing or `field_a/b/c` could be observed. No other serial or credential was tried. The firmware's own WebSocket ping (30 s idle) would be answered by the cloud's server layer, so a direct-mode session would stay up, but with no CoAP answers it cannot reach `ready`.
+
 **Bench side effects [V].** The first proxy start created a local state snapshot (empty, no cloud data). Bridge back on local tanoclo: `ready` with auth/token accepted. The bench override now mounts the four patched tanoclo files from `~/tanoclo-bench/prev-files/` (the found-register worktree was rebased onto upstream during the run and its new `handlers.js` needs a module the image lacks).

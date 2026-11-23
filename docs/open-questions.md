@@ -49,7 +49,7 @@ Single method: run a stock bridge through tanoclo proxy mode with logging (`tano
 | 14 | Keepalive, reconnect and backoff timing; RF retries; message ID preservation. Our own choice meanwhile **[I]**: ping after 30 s without a frame, give up 10 s later; retry backoff from 2 s, doubling up to 60 s (`design.md`, "TLS and WebSocket (#15)") |
 
 
-**Stage 0 capture of P8.1 (2026-11-23, #44) [V]:** the cloud gave no answer to `POST auth/key` (serial only) in two tries of 10 s each, so rows 10-14 stay open and the gate of `direct-cloud-plan.md` stopped the capture. Details in `server-api.md`, "Tado cloud, serial-only login (#44)".
+**Stage 0 capture of P8.1 (2026-11-23, #44) [V]:** the cloud gave no answer to `POST auth/key` (serial only) in two tries of 10 s each, so rows 10-14 stay open and the gate of `direct-cloud-plan.md` stopped the capture. **Retry (same day, host-side, long wait) [V]:** the cloud accepted the WebSocket, answered WebSocket pings (every 20 s, 150 s) but sent no data frame in 190 s (plain) or 150 s (with pings) after the same serial-only `POST auth/key`, and never closed. Rows 10-14 stay open; gate STOP, owner decides. Details in `server-api.md`, "Tado cloud, serial-only login (#44)".
 
 Because tanoclo is the compatibility target and accepts zeros for #10, the firmware can be built before #10 and #11 are answered, but it would be matching tanoclo rather than stock.
 
