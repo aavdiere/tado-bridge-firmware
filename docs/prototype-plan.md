@@ -9,7 +9,7 @@ Builds the IB01 firmware in stages. Each stage ends in something testable and se
 Requirement (user, 2026-11-11): progress is tracked in a GitHub repo on the user's account (`aavdiere`, logged in through `gh`).
 
 - **One public repo**, `tado-bridge-firmware`, holding the firmware and the design docs.
-- **Milestones** = the stages below, P0 to P9, including P7.1 (between P7 and P8).
+- **Milestones** = the stages below, P0 to P9, including P7.1 (between P7 and P8) and P8.1 (between P8 and P9).
 - **Issues** = the tasks in each stage.
 - **README** shows a status table per stage. Each finished task is a commit that closes its issue.
 - **Two number series.** Open questions in `open-questions.md` and GitHub issues both run from 1, and they do not match: open question 16 (ACK turnaround) is issue #18, and issue #16 was the RAM measurement (open question 17). In this file, "#N" always means GitHub issue N, and an open question is written "open question N". Older docs still write "#N" for open questions; read the number against the topic.
@@ -265,14 +265,27 @@ Owner request, 2026-11-14 (`docs/README.md`, "Project decisions"). Runs after P7
 - **Subagents:** `fw-critical` (Opus, high) does the rewriting; `fw-reviewer` reviews.
 - **Done when:** every module on the progress list is done or moved to an approved proposal, the build and size report match the pre-clean-up behaviour, and the bench checks still pass.
 
+### P8.1: Direct tado cloud build option
+
+Owner decision 2026-11-23 (`docs/README.md`, "Project decisions"). Milestone "P8.1 Direct tado cloud build option", issues #44-#49, one per stage of `docs/direct-cloud-plan.md` (commit `ea78a7c`), which holds the scope. Runs after P8 and before P9. **Status: planned, not started.**
+
+- #44 Stage 0: capture through tanoclo proxy (no firmware change). **Needs the owner's explicit go-ahead before it runs: it sends the bench bridge's serial to tado's cloud.** Gate: if the cloud rejects a serial-only login, the stages after it stop and the owner decides.
+- #45 Stage 1: TLS and WebSocket changes (`fw-driver`).
+- #46 Stage 2: session behaviour in `tado` mode (`fw-critical` for radio or update parts, `fw-driver` otherwise).
+- #47 Stage 3: tests and review (`fw-reviewer` "safe to flash" before flashing).
+- #48 Stage 4: bench verification (owner go-ahead, owner does cabling).
+- #49 Stage 5: docs.
+
 ### P9: Pull request to tanoclo
 
 Owner decision 2026-11-20 (`docs/README.md`, "Project decisions"): the tanoclo pull request is its own last stage. Milestone "P9 Pull request to tanoclo", issue #38.
 
+- **Prepared (2026-11-23):** the tanoclo changes are on the owner's fork https://github.com/aavdiere/tanoclo, branch `bridge-pairing-support`: 4 commits on upstream main `345347a` (`send-raw` `waitAck`/`timeoutMs`, register a reported joiner at auth and at its first message with a serial, CHANGELOG). **The owner opens the pull request themself** (owner decision 2026-11-23); Claude never runs `gh pr create` for tanoclo. The bench branches in `../tanoclo` (such as `bench/send-raw-waitack`) stay local.
+
 - **Goal:** one pull request with the changes collected in #38 and `open-questions.md` row 28c: `send-raw` with `waitAck`/`timeoutMs` (including the ACK code formatted as "c.dd"), and device registration for a device the bridge paired. The `waitAck` part is already built and tested as a local bench patch (branch `bench/send-raw-waitack` in `../tanoclo`, never pushed; `design.md`, "Uploader and tanoclo (#24, #38)").
 - **When:** after everything else works.
-- **Agent:** main session and `docs-keeper`; the owner opens or approves the pull request.
-- **Done when:** the pull request is open with the collected changes.
+- **Agent:** main session and `docs-keeper` prepare; the owner opens the pull request.
+- **Done when:** the owner has opened the pull request with the collected changes.
 
 ## Equipment
 
