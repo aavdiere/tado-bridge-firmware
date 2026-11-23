@@ -30,6 +30,8 @@ static size_t   bcast_log_len[64];
 static unsigned n_bcast_log;
 /* The test channel, as the driver's registers would give it. */
 static const struct txgate_radio radio = {0x21, 0x32, 0x76, TXGATE_TEST_CHANNEL, 0x22, 0xF8, 0};
+/* The PAN the driver's gate holds: the one given to link_set_key() (#43). */
+static uint16_t sim_pan = MAC_PAN_TADO;
 
 uint64_t csl_port_now(void) {
     return now_us;
@@ -47,7 +49,7 @@ void csl_port_report(const struct csl_report *r) {
 }
 bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
     /* The same rules the driver applies. */
-    CHECK_EQ(txgate_check_frame(&radio, own, frame, len, NULL, flags), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&radio, own, sim_pan, frame, len, NULL, flags), TXGATE_OK);
     now_us += 4000;
     switch (mac_classify(frame, len)) {
         case MAC_WAKEUP:
@@ -133,11 +135,15 @@ static void test_pairing(uint32_t *now_ms) {
         rnd[i] = (uint8_t)(i * 7u);
     }
     ccm_set_key(&pk, pair_static_key);
+    /* A network whose record holds another PAN than tado's (#43): the
+     * beacon and every wake-up frame carry it (the simulated gate checks
+     * each frame against it). */
+    sim_pan = 0x4E43u;
 
     /* No key, no window; never for ourselves. */
     link_init(own);
     CHECK(!link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
-    link_set_key(MAC_PAN_TADO, v_key.p, 2000, UINT32_MAX);
+    link_set_key(sim_pan, v_key.p, 2000, UINT32_MAX);
     CHECK(!link_pair_open(own, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     CHECK(!link_pair_active(*now_ms));
 
@@ -181,9 +187,12 @@ static void test_pairing(uint32_t *now_ms) {
     CHECK(b != NULL);
     CHECK_EQ(bl, PAIR_BEACON_LEN);
     if (b) {
-        CHECK_EQ(txgate_check_frame(&radio, own, b, bl, ans, TXGATE_PAIRING), TXGATE_OK);
-        CHECK(txgate_check_frame(&radio, own, b, bl, ans, 0) != TXGATE_OK);
-        CHECK(txgate_check_frame(&radio, own, b, bl, NULL, TXGATE_PAIRING) != TXGATE_OK);
+        CHECK_EQ(txgate_check_frame(&radio, own, sim_pan, b, bl, ans, TXGATE_PAIRING), TXGATE_OK);
+        CHECK(txgate_check_frame(&radio, own, sim_pan, b, bl, ans, 0) != TXGATE_OK);
+        CHECK(txgate_check_frame(&radio, own, sim_pan, b, bl, NULL, TXGATE_PAIRING) != TXGATE_OK);
+        CHECK_EQ(b[3] | b[4] << 8, sim_pan);
+        CHECK(txgate_check_frame(&radio, own, MAC_PAN_TADO, b, bl, ans, TXGATE_PAIRING)
+              == TXGATE_BAD_PAN);
         CHECK_MEM(b + 5, joiner, 8);
         CHECK_MEM(b + 13, own, 3);
         size_t k = 0;
@@ -322,7 +331,7 @@ static void test_pairing(uint32_t *now_ms) {
     static const uint8_t other[] = {0x7B, 0x3B, 58, 0x02, 134, 0, 0, 0, 0, 0, 0, 0};
     unsigned             pairs   = link_stats()->ra_pairs_queued;
     uint32_t             ras     = link_stats()->ra_queued;
-    link_set_key(MAC_PAN_TADO, v_key.p, link_counter(), link_counter());
+    link_set_key(sim_pan, v_key.p, link_counter(), link_counter());
     CHECK(csl_enqueue_broadcast(other, sizeof other, 7, 0, CSL_KEY_NETWORK));
     CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
     from = n_bcast_log;
@@ -398,17 +407,15 @@ static void test_pairing(uint32_t *now_ms) {
 
     /* A new key (a new network) closes a window. */
     CHECK(link_pair_open(joiner, v_key.p, rnd, *now_ms, PAIR_WINDOW_MS));
-    link_set_key(MAC_PAN_TADO, v_key2.p, 1, UINT32_MAX);
+    link_set_key(sim_pan, v_key2.p, 1, UINT32_MAX);
     CHECK(!link_pair_active(*now_ms));
     CHECK(!pair_key()->set);
     CHECK(link_pair_open(joiner, v_key2.p, rnd, *now_ms, PAIR_WINDOW_MS));
     link_clear_key();
     CHECK(!link_pair_active(*now_ms));
+    sim_pan = MAC_PAN_TADO;
 }
 
-/* Which outcomes count as frames of our own network for the frequency
- * offset warning (#11, src/freqoff.h): every value, so a new one has to be
- * placed here. */
 static void test_from_network(void) {
     static const bool want[LINK_RX_COUNT] = {
         [LINK_RX_BAD_CRC]       = false,

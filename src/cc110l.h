@@ -225,6 +225,11 @@ bool cc110l_pa_reads_back(void);
 
 /* Our wire EUI-64, for the transmit gate. Without it nothing is sent. */
 void cc110l_set_identity(const uint8_t own[8]);
+/* Our network's PAN, from its record (#43), for the transmit gate (rule 7:
+ * wake-up frames and the beacon carry it). MAC_PAN_NONE (the reset value)
+ * while no network is active: no wake-up frame or beacon is sent. Task
+ * context. */
+void cc110l_set_pan(uint16_t pan);
 
 /* Reads CHANNR, FSCTRL1, FSCTRL0, FREQ2-0, MDMCFG1 and MDMCFG0 back from the
  * chip and compares them with the values last written. On a difference, or

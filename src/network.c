@@ -2,6 +2,7 @@
  * storage (#27)". */
 #include "network.h"
 
+#include "cc110l.h"
 #include "link.h"
 #include "log.h"
 #include "mac.h"
@@ -65,13 +66,16 @@ static bool activate(const struct store_net *n, uint32_t seq) {
         return false;
     }
     link_set_key(n->pan_id, n->key, first, lim);
+    cc110l_set_pan(n->pan_id); /* the transmit gate's (rule 7, src/txgate.h) */
     limit      = lim;
     active     = true;
     active_seq = seq;
     failing    = false;
-    LOG("network: record seq %lu, channel %u: key set, frame counter %lu, reserved below %lu",
+    LOG("network: record seq %lu, channel %u, PAN %04x: key set, frame counter %lu, reserved "
+        "below %lu",
         (unsigned long)seq,
         n->channel,
+        (unsigned)n->pan_id,
         (unsigned long)first,
         (unsigned long)lim);
     return true;
@@ -173,6 +177,7 @@ bool network_create(uint8_t channel, uint8_t key_out[CCM_KEY_LEN]) {
     /* From here the flash may hold the new record or the old one: run
      * neither until it is read back as a boot would read it. */
     link_clear_key();
+    cc110l_set_pan(MAC_PAN_NONE);
     active  = false;
     bool ok = store_net_commit(&n, &got, &seq);
     mbedtls_platform_zeroize(&n, sizeof n);
@@ -218,6 +223,7 @@ void network_service(uint32_t now_ms) {
 
 bool network_factory_reset(void) {
     link_clear_key(); /* also closes a pairing window */
+    cc110l_set_pan(MAC_PAN_NONE);
     active  = false;
     failing = false;
     found   = NET_RECORD; /* no network_create() until the next boot */

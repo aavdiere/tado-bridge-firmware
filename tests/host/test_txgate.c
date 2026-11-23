@@ -202,9 +202,11 @@ static void test_ack_rule(void) {
         const uint8_t *hdr = v_ack[i].data_hdr.p; /* uplink addressed to me */
         const uint8_t *ack = v_ack[i].ack.p;
 
-        CHECK_EQ(txgate_check_frame(&r, me, ack, MAC_ACK_LEN, hdr, 0), TXGATE_OK);
+        CHECK_EQ(txgate_check_frame(&r, me, MAC_PAN_TADO, ack, MAC_ACK_LEN, hdr, 0), TXGATE_OK);
+        /* The Enhanced ACK carries no PAN: rule 7 does not apply. */
+        CHECK_EQ(txgate_check_frame(&r, me, MAC_PAN_NONE, ack, MAC_ACK_LEN, hdr, 0), TXGATE_OK);
         /* Without the frame it answers. */
-        CHECK_EQ(txgate_check_frame(&r, me, ack, MAC_ACK_LEN, NULL, 0), TXGATE_NO_ANSWER);
+        CHECK_EQ(txgate_check_frame(&r, me, MAC_PAN_TADO, ack, MAC_ACK_LEN, NULL, 0), TXGATE_NO_ANSWER);
 
         /* The answered frame is addressed to someone else: one bit of the
          * destination differs, in any of its 8 bytes. */
@@ -212,12 +214,12 @@ static void test_ack_rule(void) {
             uint8_t h[MAC_HDR_LEN];
             memcpy(h, hdr, sizeof h);
             h[3 + b] ^= 0x01;
-            CHECK_EQ(txgate_check_frame(&r, me, ack, MAC_ACK_LEN, h, 0), TXGATE_NOT_FOR_US);
+            CHECK_EQ(txgate_check_frame(&r, me, MAC_PAN_TADO, ack, MAC_ACK_LEN, h, 0), TXGATE_NOT_FOR_US);
             /* Even with an ACK built for that other destination as source. */
             uint8_t other[8], fake[MAC_ACK_LEN];
             memcpy(other, h + 3, 8);
             mac_build_enh_ack(fake, h[2], ack + 3, other, 0);
-            CHECK(txgate_check_frame(&r, me, fake, MAC_ACK_LEN, h, 0) != TXGATE_OK);
+            CHECK(txgate_check_frame(&r, me, MAC_PAN_TADO, fake, MAC_ACK_LEN, h, 0) != TXGATE_OK);
         }
         /* The answered frame is not a unicast Data frame. */
         static const uint8_t fcfs[][2] = {{0x49, 0xE8}, {0x59, 0xE8}, {0x42, 0xEE},
@@ -227,20 +229,20 @@ static void test_ack_rule(void) {
             memcpy(h, hdr, sizeof h);
             h[0] = fcfs[k][0];
             h[1] = fcfs[k][1];
-            CHECK_EQ(txgate_check_frame(&r, me, ack, MAC_ACK_LEN, h, 0), TXGATE_NOT_FOR_US);
+            CHECK_EQ(txgate_check_frame(&r, me, MAC_PAN_TADO, ack, MAC_ACK_LEN, h, 0), TXGATE_NOT_FOR_US);
         }
         /* The ACK does not match the answered frame: any byte but the phase. */
         for (unsigned b = 2; b < MAC_ACK_LEN; b++) {
             uint8_t bad[MAC_ACK_LEN];
             memcpy(bad, ack, sizeof bad);
             bad[b] ^= 0x20;
-            CHECK_EQ(txgate_check_frame(&r, me, bad, MAC_ACK_LEN, hdr, 0), TXGATE_WRONG_ANSWER);
+            CHECK_EQ(txgate_check_frame(&r, me, MAC_PAN_TADO, bad, MAC_ACK_LEN, hdr, 0), TXGATE_WRONG_ANSWER);
         }
         /* Off the test channel, and on the protected channel. */
         struct txgate_radio p = plan(PROT_CH), q = plan(11), o = plan(10);
-        CHECK_EQ(txgate_check_frame(&p, me, ack, MAC_ACK_LEN, hdr, 0), TXGATE_PROTECTED);
-        CHECK_EQ(txgate_check_frame(&q, me, ack, MAC_ACK_LEN, hdr, 0), TXGATE_NOT_TEST_CHANNEL);
-        CHECK_EQ(txgate_check_frame(&o, me, ack, MAC_ACK_LEN, hdr, 0), TXGATE_NOT_TEST_CHANNEL);
+        CHECK_EQ(txgate_check_frame(&p, me, MAC_PAN_TADO, ack, MAC_ACK_LEN, hdr, 0), TXGATE_PROTECTED);
+        CHECK_EQ(txgate_check_frame(&q, me, MAC_PAN_TADO, ack, MAC_ACK_LEN, hdr, 0), TXGATE_NOT_TEST_CHANNEL);
+        CHECK_EQ(txgate_check_frame(&o, me, MAC_PAN_TADO, ack, MAC_ACK_LEN, hdr, 0), TXGATE_NOT_TEST_CHANNEL);
     }
 }
 
@@ -253,48 +255,71 @@ static void test_frame_rules(void) {
      * swapped as src/csl.c send_wake() builds it). */
     static const uint8_t short_addr[2] = {0xb1, 0x0b};
     mac_build_wakeup(f, MAC_PAN_TADO, 7, short_addr, 100);
-    CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_OK);
-    CHECK_EQ(txgate_check_frame(&prot, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_PROTECTED);
-    CHECK_EQ(txgate_check_frame(&r, zero, f, MAC_WAKE_LEN, NULL, 0), TXGATE_NO_IDENTITY);
-    CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN - 1, NULL, 0), TXGATE_BAD_LENGTH);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, MAC_WAKE_LEN, NULL, 0), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&prot, own, MAC_PAN_TADO, f, MAC_WAKE_LEN, NULL, 0), TXGATE_PROTECTED);
+    CHECK_EQ(txgate_check_frame(&r, zero, MAC_PAN_TADO, f, MAC_WAKE_LEN, NULL, 0), TXGATE_NO_IDENTITY);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, MAC_WAKE_LEN - 1, NULL, 0), TXGATE_BAD_LENGTH);
     f[2] = 0xFF; /* another PAN */
-    CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_MALFORMED);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, MAC_WAKE_LEN, NULL, 0), TXGATE_BAD_PAN);
+    /* Rule 7 (#43): the PAN is our network's, whichever it is; none without
+     * a network. */
+    static const uint16_t pans[] = {0x0000u, 0x4E43u, 0xABCCu, 0xFFFDu};
+    for (size_t i = 0; i < N(pans); i++) {
+        mac_build_wakeup(f, pans[i], 7, short_addr, 100);
+        CHECK_EQ(txgate_check_frame(&r, own, pans[i], f, MAC_WAKE_LEN, NULL, 0), TXGATE_OK);
+        CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, MAC_WAKE_LEN, NULL, 0),
+                 TXGATE_BAD_PAN);
+        CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_NONE, f, MAC_WAKE_LEN, NULL, 0),
+                 TXGATE_BAD_PAN);
+        CHECK_EQ(txgate_check_frame(&prot, own, pans[i], f, MAC_WAKE_LEN, NULL, 0),
+                 TXGATE_PROTECTED);
+    }
+    mac_build_wakeup(f, MAC_PAN_TADO, 7, short_addr, 100);
+    CHECK_EQ(txgate_check_frame(&r, own, 0x4E43u, f, MAC_WAKE_LEN, NULL, 0), TXGATE_BAD_PAN);
+    static const uint16_t unusable[] = {0xFFFFu, 0xFFFEu};
+    for (size_t i = 0; i < N(unusable); i++) {
+        mac_build_wakeup(f, unusable[i], 7, short_addr, 100);
+        CHECK_EQ(txgate_check_frame(&r, own, unusable[i], f, MAC_WAKE_LEN, NULL, 0),
+                 TXGATE_BAD_PAN);
+    }
 
     /* Unicast Data from us (to the joiner, the pairing target of the
      * channel-26 program; test_peer_rule covers any other destination). */
     size_t n = mac_build_data(&key, f, sizeof f, false, 1, joiner, own, 5, dgram, sizeof dgram);
     CHECK(n > 0);
-    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), TXGATE_OK);
-    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
-    CHECK_EQ(txgate_check_frame(&prot, own, f, n, NULL, 0), TXGATE_PROTECTED);
-    CHECK_EQ(txgate_check_frame(&r, own, f, MAC_FRAME_MAX + 1, NULL, 0), TXGATE_BAD_LENGTH);
-    CHECK_EQ(txgate_check_frame(&r, own, f, 20, NULL, 0), TXGATE_BAD_LENGTH);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, 0), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&prot, own, MAC_PAN_TADO, f, n, NULL, 0), TXGATE_PROTECTED);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, MAC_FRAME_MAX + 1, NULL, 0), TXGATE_BAD_LENGTH);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, 20, NULL, 0), TXGATE_BAD_LENGTH);
+    /* Data frames carry no PAN: not affected by rule 7. */
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_NONE, f, n, NULL, 0), TXGATE_OK);
     /* Somebody else's source address (for example a replayed frame). */
     for (unsigned b = 0; b < 5; b++) {
         uint8_t bad[MAC_FRAME_MAX];
         memcpy(bad, f, n);
         bad[11 + b] ^= 0x40;
-        CHECK_EQ(txgate_check_frame(&r, own, bad, n, NULL, 0), TXGATE_NOT_OUR_SRC);
+        CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, bad, n, NULL, 0), TXGATE_NOT_OUR_SRC);
     }
     n = mac_build_data(&key, f, sizeof f, true, 1, own, own, 5, dgram, sizeof dgram);
-    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), TXGATE_MALFORMED);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, 0), TXGATE_MALFORMED);
     /* A device's uplink, as received, cannot be sent by us. */
     n = mac_build_data(&key, f, sizeof f, false, 1, own, peer, 5, dgram, sizeof dgram);
-    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), TXGATE_NOT_OUR_SRC);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, 0), TXGATE_NOT_OUR_SRC);
 
     /* Broadcast from us. */
     n = mac_build_broadcast(&key, f, sizeof f, false, 3, own, 9, dgram, 20);
-    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), TXGATE_OK);
-    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, 0), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
     n = mac_build_broadcast(&key, f, sizeof f, true, 3, peer, 9, dgram, 20);
-    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), TXGATE_NOT_OUR_SRC);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, 0), TXGATE_NOT_OUR_SRC);
 
     /* Classes a coordinator never sends. */
     uint8_t req[27] = {0x0B, 0xE8, 1, 0xFF, 0xFF, 0xFF, 0xFF};
     memcpy(req + 7, peer, 8);
-    CHECK_EQ(txgate_check_frame(&r, own, req, sizeof req, NULL, 0), TXGATE_BAD_CLASS);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, req, sizeof req, NULL, 0), TXGATE_BAD_CLASS);
     uint8_t junk[20] = {0x61, 0x88};
-    CHECK_EQ(txgate_check_frame(&r, own, junk, sizeof junk, NULL, 0), TXGATE_BAD_CLASS);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, junk, sizeof junk, NULL, 0), TXGATE_BAD_CLASS);
 
     /* Enhanced Beacon (#19): pairing flag, the test channel, and the request
      * it answers. freedo's request and beacon (tado/beacon_test.go:62, 90),
@@ -310,44 +335,59 @@ static void test_frame_rules(void) {
         0x1b, 0x00, 0x09, 0xa1, 0xce, 0x08, 0x5a, 0x08, 0x64, 0xb7, 0x71,
         0x9c, 0x19, 0xe3, 0x42, 0x85, 0xc9, 0xcd, 0xed, 0x7e, 0xc2,
     };
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, 0), TXGATE_NOT_TEST_CHANNEL);
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, NULL, TXGATE_PAIRING),
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, ebr, 0), TXGATE_NOT_TEST_CHANNEL);
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, NULL, TXGATE_PAIRING),
              TXGATE_NO_ANSWER);
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, eb, TXGATE_PAIRING),
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, eb, TXGATE_PAIRING),
              TXGATE_WRONG_ANSWER);
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, 31, ebr, TXGATE_PAIRING), TXGATE_BAD_LENGTH);
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, 31, ebr, TXGATE_PAIRING), TXGATE_BAD_LENGTH);
     /* A request of ours: no beacon to ourselves. */
     uint8_t mine[27];
     memcpy(mine, ebr, sizeof mine);
     memcpy(mine + 7, bridge, 8);
     memcpy(eb + 5, bridge, 8);
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, mine, TXGATE_PAIRING),
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, mine, TXGATE_PAIRING),
              TXGATE_WRONG_ANSWER);
     memcpy(eb + 5, ebr + 7, 8);
     eb[6] ^= 1; /* beacon for a device that did not ask */
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING),
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, ebr, TXGATE_PAIRING),
              TXGATE_WRONG_ANSWER);
     eb[6] ^= 1;
     eb[14] ^= 1; /* not from us */
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING),
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, ebr, TXGATE_PAIRING),
              TXGATE_NOT_OUR_SRC);
     eb[14] ^= 1;
     eb[3] ^= 1; /* another PAN */
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_MALFORMED);
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, ebr, TXGATE_PAIRING),
+             TXGATE_BAD_PAN);
+    /* ...which passes as our network's PAN (rule 7, #43; the gate does not
+     * check the MIC), and never without a network. */
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO ^ 1u, eb, sizeof eb, ebr, TXGATE_PAIRING),
+             TXGATE_OK);
     eb[3] ^= 1;
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_NONE, eb, sizeof eb, ebr, TXGATE_PAIRING),
+             TXGATE_BAD_PAN);
+    CHECK_EQ(txgate_check_frame(&r, bridge, 0xFFFEu, eb, sizeof eb, ebr, TXGATE_PAIRING),
+             TXGATE_BAD_PAN);
+    eb[3] = 0xFF;
+    eb[4] = 0xFF;
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_NONE, eb, sizeof eb, ebr, TXGATE_PAIRING),
+             TXGATE_BAD_PAN);
+    eb[3] = 0xCD;
+    eb[4] = 0xAB;
     uint8_t ebr2[27];
     memcpy(ebr2, ebr, sizeof ebr2);
     ebr2[4] = 0xCD; /* a request to one PAN only is not a joiner's */
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr2, TXGATE_PAIRING),
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, ebr2, TXGATE_PAIRING),
              TXGATE_WRONG_ANSWER);
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
 
     /* Pairing on any other channel of the plan is refused. */
     for (unsigned ch = 0; ch <= 49; ch++) {
         struct txgate_radio x = plan(ch);
         n = mac_build_broadcast(&key, f, sizeof f, true, 3, own, 9, dgram, 20);
-        CHECK_EQ(txgate_check_frame(&x, own, f, n, NULL, TXGATE_PAIRING) == TXGATE_OK,
+        CHECK_EQ(txgate_check_frame(&x, own, MAC_PAN_TADO, f, n, NULL, TXGATE_PAIRING) == TXGATE_OK,
                  ch == TXGATE_TEST_CHANNEL);
     }
 
@@ -387,11 +427,11 @@ static void test_peer_rule(void) {
     for (unsigned pend = 0; pend < 2; pend++) {
         size_t n =
             mac_build_data(&key, f, sizeof f, pend != 0, 1, joiner, own, 5, dgram, sizeof dgram);
-        CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), TXGATE_OK);
-        CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
+        CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, 0), TXGATE_OK);
+        CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
         n = mac_build_data(&key, f, sizeof f, pend != 0, 1, peer, own, 5, dgram, sizeof dgram);
-        CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), other);
-        CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, TXGATE_PAIRING), other);
+        CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, 0), other);
+        CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, TXGATE_PAIRING), other);
         for (unsigned b = 0; b < 8; b++) {
             for (unsigned bit = 0; bit < 8; bit++) {
                 uint8_t to[8];
@@ -400,7 +440,7 @@ static void test_peer_rule(void) {
                 n = mac_build_data(&key, f, sizeof f, pend != 0, 1, to, own, 5, dgram, sizeof dgram);
                 CHECK(n > 0);
                 if (memcmp(to, own, 8) != 0) {
-                    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, 0), other);
+                    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, 0), other);
                 }
             }
         }
@@ -410,9 +450,9 @@ static void test_peer_rule(void) {
      * pass; any other short address is a stock device's. */
     static const uint8_t mine[2] = {0xb1, 0x0b}, bcast[2] = {0xFF, 0xFF};
     mac_build_wakeup(f, MAC_PAN_TADO, 7, mine, 100);
-    CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, MAC_WAKE_LEN, NULL, 0), TXGATE_OK);
     mac_build_wakeup(f, MAC_PAN_TADO, 7, bcast, 0);
-    CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, TXGATE_PAIRING), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, MAC_WAKE_LEN, NULL, TXGATE_PAIRING), TXGATE_OK);
     static const uint8_t others[][2] = {
         {0x0b, 0xb1}, /* the joiner's bytes in the other order */
         {0xb1, 0x0a},
@@ -423,12 +463,12 @@ static void test_peer_rule(void) {
     };
     for (size_t k = 0; k < N(others); k++) {
         mac_build_wakeup(f, MAC_PAN_TADO, 7, others[k], 100);
-        CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), other);
+        CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, MAC_WAKE_LEN, NULL, 0), other);
     }
     /* The device of the freedo vectors: its short address as csl.c builds it. */
     uint8_t ps[2] = {peer[1], peer[0]};
     mac_build_wakeup(f, MAC_PAN_TADO, 7, ps, 100);
-    CHECK_EQ(txgate_check_frame(&r, own, f, MAC_WAKE_LEN, NULL, 0), other);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, MAC_WAKE_LEN, NULL, 0), other);
 
     /* Beacon: freedo's request from the joiner passes (test_frame_rules);
      * the same request from another device, with the beacon addressed to
@@ -443,21 +483,22 @@ static void test_peer_rule(void) {
         0x1b, 0x00, 0x09, 0xa1, 0xce, 0x08, 0x5a, 0x08, 0x64, 0xb7, 0x71,
         0x9c, 0x19, 0xe3, 0x42, 0x85, 0xc9, 0xcd, 0xed, 0x7e, 0xc2,
     };
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
     for (unsigned b = 0; b < 8; b++) {
         ebr[7 + b] ^= 0x10;
         eb[5 + b] ^= 0x10;
-        CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), other);
+        CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, ebr, TXGATE_PAIRING), other);
         ebr[7 + b] ^= 0x10;
         eb[5 + b] ^= 0x10;
     }
-    CHECK_EQ(txgate_check_frame(&r, bridge, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, bridge, MAC_PAN_TADO, eb, sizeof eb, ebr, TXGATE_PAIRING), TXGATE_OK);
 
     /* Broadcasts and our Enhanced ACK are not unicast of ours: unchanged. */
     size_t n = mac_build_broadcast(&key, f, sizeof f, true, 3, own, 9, dgram, 20);
-    CHECK_EQ(txgate_check_frame(&r, own, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, TXGATE_PAIRING), TXGATE_OK);
     CHECK_EQ(txgate_check_frame(&r,
                                 v_ack[0].own.p,
+                                MAC_PAN_TADO,
                                 v_ack[0].ack.p,
                                 MAC_ACK_LEN,
                                 v_ack[0].data_hdr.p,

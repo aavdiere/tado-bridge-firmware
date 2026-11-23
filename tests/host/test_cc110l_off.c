@@ -42,6 +42,7 @@ int main(void) {
     CHECK(cc110l_cal_ok());
     CHECK(radio_strobe(CC_SRX, NULL));
     cc110l_set_identity(own);
+    cc110l_set_pan(MAC_PAN_TADO);
     CHECK(cc110l_tx_verify_channel());
 
     /* A wake-up frame and a Data frame of ours: refused as "disabled". */

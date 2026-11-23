@@ -12,8 +12,9 @@
 #include <stdlib.h>
 
 /* --- Simulated radio --------------------------------------------------------- */
-/* The network's PAN in every configuration here (#43). */
-#define TEST_PAN    MAC_PAN_TADO
+/* The network's PAN in every configuration here: not tado's 0xABCD, so
+ * that the wake-up frames show it comes from the configuration (#43). */
+#define TEST_PAN    0x4E43u
 #define BYTE_US     160u /* 50 kbps */
 #define TX_SETUP_US 250u /* strobes, FIFO write, IDLE to TX */
 #define ACK_TURN_US 370u /* a device answers 0.35-0.39 ms after the Data frame */
@@ -107,7 +108,7 @@ bool csl_port_send(const uint8_t *frame, size_t len, unsigned flags) {
     }
     /* The same rules the real driver applies. */
     static const struct txgate_radio radio = {0x21, 0x32, 0x76, TXGATE_TEST_CHANNEL, 0x22, 0xF8, 0};
-    CHECK_EQ(txgate_check_frame(&radio, own, frame, len, NULL, flags), TXGATE_OK);
+    CHECK_EQ(txgate_check_frame(&radio, own, TEST_PAN, frame, len, NULL, flags), TXGATE_OK);
 
     struct sent *s = &sent[n_sent < 4096 ? n_sent++ : 4095];
     s->start_us    = now_us + TX_SETUP_US;

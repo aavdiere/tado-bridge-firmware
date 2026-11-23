@@ -162,6 +162,7 @@ static void test_preconditions(void) {
     /* A partial table after a reset is not a table: even the calibration
      * fails on it, since the carrier registers cannot be checked. */
     cc110l_set_identity(own);
+    cc110l_set_pan(MAC_PAN_TADO);
     CHECK(cc110l_reset());
     CHECK(cc110l_write_burst(CC_CHANNR, table + CC_CHANNR, 6));
     uint8_t  fs[3];
@@ -180,6 +181,16 @@ static void test_send(void) {
 
     model_init();
     bring_up(TXGATE_TEST_CHANNEL);
+    /* Our network's PAN (#43, rule 7): without one, and for another PAN,
+     * no wake-up frame goes out and the chip is not keyed. */
+    cc110l_set_pan(MAC_PAN_NONE);
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
+    CHECK_EQ(cc110l_tx_verdict(), TXGATE_BAD_PAN);
+    cc110l_set_pan(0x4E43u);
+    CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_REFUSED);
+    CHECK_EQ(cc110l_tx_verdict(), TXGATE_BAD_PAN);
+    CHECK_EQ(chip.stx_count, 0);
+    cc110l_set_pan(MAC_PAN_TADO);
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
     CHECK_EQ(chip.st, M_TX);
     CHECK(cc110l_tx_expected());
@@ -1304,7 +1315,7 @@ static void test_random(void) {
                     /* Random bytes that happen to be a frame the gate lets
                      * through are not this test's subject. */
                     struct txgate_radio r = shadow_radio();
-                    legit = txgate_check_frame(&r, own, f, n, NULL, 0) == TXGATE_OK;
+                    legit = txgate_check_frame(&r, own, MAC_PAN_TADO, f, n, NULL, 0) == TXGATE_OK;
                 }
                 bool                  on_plan = chip_on_test_channel();
                 bool                  busy    = cc110l_tx_expected();

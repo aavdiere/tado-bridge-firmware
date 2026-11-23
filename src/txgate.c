@@ -137,6 +137,7 @@ static bool eui_set(const uint8_t own[8]) {
 
 enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
                                        const uint8_t              own[8],
+                                       uint16_t                   pan,
                                        const uint8_t             *f,
                                        size_t                     len,
                                        const uint8_t             *answered,
@@ -165,9 +166,12 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
             if (len != MAC_WAKE_LEN || !mac_parse_wakeup(f, len, &w)) {
                 return TXGATE_BAD_LENGTH;
             }
-            mac_build_wakeup(again, MAC_PAN_TADO, w.seq, w.dst_short, w.rendezvous);
+            mac_build_wakeup(again, w.pan, w.seq, w.dst_short, w.rendezvous);
             if (memcmp(again, f, MAC_WAKE_LEN) != 0) {
                 return TXGATE_MALFORMED;
+            }
+            if (!mac_pan_usable(pan) || w.pan != pan) {
+                return TXGATE_BAD_PAN; /* rule 7 */
             }
 #if TXGATE_NET_ON_PROTECTED
             if (!wake_allowed(w.dst_short)) {
@@ -226,14 +230,13 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
         }
 
         case MAC_BEACON: {
-            /* 18 ec seq | cd ab | dst(8) | src[0:3] || sealed: src[3:8] | 04 |
+            /* 18 ec seq | pan | dst(8) | src[0:3] || sealed: src[3:8] | 04 |
              * counter(4) | FCS || MIC, answering 0b e8 seq | ff ff | ff ff |
              * src(8) | 04 || ... (freedo tado/beacon.go:17-23). Only the first
              * three bytes of our address are in the clear; the rest is
              * sealed with the frame counter. Pairing only; the caller (#19)
              * also checks that the joiner is the device named for the
              * window (src/pair.c). */
-            static const uint8_t pan[2]   = {(uint8_t)MAC_PAN_TADO, (uint8_t)(MAC_PAN_TADO >> 8)};
             static const uint8_t bcast[4] = {0xFF, 0xFF, 0xFF, 0xFF};
             if (len != BEACON_LEN) {
                 return TXGATE_BAD_LENGTH;
@@ -248,8 +251,8 @@ enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
                 || memcmp(answered + BREQ_OFF_DST, bcast, sizeof bcast) != 0) {
                 return TXGATE_WRONG_ANSWER;
             }
-            if (memcmp(f + BEACON_OFF_PAN, pan, sizeof pan) != 0) {
-                return TXGATE_MALFORMED;
+            if (!mac_pan_usable(pan) || (f[BEACON_OFF_PAN] | f[BEACON_OFF_PAN + 1] << 8) != pan) {
+                return TXGATE_BAD_PAN; /* rule 7 */
             }
             if (memcmp(f + BEACON_OFF_SRC, own, BEACON_SRC_CLEAR) != 0) {
                 return TXGATE_NOT_OUR_SRC;
@@ -286,6 +289,7 @@ const char *txgate_reason(enum txgate_verdict v) {
         [TXGATE_NOT_FOR_US]       = "answered frame is not addressed to us",
         [TXGATE_WRONG_ANSWER]     = "does not match the answered frame",
         [TXGATE_MALFORMED]        = "malformed frame",
+        [TXGATE_BAD_PAN]          = "PAN is not our network's",
 #if TXGATE_NET_ON_PROTECTED
         [TXGATE_NOT_PEER] = "unicast to a device other than the named spare",
 #endif

@@ -293,8 +293,9 @@ static bool wait_so_low(uint32_t timeout_us) {
 }
 
 /* --- Transmit state (#17) ---------------------------------------------------- */
-static uint8_t own_eui[MAC_EUI_LEN];
-static bool    own_set;
+static uint8_t  own_eui[MAC_EUI_LEN];
+static bool     own_set;
+static uint16_t net_pan = MAC_PAN_NONE; /* #43 */
 
 /* The frame being sent, as it goes into the TX FIFO: length byte, frame. */
 static struct {
@@ -484,6 +485,10 @@ bool cc110l_read_rxfifo(uint8_t *dst, size_t n) {
 void cc110l_set_identity(const uint8_t own[8]) {
     memcpy(own_eui, own, MAC_EUI_LEN);
     own_set = true;
+}
+
+void cc110l_set_pan(uint16_t pan) {
+    net_pan = pan;
 }
 
 enum txgate_verdict cc110l_tx_verdict(void) {
@@ -676,7 +681,7 @@ judge(const uint8_t *frame, size_t len, const uint8_t *answered, unsigned flags)
     if (!shadow_full) {
         return TXGATE_OFF_PLAN;
     }
-    return txgate_check_frame(&r, own_set ? own_eui : NULL, frame, len, answered, flags);
+    return txgate_check_frame(&r, own_set ? own_eui : NULL, net_pan, frame, len, answered, flags);
 }
 
 /* One more header byte inside an open access. */

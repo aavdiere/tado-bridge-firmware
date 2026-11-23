@@ -31,7 +31,11 @@
  *      devices share our PAN, so a server downlink to one of them would
  *      otherwise wake it and reach it. Such a build needs the target: without
  *      one, src/txgate.c and CMake do not build. Channel-16 builds: no such
- *      rule, nothing compiled. */
+ *      rule, nothing compiled.
+ *   7. Wake-up frames and the Enhanced Beacon carry the PAN of the bridge's
+ *      network, the one its network record holds (#43), which the caller
+ *      passes; none goes out without a network (a PAN mac_pan_usable()
+ *      refuses, MAC_PAN_NONE). */
 #ifndef TXGATE_H
 #define TXGATE_H
 
@@ -115,6 +119,7 @@ enum txgate_verdict {
     TXGATE_NOT_FOR_US,   /* the answered frame is not addressed to us */
     TXGATE_WRONG_ANSWER, /* the ACK or beacon does not match the answered frame */
     TXGATE_MALFORMED,
+    TXGATE_BAD_PAN, /* rule 7: a wake-up frame or beacon not for our network's PAN */
 #if TXGATE_NET_ON_PROTECTED
     TXGATE_NOT_PEER, /* rule 6: unicast to a device other than the named spare */
 #endif
@@ -136,9 +141,11 @@ enum txgate_verdict txgate_check_channel(const struct txgate_radio *r);
 
 /* All rules for one frame (without the radio's CRC). answered is the first
  * 16 bytes of the received frame that an Enhanced ACK or an Enhanced Beacon
- * answers, NULL for every other frame. own is our wire EUI-64. */
+ * answers, NULL for every other frame. own is our wire EUI-64, pan our
+ * network's PAN (MAC_PAN_NONE without a network). */
 enum txgate_verdict txgate_check_frame(const struct txgate_radio *r,
                                        const uint8_t              own[8],
+                                       uint16_t                   pan,
                                        const uint8_t             *frame,
                                        size_t                     len,
                                        const uint8_t             *answered,
