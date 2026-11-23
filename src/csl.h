@@ -2,7 +2,7 @@
  * queue, listen before transmit and MAC retries. Ported from freedo's
  * bridge firmware (Apache-2.0, see csl.c). Hardware independent: the radio
  * and the clock are reached through the csl_port_* functions, which
- * src/radio.c implements for the CC110L and the host tests implement as a
+ * src/radio_csl.c implements for the CC110L and the host tests implement as a
  * simulation. Radio task only; no allocation.
  *
  * One transaction at a time: wait for the device's next sample instant,
@@ -178,7 +178,7 @@ void csl_hold(bool on);
 void csl_anchor_store(const uint8_t dev[MAC_EUI_LEN], uint16_t phase, uint64_t end_us);
 bool csl_anchor_known(const uint8_t dev[MAC_EUI_LEN]);
 
-/* --- Port: implemented by src/radio.c, and by tests/host ------------------- */
+/* --- Port: implemented by src/radio_csl.c, and by tests/host --------------- */
 /* Monotonic microseconds; must not wrap. */
 uint64_t csl_port_now(void);
 

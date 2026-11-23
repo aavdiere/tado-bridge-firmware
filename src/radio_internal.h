@@ -164,7 +164,7 @@ void radio_recalibrate(void);
 /* The chip still holds our configuration and receives. */
 void health_check(void);
 
-/* --- The coordinator's radio (src/csl.h "Port") ----------------------------------- */
+/* --- The coordinator's radio (src/csl.h "Port"): src/radio_csl.c --------------- */
 /* Listen before transmit by RSSI: the busy threshold (with its source at
  * csl_port_listen_begin()). */
 #define LBT_RSSI_BUSY_DBM (-85)

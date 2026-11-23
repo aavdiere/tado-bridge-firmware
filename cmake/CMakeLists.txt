@@ -303,6 +303,7 @@ add_executable(${BINARY}
     ../src/identity.c
     ../src/network.c
     ../src/radio.c
+    ../src/radio_csl.c
     ../src/radio_pair.c
     ../src/enc28j60.c
     ../src/net.c
