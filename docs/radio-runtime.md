@@ -255,6 +255,8 @@ The trigger runs at a quiet moment of the radio task (no packet arriving, no coo
 
 **Key exposure.** The network key crosses the air under the public pairing key (`radio.md`, "Exposure"). In RAM it is held, besides the link's AES schedule, only while needed: the window's copy (wiped on close), the `d/pair` job body and the frame sealed from it (wiped when the job ends or the pool is reset, `src/csl.c`), the driver's frame copy (wiped once the frame has left the chip or was abandoned, `tx_wipe()`, `src/cc110l.c:690`), and the builder's stack buffers (wiped after queuing). A `d/pair` already on the air when the window closes is not recalled: its transaction ends normally, at most about 1 s later.
 
+**Transmit gate, rule 7 (#43, 2026-11-23):** `TXGATE_BAD_PAN`: wake-up frames and Enhanced Beacons must carry our network's PAN, set from the network record by `cc110l_set_pan()` (`src/network.c:69`, `src/txgate.c:174,255`); without a network nothing of the two goes out. Data, ACK and broadcast-data frames have no PAN field. The PAN is `0xABCD` in practice (`pan43-results.md`).
+
 **Transmit gate.** The beacon rule compared all 8 bytes of our address at offset 13, but a beacon is sealed from byte 16 on (`freedo/tado/beacon.go:17-23`), so every real beacon was refused. It now checks the 3 clear bytes, PAN `cd ab`, that the answered request went to `ff ff` / `ff ff`, that the beacon's destination is the requester and not us, the pairing flag and the test channel (`src/txgate.c`, `MAC_BEACON` case). The driver passes the request's header to the gate through `cc110l_tx_answer()` (`src/cc110l.c:782`); `cc110l_tx_start()` has none, so a beacon cannot go out on the frame path.
 
 ### Remote trigger (#40) [I]
