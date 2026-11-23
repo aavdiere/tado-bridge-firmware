@@ -47,7 +47,7 @@
  * keeps (docs/radio.md:53) and far below the band's 25 mW e.r.p. The bench
  * bridge sits next to the SDR. cc110l_set_pa() refuses any setting above
  * 0xC6's level. */
-#define RADIO_PA_BRINGUP 0x26u
+#define RADIO_PA_LEVEL 0x26u
 
 /* Configuration registers, cc110l.txt:3274-3373. */
 #define CC_IOCFG2          0x00
@@ -154,7 +154,7 @@ bool cc110l_reset(void);
 /* The strobe entry point for every caller outside this driver. Panics on
  * any strobe but SRES, SCAL, SRX, SIDLE, SFRX and SNOP: STX and SFTX go
  * out only from the transmit functions below. status may be NULL. */
-bool radio_strobe(uint8_t strobe, uint8_t *status);
+bool cc110l_strobe(uint8_t strobe, uint8_t *status);
 
 /* Configuration registers 0x00..0x2E. Burst writes are checked byte by byte
  * against the guard. */

@@ -35,12 +35,12 @@ int main(void) {
     model_init();
     CHECK(cc110l_reset());
     CHECK(cc110l_write_burst(0x00, table, sizeof table));
-    CHECK(cc110l_set_pa(RADIO_PA_BRINGUP));
+    CHECK(cc110l_set_pa(RADIO_PA_LEVEL));
     uint8_t  fs[3];
     unsigned tries;
     CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
     CHECK(cc110l_cal_ok());
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
     cc110l_set_identity(own);
     cc110l_set_pan(MAC_PAN_TADO);
     CHECK(cc110l_tx_verify_channel());
@@ -79,11 +79,11 @@ int main(void) {
 
     /* The strobes themselves stop the board. */
     volatile bool p = false;
-    PANICS(radio_strobe(CC_STX, NULL), p);
+    PANICS(cc110l_strobe(CC_STX, NULL), p);
     CHECK(p);
-    PANICS(radio_strobe(CC_SFTX, NULL), p);
+    PANICS(cc110l_strobe(CC_SFTX, NULL), p);
     CHECK(p);
-    PANICS(radio_strobe(CC_SFSTXON, NULL), p);
+    PANICS(cc110l_strobe(CC_SFSTXON, NULL), p);
     CHECK(p);
     PANICS(cc110l_write_reg(CC_MCSM1, 0x3B), p);
     CHECK(p);

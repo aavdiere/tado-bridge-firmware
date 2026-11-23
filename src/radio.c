@@ -114,7 +114,7 @@
 /* Also refused at run time by the transmit gate, whatever these say. The
  * protected channel only in a channel-26 build with the opt-in (P7.1,
  * src/txgate.h). */
-_Static_assert(RADIO_CHANNEL != RADIO_PROTECTED_CHANNEL || TXGATE_NET_ON_PROTECTED,
+_Static_assert(RADIO_CHANNEL != TXGATE_PROTECTED_CHANNEL || TXGATE_NET_ON_PROTECTED,
                "the bridge's channel is the protected one");
 _Static_assert(RADIO_CHANNEL == TXGATE_TEST_CHANNEL, "transmit only on the test channel for now");
 
@@ -218,10 +218,11 @@ _Static_assert(CARRIER_HZ(26) > 868322700ull && CARRIER_HZ(26) < 868324700ull,
                "ch 26 = 868.3237 MHz");
 _Static_assert(CARRIER_HZ(16) > 866323500ull && CARRIER_HZ(16) < 866325000ull,
                "ch 16 = 866.3242 MHz");
-_Static_assert(CARRIER_HZ(RADIO_CHANNEL) + TXGATE_MIN_DIST_HZ <= CARRIER_HZ(RADIO_PROTECTED_CHANNEL)
+_Static_assert(CARRIER_HZ(RADIO_CHANNEL) + TXGATE_MIN_DIST_HZ
+                       <= CARRIER_HZ(TXGATE_PROTECTED_CHANNEL)
                    || CARRIER_HZ(RADIO_CHANNEL)
-                          >= CARRIER_HZ(RADIO_PROTECTED_CHANNEL) + TXGATE_MIN_DIST_HZ
-                   || (TXGATE_NET_ON_PROTECTED && RADIO_CHANNEL == RADIO_PROTECTED_CHANNEL),
+                          >= CARRIER_HZ(TXGATE_PROTECTED_CHANNEL) + TXGATE_MIN_DIST_HZ
+                   || (TXGATE_NET_ON_PROTECTED && RADIO_CHANNEL == TXGATE_PROTECTED_CHANNEL),
                "the bridge's channel is at least 999 kHz from the protected one");
 _Static_assert((FSCTRL1_VAL & 0x1Fu) * FXOSC_HZ / 1024u == 152343u,
                "IF 152 kHz with FSCTRL1 = 0x06");
@@ -764,12 +765,12 @@ static bool tx_watch(void) {
             if (cc110l_tx_expected()) {
                 return true; /* a frame of ours started while we looked */
             }
-            (void)radio_strobe(CC_SIDLE, NULL);
+            (void)cc110l_strobe(CC_SIDLE, NULL);
             fw_panic("radio: chip in a TX state that is not ours", __FILE__, __LINE__);
         }
         COUNT(status_glitch);
     }
-    (void)radio_strobe(CC_SIDLE, NULL);
+    (void)cc110l_strobe(CC_SIDLE, NULL);
     LOG("radio: status bytes keep reporting a TX state, MARCSTATE unconfirmed or unreadable; "
         "forced IDLE");
     return false;
@@ -781,7 +782,7 @@ static bool tx_watch(void) {
 static void radio_force_idle(void) {
     gdo_irq_enable(false);
     (void)tx_watch();
-    (void)radio_strobe(CC_SIDLE, NULL);
+    (void)cc110l_strobe(CC_SIDLE, NULL);
     (void)tx_watch();
 }
 
@@ -794,8 +795,8 @@ static bool rx_flush_and_arm(void) {
     rx.assembling   = false;
     rx.in_packet    = false;
     fe_sample.valid = false;
-    bool ok         = radio_strobe(CC_SIDLE, NULL) && wait_marcstate(CC_MARC_IDLE, 1000)
-                      && radio_strobe(CC_SFRX, NULL) && radio_strobe(CC_SRX, NULL);
+    bool ok         = cc110l_strobe(CC_SIDLE, NULL) && wait_marcstate(CC_MARC_IDLE, 1000)
+                      && cc110l_strobe(CC_SFRX, NULL) && cc110l_strobe(CC_SRX, NULL);
     if (!ok) {
         COUNT(spi_err);
     }
@@ -1106,7 +1107,7 @@ static unsigned regs_lost(void) {
         }
     }
     if (!cc110l_pa_reads_back()) {
-        LOG("radio: PATABLE does not read back %02x", RADIO_PA_BRINGUP);
+        LOG("radio: PATABLE does not read back %02x", RADIO_PA_LEVEL);
         bad++;
     }
     return bad;
@@ -1229,8 +1230,8 @@ static bool radio_configure_steps(void) {
 
     /* Output power: SRES left PATABLE at 0xC6; the bring-up level is about
      * 20 dB lower (src/cc110l.h). */
-    if (!cc110l_set_pa(RADIO_PA_BRINGUP)) {
-        LOG("radio: PATABLE %02x not set or did not read back", RADIO_PA_BRINGUP);
+    if (!cc110l_set_pa(RADIO_PA_LEVEL)) {
+        LOG("radio: PATABLE %02x not set or did not read back", RADIO_PA_LEVEL);
         return false;
     }
 
@@ -1240,7 +1241,7 @@ static bool radio_configure_steps(void) {
         return false;
     }
 
-    if (!radio_strobe(CC_SFRX, NULL) || !radio_strobe(CC_SRX, NULL)
+    if (!cc110l_strobe(CC_SFRX, NULL) || !cc110l_strobe(CC_SRX, NULL)
         || !wait_marcstate(CC_MARC_RX, 2000)) {
         LOG("radio: did not enter RX");
         return false;
@@ -1252,7 +1253,7 @@ static bool radio_configure_steps(void) {
     LOG("radio: RX on channel %u (%lu Hz), PATABLE %02x, transmitter %s",
         RADIO_CHANNEL,
         (unsigned long)CARRIER_HZ(RADIO_CHANNEL),
-        RADIO_PA_BRINGUP,
+        RADIO_PA_LEVEL,
         !RADIO_TX_ALLOWED            ? "switched off (receive-only image)"
         : !cc110l_cal_ok()           ? "refused: no PLL lock"
         : cc110l_tx_verify_channel() ? "enabled on this channel only"
@@ -1286,7 +1287,7 @@ static void radio_recalibrate(void) {
     rx.assembling   = false;
     rx.in_packet    = false;
     fe_sample.valid = false;
-    if (!radio_strobe(CC_SIDLE, NULL) || !wait_marcstate(CC_MARC_IDLE, 1000)
+    if (!cc110l_strobe(CC_SIDLE, NULL) || !wait_marcstate(CC_MARC_IDLE, 1000)
         || !radio_calibrate("periodic") || !rx_flush_and_arm()
         || !wait_marcstate(CC_MARC_RX, 2000)) {
         LOG("radio: periodic calibration failed; re-initialising");
@@ -1327,7 +1328,7 @@ static void health_check(void) {
         if (cc110l_tx_expected()) {
             return; /* our own frame is on the air */
         }
-        (void)radio_strobe(CC_SIDLE, NULL);
+        (void)cc110l_strobe(CC_SIDLE, NULL);
         fw_panic("radio: MARCSTATE in a TX state that is not ours", __FILE__, __LINE__);
     }
     if (m == CC_MARC_IDLE) {

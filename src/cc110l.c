@@ -384,9 +384,9 @@ bool cc110l_reset(void) {
     return ok;
 }
 
-bool radio_strobe(uint8_t strobe, uint8_t *status) {
+bool cc110l_strobe(uint8_t strobe, uint8_t *status) {
     if (!strobe_allowed(strobe)) { /* also refused in guard_header; checked here first */
-        fw_panic("radio_strobe: refused", __FILE__, __LINE__);
+        fw_panic("cc110l_strobe: refused", __FILE__, __LINE__);
     }
     if (!begin(strobe, status)) {
         return false;
@@ -650,7 +650,7 @@ enum cc110l_cal cc110l_calibrate(uint8_t fscal[3], unsigned *tries) {
             || (m & CC_MARC_STATE_MASK) != CC_MARC_IDLE) {
             return CC_CAL_ERROR;
         }
-        if (!radio_strobe(CC_SCAL, NULL)) {
+        if (!cc110l_strobe(CC_SCAL, NULL)) {
             return CC_CAL_ERROR;
         }
         delay_us(CAL_WAIT_US);
@@ -857,7 +857,7 @@ void cc110l_tx_abort(void) {
     bool    underflow = cc110l_read_status_stable(CC_MARCSTATE, &m)
                         && (m & CC_MARC_STATE_MASK) == CC_MARC_TXFIFO_UNF;
     if (!underflow) {
-        (void)radio_strobe(CC_SIDLE, NULL);
+        (void)cc110l_strobe(CC_SIDLE, NULL);
         delay_us(TX_TO_IDLE_US);
     }
     tx_permit = true;

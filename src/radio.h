@@ -22,11 +22,8 @@ struct fwupd_op;
  * is not used: the image then sends nothing and keeps receiving. */
 #define RADIO_CHANNEL TXGATE_TEST_CHANNEL
 
-/* Protected channel: the owner's stock network, channel 26 (868.3237 MHz,
- * docs/test-bench.md rule 2). The transmit gate (src/txgate.c) refuses it
- * and everything within 1 MHz of it; a channel-26 build with the opt-in
- * refuses everything within 1 MHz of it except channel 26 itself. */
-#define RADIO_PROTECTED_CHANNEL TXGATE_PROTECTED_CHANNEL
+/* The protected channel, the owner's stock network: TXGATE_PROTECTED_CHANNEL
+ * (src/txgate.h, rule 1). */
 
 /* Radio task body: flash ID at boot, CC110L reset and configuration, then
  * the link to the devices (#17): receive, Enhanced ACKs, the CSL coordinator

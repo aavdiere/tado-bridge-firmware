@@ -72,9 +72,9 @@ static void bring_up_table(void) {
     unsigned tries = 0;
     CHECK(cc110l_reset());
     CHECK(cc110l_write_burst(0x00, table, sizeof table));
-    CHECK(cc110l_set_pa(RADIO_PA_BRINGUP));
+    CHECK(cc110l_set_pa(RADIO_PA_LEVEL));
     CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
 }
 
 static void bring_up(unsigned ch) {
@@ -93,7 +93,7 @@ static void check_chip(void) {
     for (unsigned i = 0; i < chip.stx_count && i < MODEL_MAX_STX; i++) {
         CHECK(dist(chip.stx[i].carrier_hz, TEST_HZ) <= 51000);
         CHECK(dist(chip.stx[i].carrier_hz, CH26_HZ) >= PROT_DIST);
-        CHECK_EQ(chip.stx[i].pa, RADIO_PA_BRINGUP);
+        CHECK_EQ(chip.stx[i].pa, RADIO_PA_LEVEL);
     }
     CHECK_EQ(chip.forbidden, 0);
     CHECK_EQ(chip.misuse, 0);
@@ -168,7 +168,7 @@ static void test_preconditions(void) {
     uint8_t  fs[3];
     unsigned tries;
     CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_ERROR);
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_LOCK);
     CHECK_EQ(chip.stx_count, 0);
     check_clean();
@@ -650,9 +650,9 @@ static void test_ack_failures(void) {
     CHECK_EQ(chip.txn, sizeof ackf + 1u);
     CHECK(!cc110l_tx_expected());
     cc110l_tx_abort();
-    CHECK(radio_strobe(CC_SIDLE, NULL));
-    CHECK(radio_strobe(CC_SFRX, NULL));
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SIDLE, NULL));
+    CHECK(cc110l_strobe(CC_SFRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
     CHECK_EQ(chip.st, M_RX);
     CHECK_EQ(chip.txn, 0);
     CHECK_EQ(chip.rxn, 0);
@@ -664,8 +664,8 @@ static void test_ack_failures(void) {
     CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_REARM);
     CHECK_EQ(chip.st, M_IDLE);
     cc110l_tx_abort();
-    CHECK(radio_strobe(CC_SFRX, NULL));
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SFRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
 
     /* No STX in any of this, and the next ACK goes out whole. */
     CHECK_EQ(chip.stx_count, 0);
@@ -758,7 +758,7 @@ static void test_long_and_abort(void) {
     CHECK_EQ(chip.txn, 0);
     CHECK(!cc110l_tx_expected());
     CHECK_EQ(chip.dropped, 0);
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
 
     /* Abort in the middle of a frame: SIDLE, and SFTX only once the chip
      * is IDLE, a quarter bit later. */
@@ -769,7 +769,7 @@ static void test_long_and_abort(void) {
     CHECK_EQ(chip.txn, 0);
     CHECK_EQ(chip.dropped, 0);
     CHECK_EQ(chip.frames_cut, 1);
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
 
     /* The next frame is whole: nothing of the aborted one leads it. */
     uint8_t w[MAC_WAKE_LEN];
@@ -798,7 +798,7 @@ static void test_long_and_abort(void) {
     cc110l_tx_abort();
     CHECK_EQ(chip.st, M_IDLE);
     CHECK_EQ(chip.txn, 0);
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
     (void)cc110l_take_tx_state_flag();
     CHECK_EQ(cc110l_tx_start(w, sizeof w, 0), CC_TX_OK);
     finish_frame();
@@ -816,15 +816,15 @@ static void test_guard(void) {
     bring_up(TXGATE_TEST_CHANNEL);
     /* No transmit strobe from outside the transmit functions, switch on or
      * off: the permit is closed between them. */
-    PANICS(radio_strobe(CC_STX, NULL), p);
+    PANICS(cc110l_strobe(CC_STX, NULL), p);
     CHECK(p);
-    PANICS(radio_strobe(CC_SFTX, NULL), p);
+    PANICS(cc110l_strobe(CC_SFTX, NULL), p);
     CHECK(p);
-    PANICS(radio_strobe(CC_SFSTXON, NULL), p);
+    PANICS(cc110l_strobe(CC_SFSTXON, NULL), p);
     CHECK(p);
-    PANICS(radio_strobe(CC_SXOFF, NULL), p);
+    PANICS(cc110l_strobe(CC_SXOFF, NULL), p);
     CHECK(p);
-    PANICS(radio_strobe(CC_SPWD, NULL), p);
+    PANICS(cc110l_strobe(CC_SPWD, NULL), p);
     CHECK(p);
     /* STX as a status read is not a strobe: MARCSTATE has the same address. */
     PANICS(cc110l_read_status(CC_MARCSTATE, &v), p);
@@ -879,8 +879,8 @@ static void test_guard(void) {
 static void table_rx_uncalibrated(void) {
     CHECK(cc110l_reset());
     CHECK(cc110l_write_burst(0x00, table, sizeof table));
-    CHECK(cc110l_set_pa(RADIO_PA_BRINGUP));
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_set_pa(RADIO_PA_LEVEL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
 }
 
 /* Nothing goes out, by either path, and the chip is not touched. */
@@ -914,33 +914,33 @@ static void test_calibration(void) {
     refused_no_lock(f, n, ackf, up);
 
     /* Two calibrations without lock, the third locks. */
-    CHECK(radio_strobe(CC_SIDLE, NULL));
+    CHECK(cc110l_strobe(CC_SIDLE, NULL));
     chip.cal_fail_left = 2;
     CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
     CHECK_EQ(tries, 3);
     CHECK_EQ(chip.scal_count, 3);
     CHECK(fs[2] != 0x3F);
     CHECK(cc110l_cal_ok());
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
     finish_frame();
     CHECK_EQ(chip.stx_count, 1);
 
     /* Three without lock: refused, and latched for this bring-up. */
     table_rx_uncalibrated();
-    CHECK(radio_strobe(CC_SIDLE, NULL));
+    CHECK(cc110l_strobe(CC_SIDLE, NULL));
     chip.cal_fail_left = 3;
     chip.scal_count    = 0;
     CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_NO_LOCK);
     CHECK_EQ(tries, 3);
     CHECK_EQ(chip.scal_count, 3);
     CHECK_EQ(fs[2], 0x3F);
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
     refused_no_lock(f, n, ackf, up);
     /* A later calibration that locks does not lift the latch... */
-    CHECK(radio_strobe(CC_SIDLE, NULL));
+    CHECK(cc110l_strobe(CC_SIDLE, NULL));
     CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
     refused_no_lock(f, n, ackf, up);
     /* ...the next bring-up does. */
     bring_up(TXGATE_TEST_CHANNEL);
@@ -950,9 +950,9 @@ static void test_calibration(void) {
     CHECK_EQ(chip.stx_count, 2);
 
     /* Any SCAL strobe outside cc110l_calibrate() clears the lock. */
-    CHECK(radio_strobe(CC_SIDLE, NULL));
-    CHECK(radio_strobe(CC_SCAL, NULL));
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SIDLE, NULL));
+    CHECK(cc110l_strobe(CC_SCAL, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
     refused_no_lock(f, n, ackf, up);
 
     /* So does any configuration write: a new frequency needs a new
@@ -982,10 +982,10 @@ static void test_calibration(void) {
     /* The carrier registers changed behind the driver: the calibration
      * fails, and nothing goes out. */
     bring_up(TXGATE_TEST_CHANNEL);
-    CHECK(radio_strobe(CC_SIDLE, NULL));
+    CHECK(cc110l_strobe(CC_SIDLE, NULL));
     chip.reg[CC_CHANNR] = OTHER_CH;
     CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_ERROR);
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
     refused_no_lock(f, n, ackf, up);
     CHECK_EQ(chip.stx_count, 3);
     check_clean();
@@ -1013,8 +1013,8 @@ static void test_power(void) {
 
     model_init();
     bring_up(TXGATE_TEST_CHANNEL);
-    CHECK_EQ(chip.patable, RADIO_PA_BRINGUP);
-    CHECK(documented_low(RADIO_PA_BRINGUP));
+    CHECK_EQ(chip.patable, RADIO_PA_LEVEL);
+    CHECK(documented_low(RADIO_PA_LEVEL));
 
     /* Every byte value: only the documented low settings reach the chip.
      * Above all the ones numerically below 0xC6 but louder (0xC0 +12 dBm,
@@ -1071,7 +1071,7 @@ static void test_power(void) {
     uint8_t  fs[3];
     unsigned tries;
     CHECK_EQ(cc110l_calibrate(fs, &tries), CC_CAL_LOCKED);
-    CHECK(radio_strobe(CC_SRX, NULL));
+    CHECK(cc110l_strobe(CC_SRX, NULL));
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_PA);
 
     /* PATABLE changed behind the driver: the next frame and the next ACK
@@ -1082,9 +1082,9 @@ static void test_power(void) {
     CHECK(!cc110l_tx_verify_channel());
     CHECK_EQ(cc110l_ack_prepare(ackf, up), CC_TX_NO_PA);
     CHECK_EQ(cc110l_ack_fire_from_isr(), CC_ACK_NONE);
-    chip.patable = RADIO_PA_BRINGUP;
+    chip.patable = RADIO_PA_LEVEL;
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_NO_PA);
-    CHECK(cc110l_set_pa(RADIO_PA_BRINGUP));
+    CHECK(cc110l_set_pa(RADIO_PA_LEVEL));
     CHECK_EQ(cc110l_tx_start(f, n, 0), CC_TX_OK);
     finish_frame();
     CHECK_EQ(chip.stx_count, 2);
@@ -1368,7 +1368,7 @@ static void test_random(void) {
                 size_t left;
                 if (!cc110l_tx_feed(&left) || rnd() % 16u == 0) {
                     cc110l_tx_abort();
-                    (void)radio_strobe(CC_SRX, NULL);
+                    (void)cc110l_strobe(CC_SRX, NULL);
                 }
                 break;
             }
