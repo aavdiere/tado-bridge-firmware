@@ -5,7 +5,7 @@
  *
  * The question: does an erase or program keep the radio task from
  * preparing an Enhanced ACK in time, or put a flash transaction where the
- * ACK interrupt needs the bus? The radio side is modelled as src/radio.c
+ * ACK interrupt needs the bus? The radio side is modelled as src/radio_flash.c
  * behaves (mx25r_port_radio_busy() and mx25r_port_radio_serve()):
  *   - a frame: preamble and sync word (8 bytes at 160 us), then the GDO0
  *     sync edge; the Data frame's header is out of the FIFO 18 bytes after
@@ -102,7 +102,7 @@ static struct {
     struct frame f[MAX_FRAMES];
     unsigned     n;
     unsigned     first;       /* frames before this one are done */
-    bool         running;     /* radio_running in src/radio.c */
+    bool         running;     /* radio_running in src/radio_flash.c */
     bool         stuck_high;  /* GDO0 held high: busy for ever */
     uint64_t     edges_until; /* GDO edges up to this time have woken the task */
     unsigned     serves;
@@ -733,7 +733,7 @@ static void test_guard(void) {
 
 /* --- The update's flash work under traffic (#24) ----------------------------------
  * An update as src/fwupd.c performs it, one operation at a time through
- * fwupd_op_run() (the radio task's part, src/radio.c), with the task loop
+ * fwupd_op_run() (the radio task's part, src/radio_flash.c), with the task loop
  * serving the receiver between operations and an operation starting only
  * on a quiet radio, as flash work does (#22): save a 152 KB image into the
  * previous slot (erase the header sector, then per sector one erase and 16

@@ -43,7 +43,7 @@ struct fwupd_op *handoff_claim(void);
  * op->done, last. Then wake the poster (port). */
 void handoff_finish(struct fwupd_op *op);
 
-/* --- Port (src/radio.c; a model in the host test) -------------------------- */
+/* --- Port (src/radio_flash.c; a model in the host test) -------------------- */
 uint32_t handoff_port_ms(void);           /* a millisecond clock */
 void     handoff_port_wake(void);         /* tell the runner an operation is posted */
 void     handoff_port_sleep(uint32_t ms); /* poster: sleep up to ms, or until woken */

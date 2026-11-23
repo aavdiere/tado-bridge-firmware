@@ -38,7 +38,7 @@
  * Enhanced ACK on the air (8.5 ms with its margin, src/cc110l.c). */
 #define MX25R_GATE_MAX_US 100000u
 
-/* --- Radio port (src/radio.c; a simulated radio in tests/host) ------------- */
+/* --- Radio port (src/radio_flash.c; a simulated radio in tests/host) ------- */
 /* True while no flash transaction may start: a frame is arriving or not yet
  * taken from the FIFO, or a frame of ours is on the air. False before the
  * radio runs. */

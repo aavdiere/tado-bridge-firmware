@@ -197,7 +197,7 @@ void pairing_trigger(uint32_t now_ms);
 /* The server's pair request, if one is posted. */
 void pairing_remote(uint32_t now_ms);
 
-/* --- Flash work and update operations (#10, #22, #24, P6) ----------------------- */
+/* --- Flash work and update operations (#10, #22, #24, P6): src/radio_flash.c -- */
 /* flash_boot() succeeded: the records may be read and written. */
 extern bool flash_ready;
 /* Bring-up done, the task loop runs. */

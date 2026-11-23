@@ -108,7 +108,7 @@ static struct {
 /* The server's pair request (#40) the radio task has: answered when its
  * outcome is back (pair_poll()), or with 5.03 if the radio task has not
  * taken it after PAIR_WAIT_MS (its loop does not run; the same limit as
- * RADIO_UPDATE_OP_WAIT_MS, src/radio.c says why it is enough). Kept across
+ * RADIO_UPDATE_OP_WAIT_MS, src/radio_flash.c says why it is enough). Kept across
  * a session's end: the radio task acts on it anyway, and the answer goes
  * on the next session's copy (pr_seen). Net task only. */
 #define PAIR_WAIT_MS 10000u

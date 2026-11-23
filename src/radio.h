@@ -71,7 +71,7 @@ void radio_request_factory_reset(void);
  * MCU and does not return when taken; when it returns, the restart is the
  * caller's. One caller at a time. */
 bool radio_update_op(struct fwupd_op *op);
-/* The limit, with why it is 10 s: src/radio.c. */
+/* The limit, with why it is 10 s: src/radio_flash.c. */
 #define RADIO_UPDATE_OP_WAIT_MS 10000u
 
 /* The radio is up: configured, its interrupts on, the PLL calibrated (for

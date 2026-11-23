@@ -17,7 +17,7 @@
  * only where no network record has ever been (network_absent()). */
 
 /* Boot, before the radio starts, and only if the flash is ready
- * (flash_boot() in src/radio.c): load the network record; if there is
+ * (flash_boot() in src/radio_flash.c): load the network record; if there is
  * one, reserve frame counters (one counter-log write) and set the key. */
 void network_boot(void);
 

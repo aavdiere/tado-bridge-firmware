@@ -144,7 +144,7 @@ static const char *mac_str(char *b, size_t sz, const uint8_t *m) {
 /* Before lwip_init(): the radio task reads the identity record at boot (it
  * owns SPI1, src/identity.h); wait for its verdict, with the watchdog
  * check-in, then take the record's MAC or the placeholder, once. The radio
- * task publishes the verdict right after flash_boot() (src/radio.c), and a
+ * task publishes the verdict right after flash_boot() (src/radio_flash.c), and a
  * radio task that never gets there misses its own watchdog check-in.
  * store_id_valid() has checked the MAC: unicast, not all zero. */
 static void mac_choose(void) {
