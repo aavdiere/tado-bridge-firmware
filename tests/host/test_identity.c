@@ -36,7 +36,11 @@ static struct {
     unsigned ops;
     unsigned slot_a_body_reads;
     uint32_t rnd;
+    uint64_t trace; /* FNV-1a of every flash operation, see trace_op() */
 } fm;
+
+/* test_trace(): taken from the code before #34 proposal 8. */
+#define TRACE_ID_DIGEST 0x78e40a6aacc1dd4eull
 
 static uint32_t rnd(void) {
     uint32_t x = fm.rnd ? fm.rnd : 0x9E3779B9u;
@@ -45,6 +49,26 @@ static uint32_t rnd(void) {
     x ^= x << 5;
     fm.rnd = x;
     return x;
+}
+
+/* Fold bytes into fm.trace (64-bit FNV-1a). */
+static void trace_bytes(const void *p, size_t n) {
+    const uint8_t *b = p;
+    while (n--) {
+        fm.trace = (fm.trace ^ *b++) * 0x100000001B3u;
+    }
+}
+
+/* Every read, program and erase, with its address, length and the bytes
+ * programmed, in call order (test_trace()). */
+static void trace_op(char kind, uint32_t addr, const uint8_t *src, size_t n) {
+    uint32_t len = (uint32_t)n;
+    trace_bytes(&kind, 1);
+    trace_bytes(&addr, sizeof addr);
+    trace_bytes(&len, sizeof len);
+    if (src) {
+        trace_bytes(src, n);
+    }
 }
 
 static bool cut_now(void) {
@@ -58,6 +82,7 @@ static bool cut_now(void) {
 
 bool store_port_read(uint32_t addr, uint8_t *dst, size_t n) {
     CHECK(addr < FLASH_SIZE && n <= FLASH_SIZE - addr);
+    trace_op('R', addr, NULL, n);
     if (fm.dead) {
         return false;
     }
@@ -71,6 +96,7 @@ bool store_port_read(uint32_t addr, uint8_t *dst, size_t n) {
 bool store_port_program(uint32_t addr, const uint8_t *src, size_t n) {
     CHECK(addr >= ID_BEGIN && addr + n <= ID_END);
     CHECK(n >= 1 && n <= STORE_XFER_MAX && addr % FLASH_PAGE + n <= FLASH_PAGE);
+    trace_op('P', addr, src, n);
     if (fm.dead) {
         return false;
     }
@@ -96,6 +122,7 @@ bool store_port_program(uint32_t addr, const uint8_t *src, size_t n) {
 bool store_port_erase(uint32_t addr) {
     CHECK(addr >= ID_BEGIN && addr + FLASH_SECTOR <= ID_END);
     CHECK_EQ(addr % FLASH_SECTOR, 0);
+    trace_op('E', addr, NULL, 0);
     if (fm.dead) {
         return false;
     }
@@ -639,8 +666,90 @@ static void test_cuts(void) {
     printf("test_identity: %u power cuts\n", cases);
 }
 
+/* One store_id_write() and the store_id_load() after it, results into the
+ * trace. */
+static void trace_id_write(const struct store_id *id) {
+    uint32_t        seq = 0, back = 0;
+    uint16_t        version = 0;
+    struct store_id got;
+    bool            ok = store_id_write(id, &seq);
+    trace_bytes(&ok, sizeof ok);
+    trace_bytes(&seq, sizeof seq);
+    bool ld = store_id_load(&got, &back, &version);
+    trace_bytes(&ld, sizeof ld);
+    trace_bytes(&back, sizeof back);
+    trace_bytes(&version, sizeof version);
+    trace_bytes(got.serial, sizeof got.serial);
+    trace_bytes(got.eui64, sizeof got.eui64);
+    trace_bytes(got.mac, sizeof got.mac);
+}
+
+/* The exact flash operations of store_id_write() and their results, as
+ * test_record_trace() in test_store.c does for store_slot_write(): writes of
+ * both versions from stock data and over records of either version, equal
+ * seqs, a seq space used up, a refused identity, and a cut at every step.
+ * The digest was taken from the code before #34 batch C (ff5be65), before
+ * proposal 8 shared store_slot_write()'s commit steps with
+ * store_id_write(); a different digest means the identity record's format,
+ * its slot choice or the order of the writes changed. */
+static void test_trace(void) {
+    fm.rnd = 1;
+    flash_stock();
+    reboot();
+    fm.trace = 0xCBF29CE484222325u;
+    for (unsigned i = 0; i < 6; i++) {
+        struct store_id id = (i % 3u == 1u) ? make_id(30u + i) : make_id_mac(30u + i);
+        trace_id_write(&id);
+    }
+    struct store_id bad = make_id(40);
+    bad.eui64[0]        = 1;
+    trace_id_write(&bad);
+    /* Equal seqs over both versions: slot B is the one written. */
+    uint8_t         p[STORE_ID_LEN_MAX];
+    uint16_t        version = 0, len = 0;
+    struct store_id v1 = make_id(41), v2 = make_id_mac(42), neu = make_id(43);
+    CHECK(store_id_pack(&v1, p, &version, &len));
+    plant(FLASH_ID_A, STORE_ID_MAGIC, version, len, p, 9);
+    CHECK(store_id_pack(&v2, p, &version, &len));
+    plant(FLASH_ID_A + FLASH_SECTOR, STORE_ID_MAGIC, version, len, p, 9);
+    trace_id_write(&neu);
+    CHECK_EQ(mem[FLASH_ID_A + FLASH_SECTOR + 8], 10);
+    /* Seq space: one write left, then none. */
+    CHECK(store_id_pack(&v2, p, &version, &len));
+    plant(FLASH_ID_A, STORE_ID_MAGIC, version, len, p, 0xFFFFFFFDu);
+    trace_id_write(&neu);
+    trace_id_write(&v2);
+    /* A cut at every step, from one and two records of either version. */
+    for (unsigned mode = 0; mode < 4; mode++) {
+        for (unsigned history = 1; history <= 2; history++) {
+            for (unsigned k = 1;; k++) {
+                fm.rnd = k;
+                flash_stock();
+                reboot();
+                for (unsigned h = 0; h < history; h++) {
+                    struct store_id old = (mode & 1u) ? make_id_mac(50u + h) : make_id(50u + h);
+                    trace_id_write(&old);
+                }
+                struct store_id n = (mode & 2u) ? make_id_mac(60) : make_id(60);
+                fm.rnd            = 77u * k + history;
+                fm.cut_in         = k;
+                trace_id_write(&n);
+                bool done = fm.cut_in != 0;
+                reboot();
+                trace_id_write(&n);
+                if (done) {
+                    break;
+                }
+            }
+        }
+    }
+    printf("test_identity: write trace %016llx\n", (unsigned long long)fm.trace);
+    CHECK_EQ(fm.trace, TRACE_ID_DIGEST);
+}
+
 int main(void) {
     test_valid();
+    test_trace();
     test_basic();
     test_newest_refused();
     test_versions();

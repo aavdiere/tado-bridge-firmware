@@ -17,6 +17,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+/* test_record_trace(): taken from the code before #34 proposal 8. */
+#define TRACE_STORE_DIGEST 0x6326b7bed090434aull
+
 /* --- Flash model -------------------------------------------------------------- */
 static uint8_t mem[FLASH_SIZE];
 
@@ -39,6 +42,7 @@ static struct {
     uint32_t last_prog_addr;    /* address of the last completed program */
     unsigned slot_a_body_reads; /* reads past the magic of slot A */
     uint32_t rnd;
+    uint64_t trace; /* FNV-1a of every flash operation, see trace_op() */
 } fm;
 
 /* Failures with the power on (the chip's fail flags, a verify mismatch). */
@@ -59,6 +63,26 @@ static uint32_t rnd(void) {
     return x;
 }
 
+/* Fold bytes into fm.trace (64-bit FNV-1a). */
+static void trace_bytes(const void *p, size_t n) {
+    const uint8_t *b = p;
+    while (n--) {
+        fm.trace = (fm.trace ^ *b++) * 0x100000001B3u;
+    }
+}
+
+/* Every read, program and erase, with its address, length and the bytes
+ * programmed, in call order (test_record_trace()). */
+static void trace_op(char kind, uint32_t addr, const uint8_t *src, size_t n) {
+    uint32_t len = (uint32_t)n;
+    trace_bytes(&kind, 1);
+    trace_bytes(&addr, sizeof addr);
+    trace_bytes(&len, sizeof len);
+    if (src) {
+        trace_bytes(src, n);
+    }
+}
+
 static bool cut_now(void) {
     fm.ops++;
     if (fm.cut_in > 0 && --fm.cut_in == 0) {
@@ -70,6 +94,7 @@ static bool cut_now(void) {
 
 bool store_port_read(uint32_t addr, uint8_t *dst, size_t n) {
     CHECK(addr < FLASH_SIZE && n <= FLASH_SIZE - addr);
+    trace_op('R', addr, NULL, n);
     if (fm.dead) {
         return false;
     }
@@ -93,6 +118,7 @@ bool store_port_program(uint32_t addr, const uint8_t *src, size_t n) {
     /* The driver's guard and page rule, as hard checks. */
     CHECK(addr >= FLASH_RECORDS_BEGIN && addr + n <= FLASH_RECORDS_END);
     CHECK(n >= 1 && n <= STORE_XFER_MAX && addr % FLASH_PAGE + n <= FLASH_PAGE);
+    trace_op('P', addr, src, n);
     if (fm.dead) {
         return false;
     }
@@ -152,6 +178,7 @@ bool store_port_program(uint32_t addr, const uint8_t *src, size_t n) {
 bool store_port_erase(uint32_t addr) {
     CHECK(addr >= FLASH_RECORDS_BEGIN && addr + FLASH_SECTOR <= FLASH_RECORDS_END);
     CHECK_EQ(addr % FLASH_SECTOR, 0);
+    trace_op('E', addr, NULL, 0);
     if (fm.dead) {
         return false;
     }
@@ -366,7 +393,7 @@ static void test_record_policy(void) {
     }
 
     /* A record for another PAN goes in and comes back as it was. */
-    n.pan_id = 0x4E43u;
+    n.pan_id      = 0x4E43u;
     uint32_t wseq = 0;
     CHECK(store_net_commit(&n, &got, &seq));
     CHECK_EQ(got.pan_id, 0x4E43u);
@@ -984,7 +1011,7 @@ static bool sector_blank(uint32_t a) {
 static void test_factory_reset(void) {
     uint32_t used = 0;
     factory_setup(2, &used);
-    CHECK(fm.ctr_erases > 0); /* the log changed sectors */
+    CHECK(fm.ctr_erases > 0);     /* the log changed sectors */
     uint32_t sum = outside_sum(); /* the identity sectors included */
     unsigned ops = fm.ops;
     CHECK(store_factory_reset());
@@ -1188,8 +1215,120 @@ static void test_record_other_channel(void) {
     CHECK(!store_net_other_channel(&ch, &seq));
 }
 
+/* A record written straight into the model (test_record_trace()). */
+static void plant_rec(uint32_t addr, uint32_t magic, uint16_t version, uint16_t len, uint32_t seq) {
+    uint8_t r[STORE_REC_HDR + STORE_REC_PAYLOAD + 4u];
+    memset(mem + addr, 0xFF, FLASH_SECTOR);
+    for (unsigned i = 0; i < 4; i++) {
+        r[i]     = (uint8_t)(magic >> (8u * i));
+        r[8 + i] = (uint8_t)(seq >> (8u * i));
+    }
+    r[4] = (uint8_t)version;
+    r[5] = (uint8_t)(version >> 8);
+    r[6] = (uint8_t)len;
+    r[7] = (uint8_t)(len >> 8);
+    for (unsigned i = 0; i < len; i++) {
+        r[STORE_REC_HDR + i] = (uint8_t)(seq + i);
+    }
+    uint32_t crc = store_crc32(r, STORE_REC_HDR + len);
+    for (unsigned i = 0; i < 4; i++) {
+        r[STORE_REC_HDR + len + i] = (uint8_t)(crc >> (8u * i));
+    }
+    memcpy(mem + addr, r, STORE_REC_HDR + len + 4u);
+}
+
+#define TRACE_MAGIC 0x31545354u /* "TST1": a record kind of the test's own */
+
+/* One store_slot_write() and the store_slot_load() after it, results into
+ * the trace. */
+static void trace_write(uint16_t version, uint16_t len, uint8_t tag) {
+    uint8_t  p[STORE_REC_PAYLOAD + 1u], back[STORE_REC_PAYLOAD];
+    uint32_t written = 0, seq = 0;
+    for (unsigned i = 0; i < sizeof p; i++) {
+        p[i] = (uint8_t)(tag * 31u + i * 7u);
+    }
+    bool ok = store_slot_write(FLASH_NET_A, TRACE_MAGIC, version, p, len, &written);
+    trace_bytes(&ok, sizeof ok);
+    trace_bytes(&written, sizeof written);
+    memset(back, 0, sizeof back);
+    uint16_t n  = len <= STORE_REC_PAYLOAD ? len : STORE_REC_PAYLOAD;
+    bool     ld = store_slot_load(FLASH_NET_A, TRACE_MAGIC, version, back, n, &seq);
+    trace_bytes(&ld, sizeof ld);
+    trace_bytes(&seq, sizeof seq);
+    trace_bytes(back, n);
+}
+
+/* The exact flash operations of store_slot_write() and their results: every
+ * read, program and erase with its address and bytes, in order, for writes
+ * from stock data, from records of both versions, with equal seqs, a seq
+ * space used up, a weak bit, failing programs and a cut at every step. The
+ * digest was taken from the code before #34 batch C (ff5be65, the code of
+ * the bootloader on the bench), before proposal 8 shared these commit
+ * steps with store_id_write(); a different digest means the record format, the slot
+ * choice or the order of the writes changed, and with it the power-loss
+ * behaviour that the bootloader's boot state relies on. */
+static void test_record_trace(void) {
+    fm.rnd = 1;
+    flash_stock();
+    reboot();
+    fm.trace                         = 0xCBF29CE484222325u;
+    static const uint16_t versions[] = {1, 1, 2, 1, 2, 2, 1, 1};
+    static const uint16_t lens[]     = {1, 13, 64, 25, 37, 49, 61, 64};
+    for (unsigned i = 0; i < 8; i++) {
+        trace_write(versions[i], lens[i], (uint8_t)i);
+    }
+    /* Refused before any flash access. */
+    trace_write(1, STORE_REC_PAYLOAD + 1u, 9);
+    uint8_t  p[4] = {1, 2, 3, 4};
+    uint32_t w    = 0;
+    CHECK(!store_slot_write(FLASH_NET_A, 0xFFFFFFFFu, 1, p, sizeof p, &w));
+    /* A program that leaves one bit unprogrammed, then programs that fail. */
+    fm.weak = true;
+    trace_write(1, 20, 10);
+    fm.weak = false;
+    for (unsigned f = FAIL_NOTHING; f <= FAIL_SILENT; f++) {
+        fm.prog_fail = f;
+        trace_write(2, 30, (uint8_t)(10u + f));
+        fm.prog_fail = FAIL_NONE;
+        trace_write(2, 30, (uint8_t)(20u + f));
+    }
+    /* Both slots valid with the same seq: slot B is the one written. */
+    plant_rec(FLASH_NET_A, TRACE_MAGIC, 1, 8, 7);
+    plant_rec(FLASH_NET_B, TRACE_MAGIC, 1, 8, 7);
+    trace_write(1, 8, 30);
+    CHECK_EQ(mem[FLASH_NET_B + 8], 8);
+    /* Seq space: one write left, then none. */
+    plant_rec(FLASH_NET_A, TRACE_MAGIC, 1, 8, 0xFFFFFFFDu);
+    plant_rec(FLASH_NET_B, TRACE_MAGIC, 1, 8, 3);
+    trace_write(1, 8, 31);
+    trace_write(1, 8, 32);
+    /* A cut at every step, from one and from two records. */
+    for (unsigned history = 1; history <= 2; history++) {
+        for (unsigned k = 1;; k++) {
+            fm.rnd = k;
+            flash_stock();
+            reboot();
+            for (unsigned h = 0; h < history; h++) {
+                trace_write(1, 40, (uint8_t)(40u + h));
+            }
+            fm.rnd    = 77u * k + history;
+            fm.cut_in = k;
+            trace_write(1, 40, 50);
+            bool done = fm.cut_in != 0;
+            reboot();
+            trace_write(1, 40, 51);
+            if (done) {
+                break;
+            }
+        }
+    }
+    printf("test_store: record trace %016llx\n", (unsigned long long)fm.trace);
+    CHECK_EQ(fm.trace, TRACE_STORE_DIGEST);
+}
+
 int main(void) {
     test_crc();
+    test_record_trace();
     test_record_basic();
     test_record_policy();
     test_record_other_channel();
